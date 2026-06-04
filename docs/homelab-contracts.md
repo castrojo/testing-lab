@@ -2,8 +2,9 @@
 
 This document defines the in-cluster workload validation contracts for the
 testing-lab QA factory. It covers the workload matrix (#57), shared-storage
-and RWX limits (#62), storage observability surface (#70, #78), and the
-fleet-client vs. cluster-node boundary (#72).
+and RWX limits (#62), storage observability surface (#70, #78), the
+fleet-client vs. cluster-node boundary (#72), and the HTTPS service-exposure
+lane (#58).
 
 For the service-catalog workload contract that all service lanes must
 satisfy, see [`docs/service-catalog-contract.md`](service-catalog-contract.md)
@@ -23,6 +24,7 @@ access guarantees it must prove.
 | **NAS / storage** | `homelab-storage` | `tests/homelab_storage/` | PVC bound on `local-path`, data survives `rollout restart`, `findmnt`/`df`/`lsblk`/ZFS artifacts captured |
 | **Service access** | `homelab-access-probe` | `tests/homelab_access/` | Cluster-DNS resolution, TLS handshake, expected-host routing via SNI |
 | **Print service** | `homelab-print-service` | `tests/service_catalog/print/` | Config PVC (1Gi) binding and writability, IPP port 631 reachability, PUID/PGID/TZ env injection, state survives `rollout restart` |
+| **HTTPS exposure** | `homelab-access-probe` | `tests/homelab_access/test_https_exposure.py` | Certificate subject match, TLS 1.2+ enforcement, HTTPS reachability, wrong-host rejection (§6) |
 
 ### Minimum persistence contract per class
 
@@ -176,7 +178,117 @@ client hardware) so evidence is always VM-scoped and cluster-managed.
 
 ---
 
-## 5. Known Blockers and Deferred Work
+## 5. Local Hostname and Routing Contract (#73)
+
+### First representative contract
+
+The lab validates the following hostname/routing pattern for exposed in-cluster services:
+
+| Layer | Contract | Evidence |
+|---|---|---|
+| **Cluster DNS** | `<service>.<namespace>.svc.cluster.local` resolves from within the cluster | `getent hosts` in test pod (`access-dns.txt`) |
+| **TLS handshake** | Service on port 8443 completes TLS with a valid certificate | `openssl s_client` output with `Protocol version` (`access-openssl.txt`) |
+| **SNI routing** | `Host: <hostname>` header routes to the correct backend | `curl -H "Host: <hostname>"` returns `access-ok` (`access-curl.txt`) |
+
+### Separation of concerns
+- **Service discovery** (this contract): cluster DNS + in-cluster reachability.
+- **TLS issuance**: tracked separately; current test uses a self-signed cert in the fixture.
+- **Auth-gating**: deferred to service-catalog auth-gating lane (#61).
+- **External/LAN reachability**: `bluespeed.local` reverse proxy patterns are
+  tracked under bluespeed; this repo validates only in-cluster service access.
+
+### Non-goals
+- Validating ingress controllers or NodePort exposure from outside the cluster.
+- Testing ACME/Let's Encrypt certificate rotation.
+- Any LAN hostname that requires mDNS or split-horizon DNS on the workstation.
+
+---
+
+## 6. HTTPS Service-Exposure Lane (#58)
+
+This section defines the first HTTPS service-exposure validation lane under the
+access/TLS epic (#53). The representative service endpoint is the
+`homelab-access` fixture — a Python HTTPS server deployed in-cluster with a
+self-signed TLS certificate, SNI-based host routing, and optional basic auth.
+
+### Representative endpoint
+
+| Property | Value |
+|---|---|
+| **Service** | `homelab-access.<namespace>.svc.cluster.local:8443` |
+| **Expected hostname** | `homelab-access.local` |
+| **TLS certificate** | Self-signed, CN=`homelab-access.local`, 1-day validity |
+| **Protocol** | HTTPS (TLS 1.2+) |
+| **Health response** | `access-ok` on `GET /healthz` with correct `Host` header |
+
+### Minimum evidence the lane must capture
+
+Every run of this lane must produce the following evidence artifacts:
+
+| Check | Evidence artifact | Pass criteria |
+|---|---|---|
+| **Cluster DNS resolution** | `https-dns.txt` | `getent hosts` resolves the service FQDN to a cluster IP |
+| **TLS handshake completes** | `https-tls-handshake.txt` | `openssl s_client` output contains `Protocol version` and `Verify return code` |
+| **Certificate subject matches** | `https-cert-subject.txt` | Certificate subject CN or SAN matches the expected hostname |
+| **TLS version is 1.2 or higher** | `https-tls-version.txt` | Negotiated protocol is `TLSv1.2` or `TLSv1.3` |
+| **HTTPS reachability** | `https-reachability.txt` | `curl --resolve` over HTTPS returns HTTP 200 with body `access-ok` |
+| **Wrong-host rejection** | `https-wrong-host.txt` | Request with an incorrect `Host` header returns HTTP 421 |
+
+### Fixture deployment
+
+The lane reuses the `homelab-access-probe` WorkflowTemplate's fixture
+(§1 Service access class). The fixture deploys:
+
+1. A TLS secret (`homelab-access-tls`) with a self-signed certificate.
+2. An auth secret (`homelab-access-auth`) with basic credentials.
+3. A Python HTTPS server that validates `Host` headers and optionally
+   enforces basic auth.
+4. A ClusterIP Service on port 8443.
+
+The HTTPS exposure lane runs with `auth-mode=false` — auth-gating is a
+separate concern validated by the auth lane (#61).
+
+### What this lane validates vs. what it defers
+
+| Concern | This lane (#58) | Deferred to |
+|---|---|---|
+| TLS handshake and certificate presence | ✅ | — |
+| Certificate subject/SAN match | ✅ | — |
+| TLS version enforcement (1.2+) | ✅ | — |
+| HTTPS reachability from within the cluster | ✅ | — |
+| Host-header routing correctness | ✅ | — |
+| Wrong-host rejection (421) | ✅ | — |
+| Basic auth / credential gating | ❌ | #61 (auth-gating lane) |
+| ACME / Let's Encrypt certificate issuance | ❌ | Future cert-manager lane |
+| External/LAN reachability (NodePort, Ingress) | ❌ | bluespeed / ingress lane |
+| Firewall rules / NetworkPolicy enforcement | ❌ | Follow-up under #53 |
+| mTLS between services | ❌ | Future service-mesh lane |
+
+### Follow-up work called out explicitly
+
+1. **Auth-gating lane (#61)**: Once this HTTPS lane proves transport security,
+   #61 layers credential validation on top. The `auth-mode=true` parameter
+   and `test_auth_probe.py` test module are already scaffolded in the
+   `homelab-access-probe` WorkflowTemplate but not yet covered by a lane
+   definition.
+
+2. **Firewall / NetworkPolicy**: The current lane validates reachability
+   within the cluster namespace but does not assert NetworkPolicy rules that
+   restrict cross-namespace access. A NetworkPolicy validation lane should be
+   filed under #53 once the HTTPS and auth lanes are stable.
+
+3. **Certificate lifecycle**: The fixture uses ephemeral 1-day self-signed
+   certs created per workflow run. Validating cert-manager integration,
+   renewal, and ACME issuance is out of scope and should be tracked as a
+   separate issue.
+
+4. **External exposure**: LAN-facing reverse proxy patterns
+   (`bluespeed.local`) and ingress controller validation belong to the
+   bluespeed project, not this lane.
+
+---
+
+## 7. Known Blockers and Deferred Work
 
 | Issue | Status | Dependency |
 |---|---|---|

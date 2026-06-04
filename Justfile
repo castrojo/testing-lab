@@ -166,7 +166,7 @@ run-homelab-storage:
     argo submit --from workflowtemplate/homelab-storage \
       -n {{ argo_ns }} --wait --log
 
-# Run in-cluster homelab access probe
+# Run in-cluster homelab access probe (includes HTTPS exposure lane #58)
 run-homelab-access:
     argo submit --from workflowtemplate/homelab-access-probe \
       -n {{ argo_ns }} --wait --log
