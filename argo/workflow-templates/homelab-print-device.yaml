@@ -1,0 +1,329 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: homelab-print-device
+  namespace: argo
+  labels:
+    app.kubernetes.io/component: homelab-print-device
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  entrypoint: pipeline
+  onExit: cleanup
+  serviceAccountName: homelab-runner
+  arguments:
+    parameters:
+      - name: lane
+        value: "homelab-print-device"
+      - name: branch
+        value: "main"
+      - name: usb-device-path
+        # Set to the host USB printer device node, e.g. /dev/usb/lp0.
+        # Leave empty to skip USB device-access tests.
+        value: ""
+      - name: avahi-enabled
+        # Set to "true" to enable LAN mDNS discovery tests.
+        # Requires NodePort service and avahi sidecar in the fixture.
+        value: "false"
+      - name: ipp-nodeport
+        # NodePort number for the external IPP service (default 30631).
+        value: "30631"
+  templates:
+    - name: pipeline
+      dag:
+        tasks:
+          - name: check-prerequisites
+            template: check-prerequisites
+            arguments:
+              parameters:
+                - name: usb-device-path
+                  value: "{{workflow.parameters.usb-device-path}}"
+                - name: avahi-enabled
+                  value: "{{workflow.parameters.avahi-enabled}}"
+          - name: create-namespace
+            depends: "check-prerequisites.Succeeded"
+            template: create-namespace
+            arguments:
+              parameters:
+                - name: namespace
+                  value: "homelab-print-device-{{workflow.uid}}"
+          - name: deploy-fixture
+            depends: "create-namespace.Succeeded"
+            template: deploy-fixture
+            arguments:
+              parameters:
+                - name: namespace
+                  value: "homelab-print-device-{{workflow.uid}}"
+                - name: lane
+                  value: "{{workflow.parameters.lane}}"
+                - name: usb-device-path
+                  value: "{{workflow.parameters.usb-device-path}}"
+                - name: avahi-enabled
+                  value: "{{workflow.parameters.avahi-enabled}}"
+                - name: ipp-nodeport
+                  value: "{{workflow.parameters.ipp-nodeport}}"
+          - name: run-tests
+            depends: "deploy-fixture.Succeeded"
+            templateRef:
+              name: run-incluster-tests
+              template: run-pytest
+            arguments:
+              parameters:
+                - name: namespace
+                  value: "homelab-print-device-{{workflow.uid}}"
+                - name: suite-path
+                  value: "service_catalog/print_device"
+                - name: lane
+                  value: "{{workflow.parameters.lane}}"
+                - name: app-label
+                  value: "app=homelab-print-device"
+                - name: service-name
+                  value: "homelab-print-device"
+                - name: branch
+                  value: "{{workflow.parameters.branch}}"
+                - name: extra-env
+                  value: |
+                    TEST_USB_PRINTER_DEVICE={{workflow.parameters.usb-device-path}}
+                    TEST_AVAHI_ENABLED={{workflow.parameters.avahi-enabled}}
+                    TEST_IPP_NODEPORT={{workflow.parameters.ipp-nodeport}}
+
+    - name: check-prerequisites
+      # Guard step: emit a clear message if neither USB nor avahi is enabled.
+      # Exits successfully (not a failure) so the workflow can proceed to
+      # run tests — those tests will individually skip with informative messages.
+      inputs:
+        parameters:
+          - name: usb-device-path
+          - name: avahi-enabled
+      script:
+        image: cgr.dev/chainguard/kubectl:latest-dev
+        command: [bash, -c]
+        source: |
+          set -euo pipefail
+          USB_DEV="{{inputs.parameters.usb-device-path}}"
+          AVAHI="{{inputs.parameters.avahi-enabled}}"
+
+          if [ -z "${USB_DEV}" ] && [ "${AVAHI}" != "true" ]; then
+            echo "WARNING: Neither usb-device-path nor avahi-enabled is set." >&2
+            echo "All tests in service_catalog/print_device will be skipped." >&2
+            echo "" >&2
+            echo "To enable USB tests: set usb-device-path to the host device" >&2
+            echo "  node (e.g. /dev/usb/lp0).  Requires substrate from #54:" >&2
+            echo "  usblp kernel module + device node + container allow-list." >&2
+            echo "" >&2
+            echo "To enable mDNS tests: set avahi-enabled=true.  Requires" >&2
+            echo "  substrate from #54: NodePort/LB service + avahi sidecar." >&2
+          else
+            [ -n "${USB_DEV}" ]  && echo "USB tests enabled  (device: ${USB_DEV})" >&2
+            [ "${AVAHI}" = "true" ] && echo "mDNS tests enabled (avahi sidecar)" >&2
+          fi
+
+    - name: create-namespace
+      inputs:
+        parameters:
+          - name: namespace
+      resource:
+        action: create
+        manifest: |
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{inputs.parameters.namespace}}"
+            labels:
+              app.kubernetes.io/part-of: bluefin-test-suite
+              bluefin.io/lane: homelab-print-device
+
+    - name: deploy-fixture
+      inputs:
+        parameters:
+          - name: namespace
+          - name: lane
+          - name: usb-device-path
+          - name: avahi-enabled
+          - name: ipp-nodeport
+      script:
+        image: cgr.dev/chainguard/kubectl:latest-dev
+        command: [bash, -c]
+        source: |
+          set -euo pipefail
+          NS="{{inputs.parameters.namespace}}"
+          USB_DEV="{{inputs.parameters.usb-device-path}}"
+          AVAHI="{{inputs.parameters.avahi-enabled}}"
+          NODEPORT="{{inputs.parameters.ipp-nodeport}}"
+
+          # Build the USB hostPath volume fragment only when a device path is set.
+          USB_VOLUME_MOUNT=""
+          USB_VOLUME=""
+          if [ -n "${USB_DEV}" ]; then
+            USB_VOLUME_MOUNT="
+                    - name: usb-printer
+                      mountPath: ${USB_DEV}"
+            USB_VOLUME="
+                  - name: usb-printer
+                    hostPath:
+                      path: ${USB_DEV}
+                      type: CharDevice"
+          fi
+
+          # Build the avahi sidecar container fragment only when avahi is enabled.
+          AVAHI_CONTAINER=""
+          if [ "${AVAHI}" = "true" ]; then
+            AVAHI_CONTAINER="
+                  - name: avahi-sidecar
+                    # avahi-daemon sidecar that advertises the CUPS IPP service
+                    # on the LAN via mDNS (_ipp._tcp).  The avahi-cups service
+                    # definition is mounted from a ConfigMap.
+                    image: docker.io/library/ubuntu:22.04
+                    command:
+                      - sh
+                      - -c
+                      - |
+                        apt-get update -qq && apt-get install -y -qq avahi-daemon avahi-utils
+                        exec avahi-daemon --no-rlimits --no-drop-root
+                    securityContext:
+                      capabilities:
+                        add: [NET_ADMIN]
+                    volumeMounts:
+                      - name: avahi-services
+                        mountPath: /etc/avahi/services"
+          fi
+
+          # Build the avahi ConfigMap + volume only when avahi is enabled.
+          AVAHI_CONFIGMAP=""
+          AVAHI_CM_VOLUME=""
+          if [ "${AVAHI}" = "true" ]; then
+            kubectl apply -n "${NS}" -f - <<CMEOF
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: avahi-cups-service
+            labels:
+              app: homelab-print-device
+              app.kubernetes.io/part-of: bluefin-test-suite
+              bluefin.io/lane: "{{inputs.parameters.lane}}"
+          data:
+            cups.service: |
+              <?xml version="1.0" standalone='no'?>
+              <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+              <service-group>
+                <name>CUPS @ homelab</name>
+                <service>
+                  <type>_ipp._tcp</type>
+                  <port>631</port>
+                  <txt-record>txtvers=1</txt-record>
+                  <txt-record>qtotal=1</txt-record>
+                  <txt-record>pdl=application/pdf,image/jpeg,image/urf</txt-record>
+                  <txt-record>Color=T</txt-record>
+                  <txt-record>Duplex=T</txt-record>
+                </service>
+              </service-group>
+          CMEOF
+            AVAHI_CM_VOLUME="
+                  - name: avahi-services
+                    configMap:
+                      name: avahi-cups-service"
+          fi
+
+          # Determine service type based on avahi-enabled flag.
+          if [ "${AVAHI}" = "true" ]; then
+            SVC_TYPE="NodePort"
+            NODEPORT_LINE="          nodePort: ${NODEPORT}"
+          else
+            SVC_TYPE="ClusterIP"
+            NODEPORT_LINE=""
+          fi
+
+          kubectl apply -n "${NS}" -f - <<EOF
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: homelab-print-device-config
+            labels:
+              app: homelab-print-device
+              app.kubernetes.io/part-of: bluefin-test-suite
+              bluefin.io/lane: "{{inputs.parameters.lane}}"
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 1Gi
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: homelab-print-device
+            labels:
+              app: homelab-print-device
+              app.kubernetes.io/part-of: bluefin-test-suite
+              bluefin.io/lane: "{{inputs.parameters.lane}}"
+              bluefin.io/workload-class: print-device
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: homelab-print-device
+            template:
+              metadata:
+                labels:
+                  app: homelab-print-device
+                  app.kubernetes.io/part-of: bluefin-test-suite
+                  bluefin.io/lane: "{{inputs.parameters.lane}}"
+                  bluefin.io/workload-class: print-device
+              spec:
+                nodeSelector:
+                  kubernetes.io/hostname: ghost
+                hostNetwork: false
+                containers:
+                  - name: cups-server
+                    # lscr.io/linuxserver/cups is the actual OpenPrinting CUPS
+                    # image following the linuxserver.io pattern.  Used here
+                    # (not an nginx stub) because the USB-device and avahi
+                    # tests require real CUPS commands (lpinfo, lp, lpstat).
+                    image: lscr.io/linuxserver/cups:latest
+                    ports:
+                      - containerPort: 631
+                    env:
+                      - name: PUID
+                        value: "1000"
+                      - name: PGID
+                        value: "1000"
+                      - name: TZ
+                        value: "UTC"
+                    volumeMounts:
+                      - name: config
+                        mountPath: /config${USB_VOLUME_MOUNT}
+                volumes:
+                  - name: config
+                    persistentVolumeClaim:
+                      claimName: homelab-print-device-config${USB_VOLUME}${AVAHI_CM_VOLUME}${AVAHI_CONTAINER}
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: homelab-print-device
+            labels:
+              app: homelab-print-device
+              app.kubernetes.io/part-of: bluefin-test-suite
+              bluefin.io/lane: "{{inputs.parameters.lane}}"
+          spec:
+            type: ${SVC_TYPE}
+            selector:
+              app: homelab-print-device
+            ports:
+              - name: ipp
+                port: 631
+                targetPort: 631
+                ${NODEPORT_LINE}
+          EOF
+          kubectl rollout status deployment/homelab-print-device -n "${NS}" --timeout=300s >&2
+
+    - name: cleanup
+      script:
+        image: cgr.dev/chainguard/kubectl:latest-dev
+        command: [bash, -c]
+        source: |
+          set -euo pipefail
+          NS="homelab-print-device-{{workflow.uid}}"
+          kubectl delete namespace "${NS}" --ignore-not-found=true >&2 || true
+          timeout 180 bash -c "until ! kubectl get namespace \"${NS}\" >/dev/null 2>&1; do sleep 5; done" >&2 || true
+          echo "cleanup-complete"

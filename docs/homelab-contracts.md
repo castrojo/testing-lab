@@ -387,16 +387,14 @@ When all entry criteria in the table above are met:
 | #62 RWX / shared-storage | ❌ blocked | NFS CSI or Longhorn installation on ghost |
 | #63 GPU transcoding lane | ✅ defined | Substrate work from #54 required before tests execute |
 | #61 auth-gated service UI | ❌ deferred | service-catalog baseline lane first |
-<<<<<<< HEAD
 | #60 first restore drill | ⏳ ready | #62 not required for single-pod RWO restore |
 | #84 PVC restore drill with backup artifact | ⏳ ready | #62 not required |
-=======
 | #69 Home Assistant-class workloads | ❌ deferred | All entry criteria in §6 (#66, #79, #80, #81, #58, #61, storage lane) |
 | #60 first restore drill | ✅ implemented | `homelab-restore-drill` WorkflowTemplate + `tests/homelab_backup/` |
 | #84 PVC restore drill with backup artifact | ✅ implemented | `homelab-restore-drill` WorkflowTemplate + `tests/homelab_backup/` |
 | Media service lane | ❌ deferred | #62 (shared mount) + #63 (GPU) |
 | #64 first non-media homelab workload lane | ✅ implemented | `homelab-print-service` WorkflowTemplate + `tests/service_catalog/print/` |
-| #67 printer-device access and LAN discovery | ❌ deferred | #54 substrate + host device passthrough |
+| #67 printer-device access + LAN discovery | ✅ defined | Substrate work from #54 required before tests execute |
 
 ---
 
@@ -516,3 +514,82 @@ cluster resources are created for a non-GPU cluster.
 | Multi-GPU scheduling / MIG slicing | No multi-GPU hardware in current lab | Deferred |
 | AMD ROCm (amd.com/gpu) | Primary target is NVIDIA | Deferred |
 | Intel QSV / VAAPI (i915/xe) | Deferred until NVIDIA path validated | Deferred |
+| #67 printer-device access + LAN discovery | ✅ defined | Substrate work from #54 required before tests execute |
+
+---
+
+## 10. Printer-Device Access and LAN Discovery Lane (#67)
+
+Split from the base non-media print-service lane (#64).  Defines the
+validation contracts for USB printer device access and LAN mDNS
+auto-discovery — the two hardware/network-heavy paths that are explicitly
+out of scope for the base lane.
+
+### Boundary between base lane and this lane
+
+| What | Base lane (#64) | This lane (#67) |
+|---|---|---|
+| CUPS deployment + PVC | ✅ validated | — |
+| IPP port 631 in-cluster reachability | ✅ validated | — |
+| Env injection (PUID/PGID/TZ) | ✅ validated | — |
+| Config PVC rollout persistence | ✅ validated | — |
+| USB device node in container | — | ✅ validated |
+| CUPS lpinfo USB URI | — | ✅ validated |
+| NodePort/LB service for LAN | — | ✅ validated |
+| avahi sidecar running + advertising | — | ✅ validated |
+| _ipp._tcp mDNS service record | — | ✅ validated |
+
+### Substrate assumptions from #54
+
+#### USB device-access path
+| Requirement | How to verify |
+|---|---|
+| USB printer attached to ghost node | `lsusb` on host reports printer VID/PID |
+| `usblp` or `usbfs` kernel module loaded | `lsmod \| grep usblp` on host |
+| Device node exists at expected path | `ls -la /dev/usb/lp0` on host |
+| Container runtime device allow-list includes device node | Pod spec carries `securityContext` or device allow-list entry |
+
+#### LAN mDNS / discovery path
+| Requirement | How to verify |
+|---|---|
+| NodePort or LoadBalancer service on port 30631 | `kubectl get svc -A \| grep 631` |
+| avahi-daemon sidecar running | sidecar container Ready in pod status |
+| avahi service file for _ipp._tcp present | `/etc/avahi/services/cups.service` in sidecar |
+| Multicast not filtered on node NIC | `avahi-browse -t _ipp._tcp` from host returns result |
+
+### Behavior table
+
+#### Class 1: TestPrinterDeviceAccessLane (gate: `TEST_USB_PRINTER_DEVICE` env var)
+
+| Behavior | Test | Artifact |
+|---|---|---|
+| USB device node visible in container | `test_usb_device_node_exists_in_container` | `print-device-node-check.txt` |
+| Device node is a character device | `test_usb_device_node_is_character_device` | `print-device-node-ls.txt` |
+| CUPS lpinfo reports USB device URI | `test_cups_can_detect_local_usb_printer` | `print-lpinfo.txt` |
+| CUPS accepts test print job | `test_cups_accepts_test_print_job` | `print-test-job.txt` |
+| Device node r/w permissions allow CUPS | `test_usb_device_permissions_allow_cups_user` | `print-device-permissions.txt` |
+| KubeVirt USB passthrough | `test_kubevirt_usb_passthrough_is_out_of_scope` | `pytest.skip` → #54 |
+
+#### Class 2: TestLanDiscoveryLane (gate: `TEST_AVAHI_ENABLED=true`)
+
+| Behavior | Test | Artifact |
+|---|---|---|
+| IPP service type is NodePort or LoadBalancer | `test_ipp_service_exposed_outside_cluster` | `print-discovery-service.json` |
+| NodePort reachable on node IP | `test_nodeport_is_reachable_on_node_ip` | `print-discovery-nodeport-reach.txt` |
+| avahi sidecar container is Ready | `test_avahi_sidecar_container_is_running` | `print-discovery-pods.json` |
+| avahi-daemon process is active | `test_avahi_daemon_process_is_active` | `print-avahi-process.txt` |
+| avahi advertises _ipp._tcp record | `test_avahi_daemon_advertises_ipp_service` | `print-avahi-browse.txt` |
+| avahi service file present in /etc/avahi/services/ | `test_avahi_service_file_is_present_in_config` | `print-avahi-services.txt` |
+| Auth-gated CUPS UI | `test_auth_gated_cups_ui_is_out_of_scope` | `pytest.skip` → deferred |
+| Split-horizon DNS for CUPS | `test_split_horizon_dns_for_cups_is_out_of_scope` | `pytest.skip` → bluespeed |
+
+### WorkflowTemplate parameters
+
+| Parameter | Default | Purpose |
+|---|---|---|
+| `usb-device-path` | `""` | Set to host device path (e.g. `/dev/usb/lp0`) to enable USB tests |
+| `avahi-enabled` | `"false"` | Set to `"true"` to enable mDNS discovery tests |
+| `ipp-nodeport` | `"30631"` | NodePort number for external IPP service |
+
+When both parameters are at their defaults, all tests skip with informative messages
+and the workflow exits successfully — non-hardware CI is not broken.
