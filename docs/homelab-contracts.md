@@ -293,7 +293,7 @@ separate concern validated by the auth lane (#61).
 | Issue | Status | Dependency |
 |---|---|---|
 | #62 RWX / shared-storage | ❌ blocked | NFS CSI or Longhorn installation on ghost |
-| #63 GPU transcoding lane | ❌ deferred | GPU passthrough KubeVirt feature gate |
+| #63 GPU transcoding lane | ✅ defined | Substrate work from #54 required before tests execute |
 | #61 auth-gated service UI | ❌ deferred | service-catalog baseline lane first |
 | #60 first restore drill | ⏳ ready | #62 not required for single-pod RWO restore |
 | #84 PVC restore drill with backup artifact | ⏳ ready | #62 not required |
@@ -350,3 +350,72 @@ with `lscr.io/linuxserver/cups:latest` when the lane graduates from
 validation to integration testing.  All five deployment-contract behaviors
 (PVC, env, port, DNS, restart persistence) are fully representative even
 with the stub image.
+
+---
+
+## 8. GPU Transcoding and Hardware-Passthrough Lane (#63)
+
+Split from the base media-service lane (#59).  Defines the in-cluster
+validation contract for NVIDIA CUDA/NVENC hardware-accelerated transcoding.
+AMD ROCm and Intel QSV paths are deferred; KubeVirt VM-backed passthrough
+is tracked in #54.
+
+### Substrate dependency chain
+
+```
+#54 substrate (GPU device plugin + driver stack on ghost)
+    → #63 this lane (GPU transcoding contract proven)
+    → #59 base media lane (unblocked from GPU split)
+```
+
+### Required substrate from #54 before this lane executes
+
+| Requirement | How to verify |
+|---|---|
+| NVIDIA driver loaded on host (ghost) | `nvidia-smi` on host returns GPU name |
+| nvidia-container-toolkit installed | `nvidia-ctk --version` succeeds |
+| nvidia-device-plugin DaemonSet running | `kubectl get pods -A -l app=nvidia-device-plugin` shows Running |
+| Node reports allocatable GPU capacity | `kubectl get nodes -o json` has `nvidia.com/gpu` > 0 in allocatable |
+| Container runtimeClass `nvidia` registered | `kubectl get runtimeclass nvidia` exists |
+
+### Behavior table (tests run only when GPU is allocatable)
+
+| Behavior | Test | Artifact |
+|---|---|---|
+| Node has allocatable GPU capacity | `test_gpu_node_has_allocatable_capacity` | `gpu-node-allocatable.txt` |
+| Device plugin DaemonSet is Running | `test_device_plugin_daemonset_is_running` | `gpu-device-plugin-pods.json` |
+| GPU Deployment reaches `availableReplicas >= 1` | `test_gpu_deployment_becomes_ready` | `gpu-deployment.json` |
+| Pod with GPU resource limit reaches Running | `test_gpu_pod_reaches_running_state` | `gpu-pods.json` |
+| GPU resource limit present in pod spec | `test_gpu_resource_limit_present_in_pod_spec` | — |
+| /dev/nvidia* device node visible in container | `test_gpu_device_node_visible_in_container` | `gpu-dev-nodes.txt` |
+| nvidia-smi reports GPU in container | `test_nvidia_smi_reports_gpu_in_container` | `gpu-nvidia-smi.txt` |
+| ffmpeg lists nvenc encoder | `test_ffmpeg_lists_nvenc_encoder` | `gpu-ffmpeg-encoders.txt` |
+| ffmpeg hardware transcode completes (1-second clip) | `test_ffmpeg_hardware_transcode_completes` | `gpu-transcode-output.txt` |
+| GPU capacity recovers after pod deletion | `test_gpu_resource_is_released_after_pod_deletion` | `gpu-allocatable-after-delete.txt` |
+| KubeVirt VM-backed passthrough | `test_kubevirt_vm_gpu_passthrough_is_out_of_scope_for_this_lane` | `pytest.skip` → #54 |
+| Multi-GPU / MIG slicing | `test_multi_gpu_and_mig_slicing_is_out_of_scope_for_this_lane` | `pytest.skip` → deferred |
+| AMD ROCm / Intel QSV | `test_amd_and_intel_gpu_paths_are_out_of_scope_for_this_lane` | `pytest.skip` → deferred |
+
+### Module-level skip gate
+
+All tests are gated at module import time by `_gpu_allocatable_on_any_node()`.
+If no `nvidia.com/gpu` (or `TEST_GPU_RESOURCE_KEY`) resource appears in any
+node's allocatable map, the entire module is skipped with a message pointing
+to the #54 substrate requirements above.  This means the GPU lane can be
+included in standard CI without failing on non-GPU clusters.
+
+### WorkflowTemplate guard step
+
+`check-gpu-prerequisites` runs before namespace creation.  If it fails
+(no allocatable GPU, no Running device plugin pods), the workflow exits
+with a clear error message listing the three steps needed from #54.  No
+cluster resources are created for a non-GPU cluster.
+
+### Out-of-scope splits
+
+| Path | Reason | Tracked |
+|---|---|---|
+| KubeVirt VM-backed GPU passthrough (VFIO/IOMMU) | Requires additional substrate + #54 | #54 |
+| Multi-GPU scheduling / MIG slicing | No multi-GPU hardware in current lab | Deferred |
+| AMD ROCm (amd.com/gpu) | Primary target is NVIDIA | Deferred |
+| Intel QSV / VAAPI (i915/xe) | Deferred until NVIDIA path validated | Deferred |

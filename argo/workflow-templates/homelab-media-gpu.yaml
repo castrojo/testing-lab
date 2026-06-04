@@ -1,0 +1,236 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: homelab-media-gpu
+  namespace: argo
+  labels:
+    app.kubernetes.io/component: homelab-media-gpu
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  entrypoint: pipeline
+  onExit: cleanup
+  serviceAccountName: homelab-runner
+  arguments:
+    parameters:
+      - name: lane
+        value: "homelab-media-gpu"
+      - name: branch
+        value: "main"
+      - name: gpu-resource-key
+        value: "nvidia.com/gpu"
+      - name: device-plugin-label
+        value: "app=nvidia-device-plugin"
+  templates:
+    - name: pipeline
+      dag:
+        tasks:
+          - name: check-gpu-prerequisites
+            template: check-gpu-prerequisites
+            arguments:
+              parameters:
+                - name: gpu-resource-key
+                  value: "{{workflow.parameters.gpu-resource-key}}"
+                - name: device-plugin-label
+                  value: "{{workflow.parameters.device-plugin-label}}"
+          - name: create-namespace
+            depends: "check-gpu-prerequisites.Succeeded"
+            template: create-namespace
+            arguments:
+              parameters:
+                - name: namespace
+                  value: "homelab-media-gpu-{{workflow.uid}}"
+          - name: deploy-fixture
+            depends: "create-namespace.Succeeded"
+            template: deploy-fixture
+            arguments:
+              parameters:
+                - name: namespace
+                  value: "homelab-media-gpu-{{workflow.uid}}"
+                - name: lane
+                  value: "{{workflow.parameters.lane}}"
+                - name: gpu-resource-key
+                  value: "{{workflow.parameters.gpu-resource-key}}"
+          - name: run-tests
+            depends: "deploy-fixture.Succeeded"
+            templateRef:
+              name: run-incluster-tests
+              template: run-pytest
+            arguments:
+              parameters:
+                - name: namespace
+                  value: "homelab-media-gpu-{{workflow.uid}}"
+                - name: suite-path
+                  value: "service_catalog/media_gpu"
+                - name: lane
+                  value: "{{workflow.parameters.lane}}"
+                - name: app-label
+                  value: "app=homelab-media-gpu"
+                - name: service-name
+                  value: "homelab-media-gpu"
+                - name: branch
+                  value: "{{workflow.parameters.branch}}"
+
+    - name: check-gpu-prerequisites
+      # Guard step: verify GPU device plugin is available before allocating
+      # cluster resources.  Fails the workflow early with a clear message
+      # rather than creating a namespace and leaving a pending pod.
+      inputs:
+        parameters:
+          - name: gpu-resource-key
+          - name: device-plugin-label
+      script:
+        image: cgr.dev/chainguard/kubectl:latest-dev
+        command: [bash, -c]
+        source: |
+          set -euo pipefail
+          GPU_KEY="{{inputs.parameters.gpu-resource-key}}"
+          PLUGIN_LABEL="{{inputs.parameters.device-plugin-label}}"
+
+          echo "=== Checking GPU allocatable capacity ===" >&2
+          ALLOCATABLE=$(kubectl get nodes -o json | \
+            python3 -c "
+          import sys, json
+          nodes = json.load(sys.stdin).get('items', [])
+          total = 0
+          for n in nodes:
+              val = n.get('status', {}).get('allocatable', {}).get('${GPU_KEY}', '0')
+              try: total += int(val)
+              except: pass
+          print(total)
+          ")
+          echo "Allocatable ${GPU_KEY}: ${ALLOCATABLE}" >&2
+
+          if [ "${ALLOCATABLE}" -lt 1 ]; then
+            echo "ERROR: No allocatable ${GPU_KEY} found on any node." >&2
+            echo "GPU transcoding lane requires substrate work from #54:" >&2
+            echo "  1. Install NVIDIA driver on host node (ghost)" >&2
+            echo "  2. Install nvidia-container-toolkit" >&2
+            echo "  3. Deploy nvidia-device-plugin DaemonSet" >&2
+            echo "  4. Verify: kubectl get nodes -o json | grep -i gpu" >&2
+            exit 1
+          fi
+
+          echo "=== Checking device plugin DaemonSet ===" >&2
+          RUNNING=$(kubectl get pods --all-namespaces -l "${PLUGIN_LABEL}" \
+            --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+          echo "Running device plugin pods: ${RUNNING}" >&2
+
+          if [ "${RUNNING}" -lt 1 ]; then
+            echo "ERROR: No Running pods found for label '${PLUGIN_LABEL}'." >&2
+            echo "Install and verify the nvidia-device-plugin DaemonSet (see #54)." >&2
+            exit 1
+          fi
+
+          echo "GPU prerequisites satisfied." >&2
+
+    - name: create-namespace
+      inputs:
+        parameters:
+          - name: namespace
+      resource:
+        action: create
+        manifest: |
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{inputs.parameters.namespace}}"
+            labels:
+              app.kubernetes.io/part-of: bluefin-test-suite
+              bluefin.io/lane: homelab-media-gpu
+
+    - name: deploy-fixture
+      inputs:
+        parameters:
+          - name: namespace
+          - name: lane
+          - name: gpu-resource-key
+      script:
+        image: cgr.dev/chainguard/kubectl:latest-dev
+        command: [bash, -c]
+        source: |
+          set -euo pipefail
+          NS="{{inputs.parameters.namespace}}"
+          GPU_KEY="{{inputs.parameters.gpu-resource-key}}"
+          kubectl apply -n "${NS}" -f - <<EOF
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: homelab-media-gpu-config
+            labels:
+              app: homelab-media-gpu
+              app.kubernetes.io/part-of: bluefin-test-suite
+              bluefin.io/lane: "{{inputs.parameters.lane}}"
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 1Gi
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: homelab-media-gpu
+            labels:
+              app: homelab-media-gpu
+              app.kubernetes.io/part-of: bluefin-test-suite
+              bluefin.io/lane: "{{inputs.parameters.lane}}"
+              bluefin.io/workload-class: media-gpu
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: homelab-media-gpu
+            template:
+              metadata:
+                labels:
+                  app: homelab-media-gpu
+                  app.kubernetes.io/part-of: bluefin-test-suite
+                  bluefin.io/lane: "{{inputs.parameters.lane}}"
+                  bluefin.io/workload-class: media-gpu
+              spec:
+                nodeSelector:
+                  kubernetes.io/hostname: ghost
+                runtimeClassName: nvidia
+                containers:
+                  - name: media-transcoder
+                    # NVIDIA CUDA base image with ffmpeg for hardware transcoding
+                    # validation.  Includes nvidia-smi, CUDA libraries, and
+                    # ffmpeg built with NVENC/NVDEC support.
+                    # Source: https://hub.docker.com/r/linuxserver/ffmpeg
+                    image: docker.io/linuxserver/ffmpeg:latest
+                    command: [sh, -c, "sleep 3600"]
+                    env:
+                      - name: PUID
+                        value: "1000"
+                      - name: PGID
+                        value: "1000"
+                      - name: TZ
+                        value: "UTC"
+                      - name: NVIDIA_VISIBLE_DEVICES
+                        value: "all"
+                      - name: NVIDIA_DRIVER_CAPABILITIES
+                        value: "compute,video,utility"
+                    resources:
+                      limits:
+                        "${GPU_KEY}": "1"
+                    volumeMounts:
+                      - name: config
+                        mountPath: /config
+                volumes:
+                  - name: config
+                    persistentVolumeClaim:
+                      claimName: homelab-media-gpu-config
+          EOF
+          kubectl rollout status deployment/homelab-media-gpu -n "${NS}" --timeout=300s >&2
+
+    - name: cleanup
+      script:
+        image: cgr.dev/chainguard/kubectl:latest-dev
+        command: [bash, -c]
+        source: |
+          set -euo pipefail
+          NS="homelab-media-gpu-{{workflow.uid}}"
+          kubectl delete namespace "${NS}" --ignore-not-found=true >&2 || true
+          timeout 180 bash -c "until ! kubectl get namespace \"${NS}\" >/dev/null 2>&1; do sleep 5; done" >&2 || true
+          echo "cleanup-complete"
