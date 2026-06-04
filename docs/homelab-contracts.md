@@ -3,12 +3,9 @@
 This document defines the in-cluster workload validation contracts for the
 testing-lab QA factory. It covers the workload matrix (#57), shared-storage
 and RWX limits (#62), storage observability surface (#70, #78), the
-fleet-client vs. cluster-node boundary (#72), and the HTTPS service-exposure
-lane (#58).
+fleet-client vs. cluster-node boundary (#72), the HTTPS service-exposure lane (#58), and the deferred non-core service follow-up for Home Assistant-class workloads (#69).
 
-For the service-catalog workload contract that all service lanes must
-satisfy, see [`docs/service-catalog-contract.md`](service-catalog-contract.md)
-(#66).
+For the service-catalog workload contract that all service lanes must satisfy, see [`docs/service-catalog-contract.md`](service-catalog-contract.md) (#66).
 
 ---
 
@@ -285,6 +282,101 @@ separate concern validated by the auth lane (#61).
 4. **External exposure**: LAN-facing reverse proxy patterns
    (`bluespeed.local`) and ingress controller validation belong to the
    bluespeed project, not this lane.
+## 9. Deferred Non-Core Service Follow-Up: Home Assistant-Class Workloads (#69)
+
+This section formally defines **Home Assistant-class workloads** as deferred
+scope under the service-catalog epic (#51). These are non-core homelab
+services that have significant infrastructure requirements beyond what the
+current lab validates. This section exists to make the deferral explicit and
+managed rather than implied.
+
+### What "Home Assistant-class" means
+
+Home Assistant is the representative example, but this class covers any
+homelab service that exhibits most of these characteristics:
+
+| Characteristic | Example |
+|---|---|
+| **Long-lived stateful service** | Home Assistant, Node-RED, Zigbee2MQTT |
+| **Persistent configuration database** | SQLite/PostgreSQL on a PVC |
+| **Web UI requiring auth-gated HTTPS** | HA dashboard, Node-RED editor |
+| **Hardware/peripheral integration** | Zigbee/Z-Wave USB dongles, Bluetooth |
+| **LAN service discovery** | mDNS, SSDP, multicast |
+| **Addon/plugin ecosystem** | HA integrations, HACS, custom components |
+| **Upgrade-sensitive state** | DB migrations on version bump |
+
+### Why this is deferred
+
+Non-core service validation depends on infrastructure that the lab has not
+yet proven. Attempting to validate Home Assistant-class workloads before
+the prerequisites are durable would either produce false confidence (testing
+against ad hoc workarounds) or block on unresolved substrate gaps.
+
+### Entry criteria — all must be met before this work becomes active
+
+| # | Criterion | Tracks to |
+|---|---|---|
+| 1 | **Shared service-catalog workload contract is defined and implemented** — the minimum deployment, persistence, reachability, and teardown evidence that every service lane must prove | #66 (contract), #79 (pipeline) |
+| 2 | **At least one durable media-service lane is running** — proving the service-catalog pipeline works end-to-end with a real workload | #59 → #80 |
+| 3 | **At least one durable non-media service lane is running** — proving the pipeline generalizes beyond media workloads | #64 → #81 |
+| 4 | **HTTPS exposure lane is validated** — the access/TLS infrastructure that any auth-gated UI depends on | #58 |
+| 5 | **Auth-gating lane is validated** — the credential-enforcement layer that any exposed service UI depends on | #61 |
+| 6 | **Storage persistence survives restart** — proven by the homelab-storage lane; non-core services depend on this for config/DB durability | `homelab-storage` lane |
+
+### What this repo will validate when entry criteria are met
+
+Once active, the Home Assistant-class lane should validate:
+
+- **Deployment**: Service deploys via raw manifests into a dedicated namespace
+  using the shared service-catalog pipeline (#79).
+- **Persistence**: Configuration database survives `rollout restart` (same
+  contract as homelab-storage, applied to the service's config PVC).
+- **HTTPS reachability**: Web UI is reachable over HTTPS within the cluster
+  (reuses the access-probe infrastructure from #58).
+- **Auth-gating**: Web UI rejects unauthenticated access and accepts valid
+  credentials (reuses the auth-gating infrastructure from #61).
+- **Health endpoint**: Service-specific health or readiness endpoint returns
+  a healthy status after deployment.
+
+### What remains explicitly out of scope even when active
+
+| Concern | Why deferred further |
+|---|---|
+| **USB/Zigbee/Z-Wave device passthrough** | Requires KubeVirt device passthrough or privileged containers; tracked under #67 |
+| **mDNS/SSDP LAN discovery** | Requires host-network or multicast support; tracked under #67 |
+| **Addon/plugin ecosystem validation** | Product-scope, not infrastructure validation |
+| **Home Assistant OS or Supervised installs** | This repo validates k8s-native container workloads only |
+| **VM-backed role validation** | Tracked under #54, explicitly not a blocker for k8s-first lanes |
+| **Identity provider / SSO integration** | Deferred from the auth-gating lane; applies here too |
+
+### Relationship to the service-catalog epic (#51)
+
+This issue is child #6 of #51, deliberately sequenced last:
+
+1. ~~Shared workload contract~~ → #66
+2. ~~Shared pipeline~~ → #79
+3. ~~Media-service lane~~ → #59 → #80
+4. ~~Non-media lane~~ → #64 → #81
+5. ~~Hardware/discovery splits~~ → #63, #67
+6. **Non-core deferred follow-up** → **this section (#69)**
+
+The sequencing is intentional: non-core services consume all of the
+infrastructure that the earlier lanes prove. Activating #69 before the
+earlier lanes are durable means testing against unvalidated substrate.
+
+### How to activate this lane
+
+When all entry criteria in the table above are met:
+
+1. File a new implementation issue under #51 for the first Home
+   Assistant-class workload (e.g., "implement Home Assistant validation
+   lane in service-catalog pipeline").
+2. The implementation issue should reference this section for scope and
+   explicitly inherit the shared workload contract from #66.
+3. Move this section's status from "deferred" to "active" in the blockers
+   table below (§7).
+4. Do not remove this section — it serves as the design record for why the
+   work was deferred and what the activation criteria were.
 
 ---
 
@@ -295,8 +387,13 @@ separate concern validated by the auth lane (#61).
 | #62 RWX / shared-storage | ❌ blocked | NFS CSI or Longhorn installation on ghost |
 | #63 GPU transcoding lane | ✅ defined | Substrate work from #54 required before tests execute |
 | #61 auth-gated service UI | ❌ deferred | service-catalog baseline lane first |
+<<<<<<< HEAD
 | #60 first restore drill | ⏳ ready | #62 not required for single-pod RWO restore |
 | #84 PVC restore drill with backup artifact | ⏳ ready | #62 not required |
+=======
+| #69 Home Assistant-class workloads | ❌ deferred | All entry criteria in §6 (#66, #79, #80, #81, #58, #61, storage lane) |
+| #60 first restore drill | ✅ implemented | `homelab-restore-drill` WorkflowTemplate + `tests/homelab_backup/` |
+| #84 PVC restore drill with backup artifact | ✅ implemented | `homelab-restore-drill` WorkflowTemplate + `tests/homelab_backup/` |
 | Media service lane | ❌ deferred | #62 (shared mount) + #63 (GPU) |
 | #64 first non-media homelab workload lane | ✅ implemented | `homelab-print-service` WorkflowTemplate + `tests/service_catalog/print/` |
 | #67 printer-device access and LAN discovery | ❌ deferred | #54 substrate + host device passthrough |
