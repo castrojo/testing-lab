@@ -226,7 +226,7 @@ spec:
           # Determine service type based on avahi-enabled flag.
           if [ "${AVAHI}" = "true" ]; then
             SVC_TYPE="NodePort"
-            NODEPORT_LINE="          nodePort: ${NODEPORT}"
+            NODEPORT_LINE="nodePort: ${NODEPORT}"
           else
             SVC_TYPE="ClusterIP"
             NODEPORT_LINE=""
@@ -280,6 +280,8 @@ spec:
                     # (not an nginx stub) because the USB-device and avahi
                     # tests require real CUPS commands (lpinfo, lp, lpstat).
                     image: lscr.io/linuxserver/cups:latest
+                    securityContext:
+                      privileged: true
                     ports:
                       - containerPort: 631
                     env:
@@ -292,10 +294,11 @@ spec:
                     volumeMounts:
                       - name: config
                         mountPath: /config${USB_VOLUME_MOUNT}
+                ${AVAHI_CONTAINER}
                 volumes:
                   - name: config
                     persistentVolumeClaim:
-                      claimName: homelab-print-device-config${USB_VOLUME}${AVAHI_CM_VOLUME}${AVAHI_CONTAINER}
+                      claimName: homelab-print-device-config${USB_VOLUME}${AVAHI_CM_VOLUME}
           ---
           apiVersion: v1
           kind: Service

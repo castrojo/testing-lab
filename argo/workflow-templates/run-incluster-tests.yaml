@@ -15,6 +15,11 @@ spec:
       - |
         exec bash <<'SCRIPT_EOF'
         set -euo pipefail
+        EXTRA_ENV='{{inputs.parameters.extra-env}}'
+        while IFS= read -r assignment; do
+          [[ -z "${assignment}" ]] && continue
+          export "${assignment}"
+        done <<< "${EXTRA_ENV}"
         mkdir -p /tmp/results
         LOG=/tmp/results/runner.log
         exec > >(tee -a "${LOG}") 2>&1
@@ -124,6 +129,8 @@ spec:
         value: ""
       - name: branch
         value: main
+      - name: extra-env
+        value: ""
     metadata:
       labels:
         app.kubernetes.io/part-of: bluefin-test-suite
