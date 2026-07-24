@@ -306,6 +306,6 @@ lint:
     @echo "✔ bootstrap: no linting errors found!"
     @for f in argo/*.yaml; do \
         echo "Linting $f..."; \
-        argo lint "$f" || exit 1; \
+        argo lint --offline argo/workflow-templates/ "$f" || exit 1; \
     done
     @echo "✓ All manifests valid"
