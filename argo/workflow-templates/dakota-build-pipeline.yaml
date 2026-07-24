@@ -75,10 +75,14 @@ spec:
           # ponytail: use the proven local publish path for the user-facing Dakota lane;
           # distributed RE remains available below for recovery experiments, but must not block releases.
           - name: build-bluefin
-            template: bst-build-local
+            template: run-bst-step
             depends: detect-build-mode
             arguments:
               parameters:
+                - name: element
+                  value: "oci/bluefin.bst"
+                - name: tag
+                  value: "dakota"
                 - name: ref
                   value: "{{inputs.parameters.ref}}"
                 - name: commit-sha
@@ -87,6 +91,10 @@ spec:
                   value: "{{inputs.parameters.repo}}"
                 - name: registry
                   value: "{{inputs.parameters.registry}}"
+                - name: mode
+                  value: "{{tasks.detect-build-mode.outputs.parameters.mode}}"
+                - name: lock-key
+                  value: "{{inputs.parameters.lock-key}}"
     # Dakota builds are distributed-only. Non-RE modes are rejected to prevent
     # local/serial bypasses that write large build state to node root disks.
     - name: detect-build-mode

@@ -81,9 +81,9 @@ def test_dakota_production_lane_publishes_through_local_path():
         encoding="utf-8"
     )
 
-    # The production DAG routes through the proven local publisher; the
-    # distributed bst-build-re template stays available for recovery runs.
-    assert "template: bst-build-local" in pipeline
+    # The production DAG routes through the distributed remote-execution builder;
+    # local publisher remains available for recovery.
+    assert "template: run-bst-step" in pipeline
     assert "name: bst-build-local" in pipeline
     assert "name: bst-build-re" in pipeline
     assert "DAKOTA PUBLISHED" in pipeline
