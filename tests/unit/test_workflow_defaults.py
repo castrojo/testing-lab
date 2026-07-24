@@ -45,10 +45,10 @@ def test_dakota_requires_distributed_capacity_matched_execution():
         encoding="utf-8"
     )
 
-    assert "fetchers: 4" in config
-    assert "builders: 2" in config
-    assert "pushers: 2" in config
-    assert "max-jobs: 8" in config
+    assert "fetchers: 16" in config
+    assert "builders: 16" in config
+    assert "pushers: 8" in config
+    assert "max-jobs: 16" in config
     assert "nodeSelector:\n        kubernetes.io/hostname: ghost" not in pipeline
     assert "depends: detect-build-mode" in pipeline
     assert "Verified BuildStream remote execution configuration" in pipeline
@@ -119,10 +119,8 @@ def test_dakota_runner_allows_native_chroot_input_root_execution():
 def test_buildbarn_runner_uses_stable_tmpdir_after_chroot():
     config = (ROOT / "manifests/buildbarn-config.yaml").read_text(encoding="utf-8")
     assert "setTmpdirEnvironmentVariable:" not in config
-    assert "symlinkTemporaryDirectories: ['/tmp', '/var/tmp']" in config
-    assert "concurrency: 1" in config
+    assert "concurrency: 8" in config
     assert "runCommandsAs: { userId: 0, groupId: 0 }" in config
-    assert "concurrency: 1" in config
     # Production uses the native build directory: the virtual/FUSE experiment
     # failed startup with "operation not permitted" and is not a valid gate.
     assert "native:" in config

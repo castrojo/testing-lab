@@ -252,10 +252,9 @@ data:
         },
         runners: [{
           endpoint: { address: 'unix:///worker/runner' },
-          // Temporary-directory symlinking below is documented by BuildBarn as
-          // safe only with one concurrent command. Keep this at one until the
-          // runner can provide isolated per-action temporary mounts.
-          concurrency: 1,
+          // Scale worker concurrency to 8 parallel actions per node across the
+          // Thunderbolt/NVMe fabric for high throughput distributed builds.
+          concurrency: 8,
           // Match BuildStream REAPI action platform properties so workers
           // register into the same scheduler queue key.
           platform: {
@@ -284,8 +283,8 @@ data:
       inputDownloadConcurrency: 128,
       outputUploadConcurrency: 64,
       directoryCache: {
-        maximumCount: 200000,
-        maximumSizeBytes: 1024 * 1024 * 1024,
+        maximumCount: 1000000,
+        maximumSizeBytes: 4 * 1024 * 1024 * 1024,
         cacheReplacementPolicy: 'LEAST_RECENTLY_USED',
       },
     }
@@ -302,10 +301,5 @@ data:
       // bb-remote-execution pkg/proto/configuration/bb_runner/bb_runner.proto.
       // Keep this config aligned with bb_runner ApplicationConfiguration fields.
       chrootIntoInputRoot: true,
-      // Keep TMPDIR unset because its host-side build-directory path is outside
-      // the chroot. Instead replace the action root's /tmp and /var/tmp with
-      // bb_worker-managed per-action paths. This is safe with one runner
-      // command at a time and lets cargo/make use /tmp after chroot(2).
-      symlinkTemporaryDirectories: ['/tmp', '/var/tmp'],
       runCommandsAs: { userId: 0, groupId: 0 },
     }

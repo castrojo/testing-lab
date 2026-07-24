@@ -14,12 +14,12 @@ data:
   dakota-buildstream.conf: |
     scheduler:
       network-retries: 8
-      fetchers: 4
-      builders: 2
-      pushers: 2
+      fetchers: 16
+      builders: 16
+      pushers: 8
     build:
-      max-jobs: 8
- 
+      max-jobs: 16
+
     artifacts:
       override-project-caches: false
       servers:
@@ -58,7 +58,11 @@ data:
           retry-limit: 8
           retry-delay: 1000
           request-timeout: 1800
-      # Do not read the historical action cache while recovering the
-      # distributed gate. Earlier native-runner failures were cached under
-      # deterministic action digests; fresh executions must reach the repaired
-      # virtual worker.
+      action-cache-service:
+        url: grpc://frontend.buildbarn.svc.cluster.local:8980
+        push: true
+        connection-config:
+          keepalive-time: 60
+          retry-limit: 8
+          retry-delay: 1000
+          request-timeout: 1800

@@ -110,10 +110,8 @@ spec:
             memory: 128Mi
         source: |
           set -euo pipefail
-          # The production Dakota lane uses the proven local BuildStream
-          # publisher. A broken BuildBarn must not prevent users from receiving
-          # dakota:testing; the distributed template remains available below for recovery.
-          printf '%s' local > /tmp/mode
+          # The production Dakota lane uses the distributed BuildStream remote-execution builder.
+          printf '%s' re > /tmp/mode
 
     - name: run-bst-step
       inputs:
@@ -319,10 +317,9 @@ spec:
           - name: GRPC_ENABLE_FORK_SUPPORT
             value: "1"
           - name: XDG_CACHE_HOME
-            # Use a fresh coordinator cache for distributed actions. Historical
-            # native-runner failures were cached under deterministic keys and
-            # must not mask execution on the repaired virtual worker.
-            value: "/tmp/{{workflow.name}}-buildstream-cache"
+            # Reuse persistent node-local cache on the XFS mount for fast
+            # coordinator state and local artifact reuse across workflows.
+            value: "/root/.cache"
         resources:
           requests:
             cpu: "2"
@@ -462,8 +459,8 @@ spec:
           echo "=== Building ${ELEMENT} with bootc preloaded ==="
           bst --config "${BST_CONF}" \
               --no-interactive \
-              --max-jobs 8 \
-              --fetchers 4 \
+              --max-jobs 16 \
+              --fetchers 16 \
               build "${ELEMENT}"
 
           echo "=== Exporting ${ELEMENT} ==="
