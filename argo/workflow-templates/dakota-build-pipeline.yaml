@@ -155,6 +155,19 @@ spec:
                   value: "{{inputs.parameters.mode}}"
                 - name: lock-key
                   value: "{{inputs.parameters.lock-key}}"
+          - name: bst-local
+            template: bst-build-local
+            when: "'{{inputs.parameters.mode}}' == 'local'"
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: commit-sha
+                  value: "{{inputs.parameters.commit-sha}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
 
 
     # Proven local publish path. The distributed path above is retained for recovery,
