@@ -3,8 +3,8 @@
   "_meta": {
     "page": "applications",
     "description": "Live ArgoCD GitOps application health and sync status.",
-    "generated_at": "2026-07-20T16:01:11Z",
-    "live_snapshot_ok": false
+    "generated_at": "2026-07-24T21:23:39Z",
+    "live_snapshot_ok": true
   },
   "applications": [
     {
@@ -12,39 +12,68 @@
       "namespace": "argocd",
       "sync_status": "Synced",
       "health_status": "Healthy",
-      "target_revision": "main",
-      "path": "argo",
-      "repo_url": "https://github.com/projectbluefin/lab",
-      "destination_namespace": "argo",
+      "target_revision": "0.9.3",
+      "path": "gha-runner-scale-set",
+      "repo_url": "ghcr.io/actions/actions-runner-controller-charts",
+      "destination_namespace": "arc-runners",
       "drifted_count": 0,
       "drifted_resources": [],
-      "collected_at": "2026-07-20T16:01:11Z"
+      "collected_at": "2026-07-24T21:23:39Z"
     },
     {
       "name": "arc-systems",
       "namespace": "argocd",
-      "sync_status": "Synced",
+      "sync_status": "OutOfSync",
       "health_status": "Healthy",
-      "target_revision": "main",
-      "path": "argo",
-      "repo_url": "https://github.com/projectbluefin/lab",
-      "destination_namespace": "argo",
-      "drifted_count": 0,
-      "drifted_resources": [],
-      "collected_at": "2026-07-20T16:01:11Z"
+      "target_revision": "0.9.3",
+      "path": "gha-runner-scale-set-controller",
+      "repo_url": "ghcr.io/actions/actions-runner-controller-charts",
+      "destination_namespace": "arc-systems",
+      "drifted_count": 4,
+      "drifted_resources": [
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "name": "autoscalinglisteners.actions.github.com",
+          "namespace": "",
+          "status": "OutOfSync"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "name": "autoscalingrunnersets.actions.github.com",
+          "namespace": "",
+          "status": "OutOfSync"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "name": "ephemeralrunners.actions.github.com",
+          "namespace": "",
+          "status": "OutOfSync"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "name": "ephemeralrunnersets.actions.github.com",
+          "namespace": "",
+          "status": "OutOfSync"
+        }
+      ],
+      "collected_at": "2026-07-24T21:23:39Z"
     },
     {
       "name": "argo-workflows",
       "namespace": "argocd",
       "sync_status": "Synced",
       "health_status": "Healthy",
-      "target_revision": "main",
-      "path": "argo",
-      "repo_url": "https://github.com/projectbluefin/lab",
+      "target_revision": "0.45.28",
+      "path": "argo-workflows",
+      "repo_url": "https://argoproj.github.io/argo-helm",
       "destination_namespace": "argo",
       "drifted_count": 0,
       "drifted_resources": [],
-      "collected_at": "2026-07-20T16:01:11Z"
+      "collected_at": "2026-07-24T21:23:39Z"
     },
     {
       "name": "flatcar-update",
@@ -52,12 +81,12 @@
       "sync_status": "Synced",
       "health_status": "Healthy",
       "target_revision": "main",
-      "path": "argo",
-      "repo_url": "https://github.com/projectbluefin/lab",
-      "destination_namespace": "argo",
+      "path": "manifests",
+      "repo_url": "https://github.com/projectbluefin/testing-lab",
+      "destination_namespace": "flatcar-update",
       "drifted_count": 0,
       "drifted_resources": [],
-      "collected_at": "2026-07-20T16:01:11Z"
+      "collected_at": "2026-07-24T21:23:39Z"
     },
     {
       "name": "testing-lab",
@@ -65,25 +94,25 @@
       "sync_status": "Synced",
       "health_status": "Healthy",
       "target_revision": "main",
-      "path": "argo",
+      "path": "argo/workflow-templates",
       "repo_url": "https://github.com/projectbluefin/lab",
       "destination_namespace": "argo",
       "drifted_count": 0,
       "drifted_resources": [],
-      "collected_at": "2026-07-20T16:01:11Z"
+      "collected_at": "2026-07-24T21:23:39Z"
     },
     {
       "name": "testing-lab-infra",
       "namespace": "argocd",
       "sync_status": "Synced",
-      "health_status": "Healthy",
+      "health_status": "Progressing",
       "target_revision": "main",
       "path": "manifests",
       "repo_url": "https://github.com/projectbluefin/lab",
       "destination_namespace": "argo",
       "drifted_count": 0,
       "drifted_resources": [],
-      "collected_at": "2026-07-20T16:01:11Z"
+      "collected_at": "2026-07-24T21:23:39Z"
     }
   ]
 }

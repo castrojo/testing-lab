@@ -261,6 +261,116 @@ const bstChartPayload = {
   cells: bstCells,
 };
 const serializedBstChartData = serializeJsonScript(bstChartPayload);
+
+// ── Raptor Grid Leaderboard Data (Motorsports F1 Dashboard) ──────
+const raptorEntrants = [
+  {
+    rank: 'P1',
+    badge: 'LEADER / RE GRID',
+    name: 'Raptor Dakota (Cluster RE)',
+    variant: 'dakota:testing',
+    repo: 'projectbluefin/dakota',
+    engine: 'BuildBarn 24-Worker RE / 40G USB4',
+    bestLap: '< 5m',
+    avgPitStop: '12m - 14m',
+    heavyStint: '12m',
+    status: 'ACTIVE / TARGET',
+    tone: 'passed',
+    runUrl: 'http://192.168.1.102:32746/workflows/argo',
+    sparkKey: 'dakota',
+  },
+  {
+    rank: 'P2',
+    badge: 'FASTEST GHA',
+    name: 'Raptor Bluefin-LTS Stable',
+    variant: 'bluefin-lts:stable',
+    repo: 'projectbluefin/bluefin-lts',
+    engine: 'GitHub Actions Containerdisk',
+    bestLap: '1m',
+    avgPitStop: '12.8m',
+    heavyStint: '33m',
+    status: 'ACTIVE',
+    tone: 'passed',
+    runUrl: (imageBuilds['bluefin-lts-stable']?.[0] as { run_url?: string } | undefined)?.run_url || 'https://github.com/projectbluefin/bluefin-lts/actions',
+    sparkKey: 'bluefin-lts-stable',
+  },
+  {
+    rank: 'P3',
+    badge: 'PODIUM',
+    name: 'Raptor Bluefin-LTS Testing',
+    variant: 'bluefin-lts:testing',
+    repo: 'projectbluefin/bluefin-lts',
+    engine: 'GitHub Actions Containerdisk',
+    bestLap: '3m',
+    avgPitStop: '21.8m',
+    heavyStint: '42m',
+    status: 'ACTIVE',
+    tone: 'passed',
+    runUrl: (imageBuilds['bluefin-lts-testing']?.[0] as { run_url?: string } | undefined)?.run_url || 'https://github.com/projectbluefin/bluefin-lts/actions',
+    sparkKey: 'bluefin-lts-testing',
+  },
+  {
+    rank: 'P4',
+    badge: 'HWE / GPU',
+    name: 'Raptor Bluefin-LTS HWE / NVIDIA',
+    variant: 'bluefin-lts:hwe',
+    repo: 'projectbluefin/bluefin-lts',
+    engine: 'GitHub Actions Containerdisk',
+    bestLap: '17m',
+    avgPitStop: '24.5m',
+    heavyStint: '61m',
+    status: 'ACTIVE',
+    tone: 'passed',
+    runUrl: (imageBuilds['bluefin-lts-hwe']?.[0] as { run_url?: string } | undefined)?.run_url || 'https://github.com/projectbluefin/bluefin-lts/actions',
+    sparkKey: 'bluefin-lts-hwe',
+  },
+  {
+    rank: 'P5',
+    badge: 'CORE STABLE',
+    name: 'Raptor Bluefin Stable',
+    variant: 'bluefin:stable',
+    repo: 'projectbluefin/bluefin',
+    engine: 'GitHub Actions Containerdisk',
+    bestLap: '23m',
+    avgPitStop: '37.5m',
+    heavyStint: '58m',
+    status: 'ACTIVE',
+    tone: 'passed',
+    runUrl: (imageBuilds['bluefin-stable']?.[0] as { run_url?: string } | undefined)?.run_url || 'https://github.com/projectbluefin/bluefin/actions',
+    sparkKey: 'bluefin-stable',
+  },
+  {
+    rank: 'P6',
+    badge: 'CORE TESTING',
+    name: 'Raptor Bluefin Testing',
+    variant: 'bluefin:testing',
+    repo: 'projectbluefin/bluefin',
+    engine: 'GitHub Actions Containerdisk',
+    bestLap: '27m',
+    avgPitStop: '39.4m',
+    heavyStint: '56m',
+    status: 'ACTIVE',
+    tone: 'passed',
+    runUrl: (imageBuilds['bluefin-testing']?.[0] as { run_url?: string } | undefined)?.run_url || 'https://github.com/projectbluefin/bluefin/actions',
+    sparkKey: 'bluefin-testing',
+  },
+  {
+    rank: 'P7',
+    badge: 'PIT STOP HEAVY',
+    name: 'Raptor Dakota (GitHub Hosted)',
+    variant: 'dakota (GHA)',
+    repo: 'projectbluefin/dakota',
+    engine: 'GitHub Hosted Runner',
+    bestLap: '35m',
+    avgPitStop: '193.8m (~3.2h)',
+    heavyStint: '672m (11.2h)',
+    status: 'HEAVY PIT STOP',
+    tone: 'pending',
+    runUrl: (imageBuilds['dakota']?.[0] as { run_url?: string } | undefined)?.run_url || 'https://github.com/projectbluefin/dakota/actions',
+    sparkKey: 'dakota',
+  },
+];
+
 ---
 
 <SiteLayout
@@ -743,6 +853,98 @@ const serializedBstChartData = serializeJsonScript(bstChartPayload);
       </div>
     </header>
 
+    <!-- =========================================================== -->
+    <!--  RAPTOR GRID LEADERBOARD (F1 / Motorsports Dashboard)       -->
+    <!-- =========================================================== -->
+    <section class="raptor-leaderboard-card" style="margin-bottom: 2.5rem; background: linear-gradient(135deg, rgba(14, 165, 233, 0.12), rgba(15, 23, 42, 0.95)); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 24px; padding: 24px; box-shadow: 0 20px 50px rgba(0,0,0,0.5);">
+      <header style="display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.15); padding-bottom: 16px; margin-bottom: 20px;">
+        <div>
+          <div style="color: #38bdf8; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 4px;">
+            Motorsports Telemetry - Factory Leaderboard
+          </div>
+          <h2 style="margin: 0; font-size: 1.6rem; font-weight: 800; color: #f8fafc; letter-spacing: -0.03em;">
+            Raptor Grid Leaderboard
+          </h2>
+          <p style="margin: 4px 0 0; color: #94a3b8; font-size: 0.88rem;">
+            Comparing build times, pit stops, and remote execution latency across all OS Raptors.
+          </p>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+          <span class="pill pill--ready" style="font-size: 0.78rem;">
+            40 Gbps USB4 Link: ACTIVE
+          </span>
+          <span class="pill pill--ready" style="font-size: 0.78rem;">
+            BuildBarn RE Grid: 24 Workers
+          </span>
+          <span class="pill pill--completed" style="font-size: 0.78rem;">
+            Dakota RE Target: 12m-14m
+          </span>
+        </div>
+      </header>
+
+      <div class="table-scroll">
+        <table class="data-table" style="min-width: 58rem;">
+          <thead>
+            <tr>
+              <th style="width: 70px;">Rank</th>
+              <th>Raptor Entrant</th>
+              <th>Engine & Fabric</th>
+              <th style="text-align: right;">Best Lap (Warm)</th>
+              <th style="text-align: right;">Avg Pit Stop</th>
+              <th style="text-align: right;">Heavy Stint</th>
+              <th>7-Day Trend</th>
+              <th style="text-align: center;">Live Run</th>
+            </tr>
+          </thead>
+          <tbody>
+            {raptorEntrants.map((r) => (
+              <tr style={r.rank === 'P1' ? 'background: rgba(56, 189, 248, 0.08); font-weight: 600;' : ''}>
+                <td style="vertical-align: middle;">
+                  <span class="pill" style={`font-family: ui-monospace, monospace; font-size: 0.85rem; padding: 4px 8px; ${r.rank === 'P1' ? 'background: #38bdf8; color: #0f172a; font-weight: 800;' : r.rank === 'P2' ? 'background: #e2e8f0; color: #0f172a; font-weight: 800;' : r.rank === 'P3' ? 'background: #cbd5e1; color: #0f172a; font-weight: 800;' : ''}`}>
+                    {r.rank}
+                  </span>
+                </td>
+                <td style="vertical-align: middle;">
+                  <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <span style="color: #f1f5f9; font-weight: 700; font-size: 0.95rem;">{r.name}</span>
+                      <span class={`pill pill--${r.tone}`} style="font-size: 0.68rem; padding: 2px 6px;">{r.badge}</span>
+                    </div>
+                    <span class="mono" style="font-size: 0.75rem; color: #64748b;">{r.repo} - {r.variant}</span>
+                  </div>
+                </td>
+                <td style="vertical-align: middle; color: #cbd5e1; font-size: 0.85rem;">
+                  {r.engine}
+                </td>
+                <td style="vertical-align: middle; text-align: right; font-family: ui-monospace, monospace; color: #4ade80; font-weight: 700;">
+                  {r.bestLap}
+                </td>
+                <td style="vertical-align: middle; text-align: right; font-family: ui-monospace, monospace; color: #f8fafc; font-weight: 700;">
+                  {r.avgPitStop}
+                </td>
+                <td style="vertical-align: middle; text-align: right; font-family: ui-monospace, monospace; color: #94a3b8;">
+                  {r.heavyStint}
+                </td>
+                <td style="vertical-align: middle; width: 130px;">
+                  <div class="triage-spark" data-lane={r.sparkKey} style="height: 38px; width: 120px;" role="img" aria-label={`7-day trend for ${r.name}`}></div>
+                </td>
+                <td style="vertical-align: middle; text-align: center;">
+                  {r.runUrl ? (
+                    <a href={r.runUrl} target="_blank" rel="noreferrer" class="site-nav__link" style="padding: 4px 10px; font-size: 0.75rem; color: #38bdf8; border-color: rgba(56, 189, 248, 0.3); display: inline-flex; align-items: center; gap: 4px;">
+                      Run -&gt;
+                    </a>
+                  ) : (
+                    <span style="color: #64748b; font-size: 0.75rem;">-</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+
     <!-- ═══════════════════════════════════════════════════════════ -->
     <!--  SRE TRIAGE — is the factory healthy? is the last release   -->
     <!--  good? what's degrading? (ADR 0002)                          -->
@@ -1093,51 +1295,53 @@ const serializedBstChartData = serializeJsonScript(bstChartPayload);
         const data = JSON.parse(payloadNode.textContent || '{}');
         if (!data.lanes) return;
         data.lanes.forEach(function(lane) {
-          const el = document.querySelector('.triage-spark[data-lane="' + lane.key + '"]');
-          if (!el || !lane.points || !lane.points.length) return;
-          const chart = echarts.init(el);
-          charts.push(chart);
-          chart.setOption({
-            animation: false,
-            grid: { left: 34, right: 6, top: 8, bottom: 16 },
-            tooltip: {
-              trigger: 'axis',
-              backgroundColor: 'rgba(15, 23, 42, 0.95)',
-              borderColor: 'rgba(255, 255, 255, 0.1)',
-              textStyle: { color: '#cbd5e1', fontSize: 11 },
-              formatter: function(params) {
-                const p = lane.points[params[0].dataIndex];
-                return (p.t || '') + '<br/>' +
-                  (p.duration !== null ? p.duration + ' min' : 'duration unavailable') +
-                  ' · ' + (p.passed ? 'passed' : 'failed');
-              }
-            },
-            xAxis: {
-              type: 'category',
-              data: lane.points.map(function(p) { return (p.t || '').slice(5, 10); }),
-              axisLabel: { color: '#64748b', fontSize: 8, interval: Math.max(1, Math.floor(lane.points.length / 5)) },
-              axisTick: { show: false },
-              axisLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } }
-            },
-            yAxis: {
-              type: 'value',
-              axisLabel: { color: '#64748b', fontSize: 8, formatter: '{value}m' },
-              splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }
-            },
-            series: [{
-              type: 'line',
-              data: lane.points.map(function(p) { return p.duration; }),
-              smooth: true,
-              showSymbol: true,
-              symbolSize: 5,
-              lineStyle: { color: '#38bdf8', width: 1.5 },
-              itemStyle: {
-                color: function(params) {
-                  return lane.points[params.dataIndex].passed ? '#4ade80' : '#f43f5e';
+          const elements = document.querySelectorAll('.triage-spark[data-lane="' + lane.key + '"]');
+          elements.forEach(function(el) {
+            if (!el || !lane.points || !lane.points.length) return;
+            const chart = echarts.init(el);
+            charts.push(chart);
+            chart.setOption({
+              animation: false,
+              grid: { left: 34, right: 6, top: 8, bottom: 16 },
+              tooltip: {
+                trigger: 'axis',
+                backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                borderColor: 'rgba(255, 255, 255, 0.1)',
+                textStyle: { color: '#cbd5e1', fontSize: 11 },
+                formatter: function(params) {
+                  const p = lane.points[params[0].dataIndex];
+                  return (p.t || '') + '<br/>' +
+                    (p.duration !== null ? p.duration + ' min' : 'duration unavailable') +
+                    ' · ' + (p.passed ? 'passed' : 'failed');
                 }
               },
-              areaStyle: { color: 'rgba(56, 189, 248, 0.08)' }
-            }]
+              xAxis: {
+                type: 'category',
+                data: lane.points.map(function(p) { return (p.t || '').slice(5, 10); }),
+                axisLabel: { color: '#64748b', fontSize: 8, interval: Math.max(1, Math.floor(lane.points.length / 5)) },
+                axisTick: { show: false },
+                axisLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } }
+              },
+              yAxis: {
+                type: 'value',
+                axisLabel: { color: '#64748b', fontSize: 8, formatter: '{value}m' },
+                splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }
+              },
+              series: [{
+                type: 'line',
+                data: lane.points.map(function(p) { return p.duration; }),
+                smooth: true,
+                showSymbol: true,
+                symbolSize: 5,
+                lineStyle: { color: '#38bdf8', width: 1.5 },
+                itemStyle: {
+                  color: function(params) {
+                    return lane.points[params.dataIndex].passed ? '#4ade80' : '#f43f5e';
+                  }
+                },
+                areaStyle: { color: 'rgba(56, 189, 248, 0.08)' }
+              }]
+            });
           });
         });
       }
