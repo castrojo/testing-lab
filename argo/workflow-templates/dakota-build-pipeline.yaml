@@ -389,6 +389,9 @@ spec:
           if [[ -f /src/elements/gnome-build-meta.bst ]]; then
             sed -i 's#https://gitlab.gnome.org/GNOME/gnome-build-meta.git#https://github.com/GNOME/gnome-build-meta.git#g' /src/elements/gnome-build-meta.bst
           fi
+          if [[ -f /src/elements/bluefin/common.bst ]]; then
+            sed -i 's#rm -f "%{install-root}%{sysconfdir}/profile.d/umotd.sh"#rm -f "%{install-root}%{sysconfdir}/profile.d/umotd.sh" || true#g' /src/elements/bluefin/common.bst
+          fi
 
           echo "=== Synchronizing upstream patch queues for cache reuse ==="
           rm -rf /tmp/upstream-patches
