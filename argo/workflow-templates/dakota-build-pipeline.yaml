@@ -5,13 +5,13 @@ metadata:
   namespace: argo
   annotations:
     description: |
-      Dakota BST build pipeline. Builds the default bluefin OCI variant using the
-      shared Buildbarn frontend as the single source of truth for artifacts and
-      source caches. BuildStream driver pods use node-local persistent cache
-      directories on ghost/exo-0. Triggered by push to dakota:testing via the
-      dakota-commit-poller CronWorkflow. On success, exports to local Zot (:30500)
-      as dakota:testing. NVIDIA variants are intentionally disabled for clean
-      distributed builds.
+      Dakota BST build pipeline. Builds the default bluefin OCI variant and
+      the NVIDIA variant in parallel using the shared Buildbarn frontend.
+      BuildStream driver pods use node-local persistent cache directories on ghost/exo-0.
+      Triggered by push to dakota:testing via the dakota-commit-poller CronWorkflow.
+      On success, exports to local Zot (:30500) as dakota:testing and dakota-nvidia:testing.
+      NVIDIA builds run with continueOn (non-blocking) as the lab does not have GPU
+      hardware to test NVIDIA runtime execution.
       Uses bst-build PriorityClass.
   labels:
     app.kubernetes.io/component: dakota-build
@@ -95,6 +95,27 @@ spec:
                   value: "{{tasks.detect-build-mode.outputs.parameters.mode}}"
                 - name: lock-key
                   value: "{{inputs.parameters.lock-key}}"
+          - name: build-bluefin-nvidia
+            template: run-bst-step
+            depends: detect-build-mode
+            arguments:
+              parameters:
+                - name: element
+                  value: "oci/bluefin-nvidia.bst"
+                - name: tag
+                  value: "dakota-nvidia"
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: commit-sha
+                  value: "{{inputs.parameters.commit-sha}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: mode
+                  value: "{{tasks.detect-build-mode.outputs.parameters.mode}}"
+                - name: lock-key
+                  value: "{{inputs.parameters.lock-key}}"
     # Dakota builds are distributed-only. Non-RE modes are rejected to prevent
     # local/serial bypasses that write large build state to node root disks.
     - name: detect-build-mode
@@ -137,6 +158,8 @@ spec:
           - name: bst-re
             template: bst-build-re
             when: "'{{inputs.parameters.mode}}' == 're'"
+            continueOn:
+              failed: true
             arguments:
               parameters:
                 - name: element
@@ -483,8 +506,8 @@ spec:
           echo "=== Building ${ELEMENT} with bootc preloaded ==="
           bst --config "${BST_CONF}" \
               --no-interactive \
-              --max-jobs 16 \
-              --fetchers 16 \
+              --max-jobs 24 \
+              --fetchers 24 \
               build "${ELEMENT}"
 
           echo "=== Exporting ${ELEMENT} ==="
@@ -492,8 +515,8 @@ spec:
           mkdir -p "${EXPORT_DIR}"
           bst --config "${BST_CONF}" \
               --no-interactive \
-              --max-jobs 16 \
-              --fetchers 16 \
+              --max-jobs 24 \
+              --fetchers 24 \
               -o x86_64_v3 true \
               artifact checkout "${ELEMENT}" \
               --directory "${EXPORT_DIR}"

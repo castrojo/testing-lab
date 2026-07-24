@@ -196,24 +196,22 @@ hostDisk clone. Invoked as `onExit` from the pipeline templates.
 
 ### `dakota-bst`
 
-Drives the Dakota BuildStream workflow through the USB4-gated BuildBarn remote
-execution grid. The clean distributed target is `oci/bluefin.bst`; NVIDIA and
-all-variant modes are disabled. This is not a local-build wrapper, and a local
-cache fallback must never be used to claim the distributed gate is healthy.
-The workflow pins the observed Dakota Git SHA and requires resource requests and
-limits so graph validation is not rejected by admission/quota policy.
+Drives the Dakota BuildStream workflow through the BuildBarn remote
+execution grid. The workflow builds both `oci/bluefin.bst` (`dakota:testing`) and
+`oci/bluefin-nvidia.bst` (`dakota-nvidia:testing`) in parallel. Because the lab
+cluster lacks NVIDIA GPU hardware to execute GPU test suites, the NVIDIA build runs
+as non-blocking (`continueOn`).
 
 | Parameter | Default | Notes |
 |---|---|---|
-| `variant` | `default` | default variant only; NVIDIA builds are disabled |
+| `variant` | `default` | `dakota:testing` (default) and `dakota-nvidia:testing` (NVIDIA, non-blocking) |
 | `branch` | `main` | dakota branch to clone |
 
 Pipeline: `bst-validate` (fast graph check) → `bst-build` (build + lint).
 
 ```
 just run-dakota-validate              # bst show only, ~5 min
-just run-dakota-build                 # default variant
-# NVIDIA and all-variant modes are disabled for clean builds.
+just run-dakota-build                 # default + nvidia variants
 ```
 
 ---

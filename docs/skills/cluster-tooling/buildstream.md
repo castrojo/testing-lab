@@ -34,8 +34,10 @@ remote-cache-only run is not an acceptable substitute.
   distributed, verify its generated `projects.<name>.remote-execution`
   configuration, BuildStream RE startup, and current worker action activity.
   Dakota uses a two-slot `bst-build` semaphore and workflow-owned 200Gi
-  `local-path` cache PVCs. The distributed workflow builds only
-  `oci/bluefin.bst`; NVIDIA variants are disabled for clean builds. The Dakota
+  `local-path` cache PVCs. The distributed workflow builds both `oci/bluefin.bst`
+  (`dakota:testing`) and `oci/bluefin-nvidia.bst` (`dakota-nvidia:testing`). NVIDIA
+  builds run in parallel with continueOn (non-blocking) as the lab does not have GPU
+  hardware to test NVIDIA runtime execution. The Dakota
   commit poller pins the checkout to the exact GitHub SHA
   it observed.
 - **Buildbarn RE sandbox device nodes**: `bb_runner` with
@@ -114,7 +116,7 @@ reverse.
 2. **Use verified parallel BST capacity.** Keep independent work concurrent when
 BuildBarn workers and node requests have safe headroom. Respect actual BuildStream graph dependencies and reassess live worker and node
 capacity before raising or lowering the two-slot `bst-build` limit. NVIDIA
-variants are disabled in the distributed clean-build workflows.
+variants are built in parallel with continueOn (non-blocking).
 
 3. **Clear stale semaphore holders before reducing capacity.** The semaphore in
 `manifests/workflow-semaphores.yaml` gates all BST build lanes. Confirm terminal
@@ -208,7 +210,7 @@ Repeat the same override and server ordering at the project level so the primary
 
 **Controlled retry update (2026-07-23):** after reconciling native runner configuration and restarting both worker pods, the Dakota retry uploaded SDK input roots and reached remote command execution, demonstrating progress beyond the historical `rustc`/TMPDIR failure. However, both actions failed when the old workers disappeared during execution, and the retry was still in artifact pulls afterward. Do not call this green; worker continuity and the full build/publish/digest/E2E chain still require proof.
 
-**Local fallback verified 2026-07-22:** when the BuildBarn path fails in `gnomeos-deps/bootc.bst`, the same element and both OCI targets build successfully with the local BuildStream cache. The clean-build sequence is `just bst build --deps none oci/bluefin.bst`, then `just bst artifact checkout ...` and the repository's `just export default` logic. The distributed Dakota and COSMIC workflows intentionally skip NVIDIA variants until the BuildBarn path is stable; do not interpret a disabled NVIDIA branch as a default-image build failure.
+**Distributed NVIDIA Policy:** The distributed Dakota workflow builds both default (`oci/bluefin.bst`) and NVIDIA (`oci/bluefin-nvidia.bst`) variants in parallel. Because the lab cluster lacks NVIDIA GPU hardware to execute GPU test suites, the NVIDIA build runs as non-blocking (`continueOn`). When the NVIDIA build succeeds, its image (`dakota-nvidia:testing`) is published directly to Zot.
 
 **Registry publication verified 2026-07-22:** the local Zot registry accepts anonymous pushes over its configured insecure HTTP endpoint. Publish with Podman (`podman push --tls-verify=false localhost/dakota:testing docker://192.168.1.102:30500/dakota:testing`) rather than rootful Skopeo, which may look at `/run/containers/storage` and fail for a rootless session. Verify the registry digest with `skopeo inspect --tls-verify=false` and pull the registry tag back before smoke testing.
 

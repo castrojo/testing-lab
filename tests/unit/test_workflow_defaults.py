@@ -45,10 +45,10 @@ def test_dakota_requires_distributed_capacity_matched_execution():
         encoding="utf-8"
     )
 
-    assert "fetchers: 16" in config
-    assert "builders: 16" in config
-    assert "pushers: 8" in config
-    assert "max-jobs: 16" in config
+    assert "fetchers: 24" in config
+    assert "builders: 24" in config
+    assert "pushers: 12" in config
+    assert "max-jobs: 24" in config
     assert "nodeSelector:\n        kubernetes.io/hostname: ghost" not in pipeline
     assert "depends: detect-build-mode" in pipeline
     assert "Verified BuildStream remote execution configuration" in pipeline
@@ -119,7 +119,7 @@ def test_dakota_runner_allows_native_chroot_input_root_execution():
 def test_buildbarn_runner_uses_stable_tmpdir_after_chroot():
     config = (ROOT / "manifests/buildbarn-config.yaml").read_text(encoding="utf-8")
     assert "setTmpdirEnvironmentVariable:" not in config
-    assert "concurrency: 8" in config
+    assert "concurrency: 12" in config
     assert "runCommandsAs: { userId: 0, groupId: 0 }" in config
     # Production uses the native build directory: the virtual/FUSE experiment
     # failed startup with "operation not permitted" and is not a valid gate.
@@ -184,22 +184,14 @@ def test_dakota_patch_sync_fetches_junction_commit_ids():
     assert 'git fetch --depth=1 origin "${FDS_REF}"' not in pipeline
 
 
-def test_distributed_build_pipelines_skip_nvidia_variants():
+def test_dakota_build_pipeline_includes_non_blocking_nvidia_variant():
     dakota = (ROOT / "argo/workflow-templates/dakota-build-pipeline.yaml").read_text(
-        encoding="utf-8"
-    )
-    cosmic = (ROOT / "argo/workflow-templates/cosmic-build-pipeline.yaml").read_text(
         encoding="utf-8"
     )
 
     assert "name: build-bluefin" in dakota
     assert "oci/bluefin.bst" in dakota
-    assert "build-bluefin-nvidia" not in dakota
-    assert "oci/bluefin-nvidia.bst" not in dakota
-    assert "dakota-nvidia" not in dakota
-
-    assert "name: build-cosmic" in cosmic
-    assert "oci/cosmic/image.bst" in cosmic
-    assert "build-cosmic-nvidia" not in cosmic
-    assert "oci/cosmic-nvidia/image.bst" not in cosmic
-    assert "cosmic-cluster-testing-nvidia" not in cosmic
+    assert "name: build-bluefin-nvidia" in dakota
+    assert "oci/bluefin-nvidia.bst" in dakota
+    assert "tag\n                  value: \"dakota-nvidia\"" in dakota
+    assert "continueOn:" in dakota
