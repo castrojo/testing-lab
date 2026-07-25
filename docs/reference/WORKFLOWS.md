@@ -228,6 +228,35 @@ Lives in `manifests/`, applied via the `testing-lab-infra` ArgoCD app:
 
 ---
 
+## KubeStellar bootstrap runbooks
+
+One-shot WorkflowTemplates in `argo/bootstrap/` (NOT ArgoCD-managed; apply
+with `kubectl apply -f argo/bootstrap/ -n argo`). All run with explicit
+resources (argo-quota) and the `kubestellar-bootstrap` SA where noted.
+
+### `install-kubestellar`
+
+Applies the `kubestellar-postgres` and `kubestellar` ArgoCD Applications
+and waits for its1/wds1 ControlPlanes Ready. No parameters.
+
+### `register-wec`
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `wec-name` | `ghost` | Cluster name to register with the its1 OCM hub. Labels the ManagedCluster `name=<wec>` after accept. |
+
+SA: `kubestellar-bootstrap` (cluster-admin; klusterlet install writes CRDs).
+
+### `kubestellar-smoke-test`
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `wec-name` | `ghost` | Target WEC. Verifies BindingPolicy downsync and singleton status upsync via wds1 (`kubeconfig-incluster` key), then cleans up. |
+
+SA: `kubestellar-bootstrap`. Acceptance gate after any core upgrade.
+
+---
+
 ## Editing this contract
 
 When you add or rename a template, update this file in the same PR. Drift
