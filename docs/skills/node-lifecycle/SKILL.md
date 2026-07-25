@@ -37,13 +37,21 @@ metadata:
 ## Node join (shared cluster)
 
 On the server (ghost): get the join token from the k3s server config
-(never commit it). On the new machine running Bluefin Server:
+(never commit it). On the new machine running Bluefin Server, install k3s
+agent as a persistent systemd service:
 
 ```bash
 # On the new node
-sudo k3s agent --server https://<server-lan-ip>:6443 --token <token>
-# or via config file /etc/rancher/k3s/config.yaml + systemctl enable k3s-agent
+curl -sfL https://get.k3s.io | \
+  K3S_URL="https://<server-lan-ip>:6443" \
+  K3S_TOKEN="<token>" \
+  INSTALL_K3S_BIN_DIR="/var/usrlocal/bin" \
+  sh -s -
 ```
+
+This creates the `k3s-agent` systemd unit; it starts automatically and
+rejoins after reboot. Use `/etc/rancher/k3s/config.yaml` plus
+`systemctl enable --now k3s-agent` if you prefer explicit configuration.
 
 Verify from any kubectl:
 
@@ -112,7 +120,11 @@ memory/ADR). Cross-WEC grid joins via Tailscale CAS mesh.
 
 ## GUI flow
 
-The Console hosts this as a guided mission ("Add a node") wrapping the
-same steps: token display, agent config, verification queries. Keep the
-mission and this skill in sync — the mission is the GUI counterpart, this
-file is the agent-executable truth.
+The Console hosts this as a guided mission ("Add your second PC") wrapping
+the same steps: token display, agent config, verification queries. The
+mission source lives at
+[`missions/add-your-second-pc.json`](../../missions/add-your-second-pc.json)
+in `kc-mission-v1` format. Because the Console v0.3.34 cannot yet load
+custom missions from an in-cluster ConfigMap or CRD, import it via
+**Missions > Local Files > Import**. Keep the mission and this skill in sync
+— the mission is the GUI counterpart; this file is the agent-executable truth.

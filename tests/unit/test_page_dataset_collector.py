@@ -58,11 +58,11 @@ def test_upstream_dataset_derives_required_families(monkeypatch):
     )
 
     metrics = {metric['id']: metric for metric in dataset['summary_metrics']}
-    # variant-publishers.json now defines 8 image families; upstream rows include
+    # variant-publishers.json now defines 9 image families; upstream rows include
     # non-image lanes (gnomeos, fedora-bootc) so totals drift with the catalog.
-    assert metrics['tracked_upstream_lanes']['value'] == 14
+    assert metrics['tracked_upstream_lanes']['value'] == 15
     assert metrics['lanes_with_release_data']['value'] == 9
-    assert metrics['lanes_without_release_data']['value'] == 5
+    assert metrics['lanes_without_release_data']['value'] == 6
     assert all(metric['collected_at'] == '2026-06-29T19:22:22Z' for metric in dataset['summary_metrics'])
 
 
@@ -175,7 +175,7 @@ def test_homebrew_ecosystem_derives_all_tracked_lanes():
     metrics = {m['id']: m for m in dataset['summary_metrics']}
     assert metrics['tracked_image_lanes']['value'] >= 10
     assert metrics['lanes_with_brew_data']['value'] == 6
-    assert metrics['lanes_awaiting_brew_data']['value'] == 7
+    assert metrics['lanes_awaiting_brew_data']['value'] == 8
 
 
 def test_homebrew_ecosystem_non_bluefin_rows_are_unavailable_without_brew_data():
@@ -260,7 +260,7 @@ def test_homebrew_ecosystem_exposes_transplanted_tap_catalog():
     assert 'bazzite/brewfile' in taps
     assert taps['bazzite/brewfile']['package_count'] == 20
     assert metrics['lanes_with_brew_data']['value'] == 6
-    assert metrics['lanes_awaiting_brew_data']['value'] == 7
+    assert metrics['lanes_awaiting_brew_data']['value'] == 8
 
 
 def test_homebrew_ecosystem_includes_package_density_structures():
@@ -326,7 +326,7 @@ def test_homebrew_ecosystem_maps_multiple_taps_by_variant_scope(monkeypatch):
     assert rows['bazzite-testing']['install_count'] == 10
     assert rows['bazzite-testing']['download_count'] == 4
     assert metrics['lanes_with_brew_data']['value'] == 6
-    assert metrics['lanes_awaiting_brew_data']['value'] == 7
+    assert metrics['lanes_awaiting_brew_data']['value'] == 8
     assert taps['bazzite/brewfile']['package_type_counts'] == {'cask': 1, 'formula': 1}
 
 
@@ -391,6 +391,7 @@ def test_adoption_metrics_has_trust_cards_from_publishers():
         'flatcar',
         'cosmic',
         'snosi',
+        'zirconium',
     }
 
     bluefin_card = trust_cards['bluefin']
