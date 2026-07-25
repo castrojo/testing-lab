@@ -113,19 +113,20 @@ spec:
           echo "Rendered manifests:" >&2
           cat "${RENDER_DIR}/manifest.yaml" >&2
 
-          # Pass the render directory forward as an artifact path convention.
-          echo "${RENDER_DIR}" > /tmp/render-dir
+          # Manifest content is passed to downstream steps via an output parameter.
+          # The rendered YAML is small (<256KB); base64 keeps it single-line safe.
+          python3 -c "import base64,sys; data=open('${RENDER_DIR}/manifest.yaml','rb').read(); open('/tmp/manifest.b64','w').write(base64.b64encode(data).decode())"
       outputs:
         parameters:
-          - name: render-dir
+          - name: manifest-b64
             valueFrom:
-              path: /tmp/render-dir
+              path: /tmp/manifest.b64
 
     - name: validate
       inputs:
         parameters:
-          - name: render-dir
-            value: "{{tasks.render.outputs.parameters.render-dir}}"
+          - name: manifest-b64
+            value: "{{tasks.render.outputs.parameters.manifest-b64}}"
       metadata:
         labels:
           app.kubernetes.io/part-of: bluefin-test-suite
@@ -142,11 +143,28 @@ spec:
             cpu: 500m
             memory: 512Mi
             ephemeral-storage: 1Gi
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+                optional: true
         source: |
           set -euo pipefail
-          RENDER_DIR="{{inputs.parameters.render-dir}}"
+
+          MANIFEST_B64="{{inputs.parameters.manifest-b64}}"
+          python3 -c "import base64; open('/tmp/manifest.yaml','wb').write(base64.b64decode('${MANIFEST_B64}'))"
+
+          rm -rf /tmp/lab-code
+          CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/projectbluefin/lab.git"
+          if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+            CLONE_URL="https://github.com/projectbluefin/lab.git"
+          fi
+          git clone --depth 1 --branch main "${CLONE_URL}" /tmp/lab-code
+
           echo "Running offline structural validation" >&2
-          python3 /tmp/lab-code/scripts/catalog_validate.py "${RENDER_DIR}/manifest.yaml"
+          python3 /tmp/lab-code/scripts/catalog_validate.py /tmp/manifest.yaml
 
     - name: apply
       inputs:
@@ -155,8 +173,8 @@ spec:
             value: "{{workflow.parameters.app}}"
           - name: namespace
             value: "{{workflow.parameters.namespace}}"
-          - name: render-dir
-            value: "{{tasks.render.outputs.parameters.render-dir}}"
+          - name: manifest-b64
+            value: "{{tasks.render.outputs.parameters.manifest-b64}}"
       metadata:
         labels:
           app.kubernetes.io/part-of: bluefin-test-suite
@@ -178,13 +196,15 @@ spec:
           APP="{{inputs.parameters.app}}"
           NS_PARAM="{{inputs.parameters.namespace}}"
           NAMESPACE="${NS_PARAM:-catalog-${APP}}"
-          RENDER_DIR="{{inputs.parameters.render-dir}}"
+          MANIFEST_B64="{{inputs.parameters.manifest-b64}}"
+
+          python3 -c "import base64; open('/tmp/manifest.yaml','wb').write(base64.b64decode('${MANIFEST_B64}'))"
 
           echo "Server-side dry-run" >&2
-          kubectl apply --dry-run=server -f "${RENDER_DIR}/manifest.yaml"
+          kubectl apply --dry-run=server -f /tmp/manifest.yaml
 
           echo "Applying manifests imperatively" >&2
-          kubectl apply -f "${RENDER_DIR}/manifest.yaml"
+          kubectl apply -f /tmp/manifest.yaml
           kubectl rollout status "deployment/${APP}" -n "${NAMESPACE}" --timeout=300s >&2 || true
 
     - name: publish-git
@@ -196,8 +216,8 @@ spec:
             value: "{{workflow.parameters.mode}}"
           - name: base-branch
             value: "{{workflow.parameters.base-branch}}"
-          - name: render-dir
-            value: "{{tasks.render.outputs.parameters.render-dir}}"
+          - name: manifest-b64
+            value: "{{tasks.render.outputs.parameters.manifest-b64}}"
       metadata:
         labels:
           app.kubernetes.io/part-of: bluefin-test-suite
@@ -226,9 +246,11 @@ spec:
           APP="{{inputs.parameters.app}}"
           MODE="{{inputs.parameters.mode}}"
           BASE="{{inputs.parameters.base-branch}}"
-          RENDER_DIR="{{inputs.parameters.render-dir}}"
+          MANIFEST_B64="{{inputs.parameters.manifest-b64}}"
           NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           BRANCH="bot/catalog-install-${APP}-$(date -u +%Y%m%d-%H%M%S)"
+
+          python3 -c "import base64; open('/tmp/manifest.yaml','wb').write(base64.b64decode('${MANIFEST_B64}'))"
 
           REPO="projectbluefin/lab"
           CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
@@ -239,7 +261,7 @@ spec:
           cd "${WORK_DIR}"
 
           mkdir -p "manifests/catalog-apps/${APP}"
-          cp "${RENDER_DIR}/manifest.yaml" "manifests/catalog-apps/${APP}/manifest.yaml"
+          cp /tmp/manifest.yaml "manifests/catalog-apps/${APP}/manifest.yaml"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
