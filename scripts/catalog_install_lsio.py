@@ -6,9 +6,8 @@ index), applies lab conventions, and writes rendered manifests to a directory.
 
 Lab conventions applied:
   * Storage class is local-path; PVCs are created on node data disks.
-  * Image references use the upstream lscr.io form (lscr.io/linuxserver/<app>:latest)
-    so the cluster's zot-lscr mirror resolves them; this matches how other
-    lab workloads reference their upstream mirrored registries.
+  * Image references use the bare docker.io form (linuxserver/<app>:latest)
+    so the cluster's zot-docker mirror resolves them.
   * PUID/PGID become both env vars and a securityContext (fsGroup/runAsGroup;
     runAsUser/runAsNonRoot only when the image advertises non-root support).
   * Optional ports and volumes are included by default; the installer favours
@@ -219,8 +218,8 @@ def render_manifests(app_name, entry, namespace, image_tag="latest"):
     container_ports, service_ports = render_ports(config.get("ports"))
     sec_ctx = security_context_from_config(config)
 
-    # Use the upstream lscr.io form so the zot-lscr mirror resolves it.
-    image = f"lscr.io/{IMAGE_PREFIX}/{app_name}:{image_tag}"
+    # Use the bare docker.io form so the zot-docker mirror resolves it.
+    image = f"{IMAGE_PREFIX}/{app_name}:{image_tag}"
 
     namespace_res = {
         "apiVersion": "v1",

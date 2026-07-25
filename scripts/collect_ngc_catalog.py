@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Refresh the NVIDIA NGC catalog index.
 
-Queries the public NGC catalog API for NVIDIA-published containers and maps
-the response to the provider-agnostic catalog index schema defined in
+Queries the public NGC catalog search API for official NVIDIA containers and
+maps the response to the provider-agnostic catalog index schema defined in
 docs/reference/catalog-index-schema.md. The resulting thin index is written to
 docs/data/catalog/ngc.json sorted by container name.
 
-NGC catalog listings are public; pulling images from nvcr.io requires auth,
-but this poller only reads metadata.
+The public search endpoint does not require authentication. Images are pulled
+from nvcr.io separately and do require auth.
 
 Run locally:
     python3 scripts/collect_ngc_catalog.py
@@ -22,16 +22,16 @@ import json
 import sys
 import urllib.error
 import urllib.request
+import urllib.parse
 from pathlib import Path
 
-# NGC catalog API endpoint for NVIDIA containers.
-# This endpoint requires an NGC API key for authentication; public
-# unauthenticated access is not available for container listings.
-API_URL = "https://api.ngc.nvidia.com/v2/orgs/nvidia/containers"
+# Public NGC catalog search endpoint for containers.
+API_URL = "https://api.ngc.nvidia.com/v2/search/catalog/resources/CONTAINER"
 OUT_PATH = Path("docs/data/catalog/ngc.json")
 PROVIDER = "ngc"
-IMAGE_PREFIX = "nvcr.io/nvidia"
+IMAGE_PREFIX = "nvcr.io"
 PAGE_SIZE = 100
+MAX_PAGES = 200
 
 
 class CatalogError(Exception):
@@ -42,7 +42,9 @@ def now_iso():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def fetch_json(url, timeout=60):
+def fetch_page(page=0, page_size=PAGE_SIZE, timeout=60):
+    query = {"query": "*", "pageSize": page_size, "page": page}
+    url = f"{API_URL}?q={urllib.parse.quote(json.dumps(query))}"
     req = urllib.request.Request(
         url,
         headers={
@@ -54,25 +56,36 @@ def fetch_json(url, timeout=60):
         return json.loads(resp.read().decode("utf-8"))
 
 
-def fetch_page(page=0, page_size=PAGE_SIZE):
-    url = f"{API_URL}?page={page}&pageSize={page_size}"
-    return fetch_json(url)
+def is_nvidia_container(container):
+    """Return True for official NVIDIA-published containers."""
+    return container.get("orgName") == "nvidia"
 
 
-def fetch_all_containers(max_pages=50):
-    """Fetch all public NVIDIA container listings from the NGC catalog API."""
+def fetch_all_containers():
+    """Fetch all public NVIDIA container listings from the NGC catalog API.
+
+    Filters to orgName == "nvidia" to keep the index limited to official
+    NVIDIA-published containers and exclude test/user organizations.
+    """
     containers = []
-    for page in range(max_pages):
+    seen = set()
+    for page in range(MAX_PAGES):
         data = fetch_page(page=page)
-        page_containers = data.get("containers") or data.get("results") or []
-        if not page_containers:
+        for group in data.get("results") or []:
+            for resource in group.get("resources") or []:
+                if not is_nvidia_container(resource):
+                    continue
+                rid = resource.get("resourceId")
+                if not rid or rid in seen:
+                    continue
+                seen.add(rid)
+                containers.append(resource)
+
+        result_total = data.get("resultTotal")
+        result_page_total = data.get("resultPageTotal")
+        if result_page_total is not None and page + 1 >= result_page_total:
             break
-        containers.extend(page_containers)
-        total = data.get("total") or data.get("totalCount") or data.get("total_count")
-        if total is not None and len(containers) >= total:
-            break
-        # If the page is not full, we have reached the end.
-        if len(page_containers) < PAGE_SIZE:
+        if result_total is not None and len(containers) >= result_total:
             break
     return containers
 
@@ -85,127 +98,112 @@ def as_int(value):
 
 
 def get_name(container):
-    """Return the canonical container name from various possible fields."""
-    for key in ("name", "containerName", "displayName", "display_name"):
-        value = container.get(key)
-        if value and isinstance(value, str):
-            return value.strip()
-    return None
+    """Return the canonical container name from resourceId or display fields."""
+    name = container.get("name")
+    if name and isinstance(name, str):
+        return name.strip()
+    rid = container.get("resourceId") or ""
+    if "/" in rid:
+        return rid.split("/")[-1].strip()
+    return rid.strip() or None
+
+
+def get_display_name(container):
+    display = container.get("displayName")
+    if display and isinstance(display, str):
+        return display.strip()
+    return get_name(container)
 
 
 def get_description(container):
-    for key in ("description", "shortDescription", "short_description", "summary"):
-        value = container.get(key)
-        if value and isinstance(value, str):
-            return value.strip()
+    description = container.get("description")
+    if description and isinstance(description, str):
+        return description.strip()
     return None
 
 
+def get_attributes(container):
+    """Return attributes as a dict keyed by attribute key."""
+    attrs = container.get("attributes") or []
+    return {a.get("key"): a.get("value") for a in attrs if a.get("key")}
+
+
 def get_category(container):
-    value = container.get("labels") or container.get("tags") or []
-    if isinstance(value, list):
-        return ", ".join(str(v) for v in value if v) or "AI/ML"
-    if isinstance(value, dict):
-        return ", ".join(str(v) for v in value.values() if v) or "AI/ML"
-    if isinstance(value, str):
-        return value
+    """Build a category string from the 'general' label group."""
+    labels = container.get("labels") or []
+    for label in labels:
+        if label.get("key") == "general":
+            values = label.get("values") or []
+            # Prefer human-readable unresolved values when available.
+            if not values:
+                values = label.get("unresolvedValues") or []
+            return ", ".join(str(v) for v in values if v) or "AI/ML"
     return "AI/ML"
 
 
 def get_logo_url(container):
-    for key in ("logoUrl", "logo_url", "logo", "iconUrl", "icon_url"):
-        value = container.get(key)
-        if value and isinstance(value, str):
-            return value.strip()
+    attrs = get_attributes(container)
+    logo = attrs.get("logo")
+    if logo and isinstance(logo, str):
+        return logo.strip()
     return None
 
 
-def get_image_ref(container, name):
-    for key in ("imagePath", "image_path", "imageUrl", "image_url", "repository"):
-        value = container.get(key)
-        if value and isinstance(value, str):
-            return value.split(":")[0].strip()
-    if name:
-        return f"{IMAGE_PREFIX}/{name}"
+def get_image_ref(container):
+    rid = container.get("resourceId")
+    if rid and isinstance(rid, str):
+        return f"{IMAGE_PREFIX}/{rid.strip()}"
     return None
 
 
-def get_pulls(container):
-    for key in ("downloads", "pullCount", "pull_count", "monthlyPulls", "monthly_pulls"):
-        value = container.get(key)
-        if value is not None:
-            return as_int(value)
+def get_monthly_pulls(container):
+    # NGC exposes a popularity score, not a raw pull count.
+    weight = container.get("weightPopular") or container.get("weight_popular")
+    if weight is not None:
+        return as_int(weight)
     return None
 
 
 def get_stars(container):
-    for key in ("likes", "favorites", "stars"):
-        value = container.get(key)
-        if value is not None:
-            return as_int(value)
     return None
 
 
 def get_architectures(container):
-    arches = container.get("architectures") or container.get("architecture") or []
-    if isinstance(arches, str):
-        arches = [a.strip() for a in arches.split(",")]
-    names = []
-    for a in arches or []:
-        if isinstance(a, dict):
-            name = a.get("arch") or a.get("architecture") or a.get("name")
-        else:
-            name = a
-        if name and isinstance(name, str):
-            names.append(name.strip())
-    # Normalize common forms to the schema's vocabulary.
-    normalized = []
-    mapping = {"amd64": "x86_64", "x64": "x86_64", "arm64": "arm64", "aarch64": "arm64"}
-    seen = set()
-    for name in names:
-        canonical = mapping.get(name.lower(), name)
-        if canonical not in seen:
-            seen.add(canonical)
-            normalized.append(canonical)
-    return normalized
+    """Derive architectures from system labels; default to x86_64 for NVIDIA containers."""
+    labels = container.get("labels") or []
+    system_values = []
+    for label in labels:
+        if label.get("key") == "system":
+            system_values = label.get("values") or label.get("unresolvedValues") or []
+            break
+    has_multiarch = any("multiarch" in str(v).lower() for v in system_values)
+    if has_multiarch:
+        return ["x86_64", "arm64"]
+    # NVIDIA containers are x86_64 unless explicitly marked multiarch.
+    return ["x86_64"]
 
 
-def config_pointer(container, name):
+def config_pointer(container):
     """Return the upstream URL consumers should fetch for deploy-time config."""
-    for key in ("docsUrl", "docs_url", "documentationUrl", "documentation_url"):
-        value = container.get(key)
-        if value and isinstance(value, str):
-            return value.strip()
-    if name:
-        return f"https://catalog.ngc.nvidia.com/orgs/nvidia/containers/{name}"
+    rid = container.get("resourceId")
+    if rid and isinstance(rid, str):
+        return f"https://catalog.ngc.nvidia.com/orgs/{rid.split('/')[0]}/containers/{rid.split('/')[-1]}"
     return None
-
-
-def is_container(container):
-    """Return True if the catalog entry is a container (not a model or chart)."""
-    resource_type = container.get("resourceType") or container.get("resource_type") or ""
-    if resource_type and resource_type.lower() != "container":
-        return False
-    # Accept entries that explicitly carry an image path/repository.
-    if container.get("imagePath") or container.get("image_path") or container.get("repository"):
-        return True
-    # Fallback: accept when no resourceType is present (assume container listing).
-    return True
 
 
 def map_container(container):
     name = get_name(container)
-    image_ref = get_image_ref(container, name)
+    image_ref = get_image_ref(container)
     return {
         "name": name,
         "description": get_description(container),
         "category": get_category(container),
         "logo_url": get_logo_url(container),
         "image_ref": image_ref,
-        "monthly_pulls": get_pulls(container),
+        "monthly_pulls": get_monthly_pulls(container),
         "stars": get_stars(container),
         "architectures": get_architectures(container),
-        "config_pointer": config_pointer(container, name),
+        "config_pointer": config_pointer(container),
         "readonly_supported": False,
         "nonroot_supported": False,
         "verified": True,
@@ -216,13 +214,11 @@ def build_index(containers):
     apps = []
     seen = set()
     for container in containers:
-        if not is_container(container):
-            continue
         mapped = map_container(container)
         name = mapped["name"]
-        if not name or not mapped["image_ref"]:
+        image_ref = mapped["image_ref"]
+        if not name or not image_ref:
             continue
-        # Deduplicate by name.
         if name in seen:
             continue
         seen.add(name)
