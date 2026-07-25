@@ -136,6 +136,18 @@ The install WorkflowTemplate takes a `mode` parameter:
   to files instead.
 - LSIO images must use the bare docker.io form in rendered manifests;
   `lscr.io/...` is not in the registry allowlist and fails CI lint.
+- The manifest travels between workflow steps as a base64 output parameter
+  supplied via *call-site* `arguments:` — `{{steps.render.outputs...}}`
+  inside a leaf template's input defaults never resolves (three live
+  failures before the fix; see argo-workflows skill red flags).
+- Deployed bundles land in `manifests/catalog-apps/<app>/`, which requires
+  `directory.recurse: true` on the `testing-lab-infra` Application and a
+  `Namespace` object in the bundle (`CreateNamespace=false`).
+
+Verified end-to-end 2026-07-25: jellyfin gitops install — workflow
+`catalog-install-lsio-bxt72` rendered/validated/opened PR #348; after merge,
+ArgoCD deployed to `catalog-jellyfin` (3 PVCs Bound on local-path, pod Ready,
+web UI HTTP 200 in-cluster).
 
 ## Commands
 

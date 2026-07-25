@@ -120,6 +120,15 @@ names to track resources. Always use a fixed `name:`.
 
 **Exception — intentional runtime-state ConfigMap contract:** If the Git manifest must define an explicit set of runtime keys (for example, to document a lifecycle-state contract with known empty marker keys), scope an `ignoreDifferences` rule to that one ConfigMap and ignore `/data`, then enable `RespectIgnoreDifferences=true` on the Application. This keeps the key contract in git without ArgoCD patching live runtime values back to placeholders.
 
+**Subdirectories and namespaces:** `testing-lab-infra` runs with
+`directory.recurse: true` (live-patched 2026-07-25; the Application object is
+manually applied, not git-tracked) so nested paths like
+`manifests/catalog-apps/<app>/manifest.yaml` sync. It also sets
+`CreateNamespace=false` — any bundle targeting a new namespace must include
+its own `Namespace` object or the sync fails. Symptom of a missing recurse
+flag: files merge to a subdirectory, app reports Synced/Healthy, but the
+resources silently never appear.
+
 ### 6. Sync status and forced sync
 
 ```bash
