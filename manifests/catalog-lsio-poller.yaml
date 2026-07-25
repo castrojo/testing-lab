@@ -1,0 +1,84 @@
+# CronWorkflow: refresh the linuxserver.io catalog index weekly.
+# Fetches the upstream images API, regenerates docs/data/catalog/linuxserver.json,
+# and opens a PR when the index changes.
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: catalog-lsio-poller
+  namespace: argo
+  labels:
+    app.kubernetes.io/component: catalog-lsio-poller
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  suspend: false
+  schedules:
+    - "0 6 * * 1"
+  timezone: "UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  workflowSpec:
+    serviceAccountName: argo
+    podGC:
+      strategy: OnWorkflowCompletion
+    ttlStrategy:
+      secondsAfterSuccess: 3600
+      secondsAfterFailure: 86400
+    entrypoint: poll-and-pr
+    templates:
+      - name: poll-and-pr
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: bluefin-test-suite
+            bluefin.io/step: catalog-lsio-poller
+        script:
+          image: ghcr.io/projectbluefin/lab-runner:latest
+          command: [bash]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+          source: |
+            set -euo pipefail
+
+            REPO="projectbluefin/lab"
+            CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
+            WORK_DIR="/tmp/lab-catalog"
+            BRANCH="bot/catalog-lsio-$(date -u +%Y%m%d-%H%M%S)"
+            NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+            rm -rf "${WORK_DIR}"
+            git clone --depth 1 "${CLONE_URL}" "${WORK_DIR}"
+            cd "${WORK_DIR}"
+
+            python3 scripts/collect_lsio_catalog.py
+
+            if git diff --quiet -- docs/data/catalog/linuxserver.json; then
+              echo "No catalog changes — skipping PR"
+              exit 0
+            fi
+
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout -b "${BRANCH}"
+            git add docs/data/catalog/linuxserver.json
+            git commit -m "chore: refresh linuxserver.io catalog index (${NOW})" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+            git push origin "${BRANCH}"
+
+            # gh uses GH_TOKEN when present.
+            gh pr create \
+              --repo "${REPO}" \
+              --title "chore: refresh linuxserver.io catalog index" \
+              --body "Weekly refresh of docs/data/catalog/linuxserver.json from ${NOW}." \
+              --base main \
+              --head "${BRANCH}"
+
+            echo "Opened PR for ${BRANCH}"
