@@ -10,7 +10,7 @@ Each iteration used:
 - target: `oci/bluefin.bst`
 - `build-mode=re` and the `bst-build` semaphore
 - BuildBarn remote execution through the configured frontend
-- image `192.168.1.102:30500/bst2:64eb0b4930d57a92710822898fb73af6cc1ae35d`
+- image `<ghost-ip>:30500/bst2:64eb0b4930d57a92710822898fb73af6cc1ae35d`
 - upstream-only artifact/source caches; project source-cache override enabled
 - privileged execution with `/dev/fuse` and `/var/lib/dakota/buildstream-cache`
 - 8 CPU / 16Gi request, 16 CPU / 32Gi limit
@@ -55,7 +55,7 @@ Failed to initialize remote grpc://frontend.buildbarn.svc.cluster.local:8980:
 The independent Dakota container E2E passed:
 
 - workflow: `dakota-container-qa-c98sd`
-- image: `192.168.1.102:30500/dakota:testing`
+- image: `<ghost-ip>:30500/dakota:testing`
 - phase: `Succeeded`
 - duration: 20s
 - all three workflow nodes succeeded

@@ -123,7 +123,7 @@ memory/ADR). Cross-WEC grid joins via Tailscale CAS mesh.
 The Console hosts this as a guided mission ("Add your second PC") wrapping
 the same steps: token display, agent config, verification queries. The
 mission source lives at
-[`missions/add-your-second-pc.json`](../../missions/add-your-second-pc.json)
+[`missions/add-your-second-pc.json`](../../../missions/add-your-second-pc.json)
 in `kc-mission-v1` format. Because the Console v0.3.34 cannot yet load
 custom missions from an in-cluster ConfigMap or CRD, import it via
 **Missions > Local Files > Import**. Keep the mission and this skill in sync

@@ -27,11 +27,11 @@ Two steady-state execution paths exist:
 
 | Host | Role | IP | Notes |
 |---|---|---|---|
-| ghost | k3s control-plane + KubeVirt compute | 192.168.1.102 | Runs VM workloads and Argo control-plane services |
-| exo-1 | k3s worker | 192.168.1.239 | Workflow pods only |
-| Argo UI | external entrypoint | http://192.168.1.102:32746 | Host-local service also exposed on port 2746 |
-| Loki | log aggregation | http://192.168.1.102:30100 | Captures workflow pod logs |
-| ArgoCD | GitOps controller | https://192.168.1.102 | Reconciles this repo into the cluster |
+| ghost | k3s control-plane + KubeVirt compute | `<ghost-ip>` | Runs VM workloads and Argo control-plane services |
+| exo-1 | k3s worker | `<exo-1-ip>` | Workflow pods only |
+| Argo UI | external entrypoint | `http://<ghost-ip>:32746` | Host-local service also exposed on port 2746 |
+| Loki | log aggregation | `http://<ghost-ip>:30100` | Captures workflow pod logs |
+| ArgoCD | GitOps controller | `https://<ghost-ip>` | Reconciles this repo into the cluster |
 
 All KubeVirt VMs are pinned to ghost. Workflow pods may land on ghost or exo-1 depending on template constraints.
 
