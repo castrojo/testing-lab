@@ -1,0 +1,87 @@
+{
+  "version": "kc-mission-v1",
+  "name": "add-your-second-pc",
+  "title": "Add your second PC",
+  "description": "Expand your Bluefin Server home cluster by adding a second PC. Choose between joining it as a k3s agent node in the same cluster, or registering a separate cluster as a KubeStellar WEC.",
+  "type": "custom",
+  "tags": [
+    "onboarding",
+    "node",
+    "wec",
+    "k3s",
+    "kubestellar",
+    "buildbarn"
+  ],
+  "category": "Operations",
+  "missionClass": "install",
+  "difficulty": "Beginner",
+  "author": "Project Bluefin lab",
+  "authorGithub": "projectbluefin",
+  "prerequisites": [
+    "Bluefin Server image booted on the new PC",
+    "Network reachability between the new PC and ghost (LAN for shared cluster; reachable hub endpoint for WEC)",
+    "kubectl access to the ghost cluster"
+  ],
+  "steps": [
+    {
+      "title": "Prerequisites",
+      "description": "Boot the new PC from the Bluefin Server image. Make sure it can reach ghost. Decide whether this PC should become part of the same k3s cluster (default, one scheduling domain) or remain a separate cluster that joins as a KubeStellar WEC."
+    },
+    {
+      "title": "Choose join mode",
+      "description": "Shared cluster (default): the PC runs k3s agent and shares the ghost control plane. Live migration is possible and there is no extra control-plane overhead. WEC: the PC is its own cluster, reachable by ghost, and KubeStellar federates workloads to it. Use WEC for remote sites or machines that must stay autonomous."
+    },
+    {
+      "title": "Retrieve the k3s agent token",
+      "description": "On the server node (ghost), read the k3s agent token. The token is sensitive — copy it but never commit it to git.",
+      "command": "sudo cat /var/lib/rancher/k3s/server/node-token"
+    },
+    {
+      "title": "Join the shared cluster",
+      "description": "On the new PC, run the k3s agent. Replace <server-lan-ip> with ghost's LAN IP and <token> with the value from the previous step. For a persistent setup, write the values to /etc/rancher/k3s/config.yaml and enable k3s-agent.",
+      "command": "sudo k3s agent --server https://<server-lan-ip>:6443 --token <token>"
+    },
+    {
+      "title": "Retrieve the hub token (WEC path)",
+      "description": "If you chose WEC mode, get an OCM bootstrap token from the hub cluster (ghost). This token lets the new cluster register itself.",
+      "command": "clusteradm get token --use-bootstrap-token"
+    },
+    {
+      "title": "Join as a WEC",
+      "description": "Run this on the new cluster. Replace <token> with the hub token, <hub-endpoint> with a reachable ghost API address, and <wec-name> with a short name for this cluster. In-LAN clusters can use https://<ghost-lan-ip>:6443; remote clusters need the Gateway API TLSRoute or LoadBalancer endpoint configured per ADR-0004.",
+      "command": "clusteradm join --hub-token <token> --hub-apiserver <hub-endpoint> --cluster-name <wec-name> --singleton --wait"
+    },
+    {
+      "title": "Accept the WEC",
+      "description": "Back on the hub cluster, accept the CSR and label the ManagedCluster so lab BindingPolicies can select it by name.",
+      "command": "clusteradm accept --clusters <wec-name> && kubectl label managedcluster <wec-name> name=<wec-name> --overwrite"
+    },
+    {
+      "title": "Verify the join",
+      "description": "Shared cluster: the new node should appear Ready. WEC: the ManagedCluster should report JOINED and AVAILABLE.",
+      "command": "kubectl get nodes -o wide && kubectl get managedclusters -o wide"
+    },
+    {
+      "title": "Label node capabilities (shared cluster)",
+      "description": "If the new node has a data disk that should host the zot pull-through cache, apply the capability label. Add the node's data-disk path to manifests/local-path-config.yaml via a PR so PVCs land on the data disk, not the root disk. Never hostPath onto root disks.",
+      "command": "kubectl label node <new-node> lab.projectbluefin.io/zot-cache-data=true"
+    },
+    {
+      "title": "Enjoy the elastic BuildStream grid",
+      "description": "More nodes mean BuildBarn workers can spread. Run a build pipeline and confirm workers schedule on the new capacity.",
+      "command": "kubectl get pods -n buildbarn -o wide"
+    }
+  ],
+  "troubleshooting": [
+    {
+      "title": "Node stays NotReady",
+      "description": "Check that the new PC can reach the k3s server on TCP 6443 and that the token is correct. Verify firewall rules allow the agent to reach the server.",
+      "command": "kubectl describe node <new-node>"
+    },
+    {
+      "title": "ManagedCluster stuck JOINED empty",
+      "description": "The CSR may not have been accepted. Re-run accept and ensure the name label is set.",
+      "command": "clusteradm accept --clusters <wec-name> && kubectl label managedcluster <wec-name> name=<wec-name> --overwrite"
+    }
+  ]
+}
