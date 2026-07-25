@@ -1,0 +1,85 @@
+# CronWorkflow: refresh the NVIDIA NGC catalog index weekly.
+# Fetches the public NGC catalog API for NVIDIA containers, regenerates
+# docs/data/catalog/ngc.json, and opens a PR when the index changes.
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: catalog-ngc-poller
+  namespace: argo
+  labels:
+    app.kubernetes.io/component: catalog-ngc-poller
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  suspend: false
+  schedules:
+    - "0 6 * * 2"
+  timezone: "UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  workflowSpec:
+    serviceAccountName: argo
+    podGC:
+      strategy: OnWorkflowCompletion
+    ttlStrategy:
+      secondsAfterSuccess: 3600
+      secondsAfterFailure: 86400
+    entrypoint: poll-and-pr
+    templates:
+      - name: poll-and-pr
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: bluefin-test-suite
+            bluefin.io/step: catalog-ngc-poller
+        script:
+          image: ghcr.io/projectbluefin/lab-runner:latest
+          command: [bash]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+          source: |
+            set -euo pipefail
+
+            REPO="projectbluefin/lab"
+            CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
+            WORK_DIR="/tmp/lab-catalog-ngc"
+            BRANCH="bot/catalog-ngc-$(date -u +%Y%m%d-%H%M%S)"
+            NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+            rm -rf "${WORK_DIR}"
+            git clone --depth 1 "${CLONE_URL}" "${WORK_DIR}"
+            cd "${WORK_DIR}"
+
+            python3 scripts/collect_ngc_catalog.py
+
+            # Ignore diffs that only touch the generated_at timestamp.
+            if git diff --quiet -I '"generated_at"' -- docs/data/catalog/ngc.json; then
+              echo "No catalog changes — skipping PR"
+              exit 0
+            fi
+
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout -b "${BRANCH}"
+            git add docs/data/catalog/ngc.json
+            git commit -m "chore: refresh NVIDIA NGC catalog index (${NOW})" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+            git push origin "${BRANCH}"
+
+            # lab-runner has no gh CLI — create the PR via the REST API.
+            PR_URL=$(curl -sf -X POST \
+              -H "Authorization: ******" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/pulls" \
+              -d "{\"title\":\"chore: refresh NVIDIA NGC catalog index\",\"body\":\"Weekly refresh of docs/data/catalog/ngc.json from ${NOW}.\",\"base\":\"main\",\"head\":\"${BRANCH}\"}" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["html_url"])')
+
+            echo "Opened PR: ${PR_URL}"
