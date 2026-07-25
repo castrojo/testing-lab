@@ -20,6 +20,14 @@ spec:
             type: host
         WDSes:
           - name: wds1
+        # The chart's hook-based postgres install Job (helm.sh/hook:
+        # post-install) deadlocks under ArgoCD: PostSync never fires while
+        # kubeflex-controller-manager's wait-postgresql init blocks the sync
+        # from becoming healthy. PostgreSQL is a separate Application
+        # (kubestellar-postgres-app.yaml) with release name "postgres" so the
+        # operator's readiness wait on postgres-postgresql-0 matches.
+        kubeflex-operator:
+          installPostgreSQL: false
         # External reachability deferred per ADR-0004: in-cluster Service
         # DNS suffices until external WECs exist. KubeFlex-generated nginx
         # Ingress objects are inert (no controller claims them).

@@ -1,0 +1,34 @@
+# PostgreSQL backing store for KubeFlex-hosted control planes (wds1).
+# Split out of the core-chart because its hook-based install Job deadlocks
+# under ArgoCD (see kubestellar-app.yaml). Release name MUST be "postgres":
+# the kubeflex operator's init container waits for pod postgres-postgresql-0.
+# Chart/version/values mirror the core-chart's install job exactly.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kubestellar-postgres
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: lab
+spec:
+  project: default
+  source:
+    repoURL: quay.io/kubestellar/charts
+    chart: postgresql
+    targetRevision: 13.1.5
+    helm:
+      releaseName: postgres
+      valuesObject:
+        primary:
+          extendedConfiguration: max_connections=1000
+          priorityClassName: system-node-critical
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kubeflex-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
