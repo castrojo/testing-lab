@@ -1,0 +1,64 @@
+{
+  "version": "kc-mission-v1",
+  "name": "app-catalog-store",
+  "title": "Application Catalog & Homelab App Store",
+  "description": "Deploy open-source homelab applications (Jellyfin, Sonarr, Radarr, Ollama, Triton, CUDA workloads) from transparent OCI registry catalogs into your Bluefin Server home control plane using GitOps or direct in-cluster execution.",
+  "type": "custom",
+  "tags": [
+    "catalog",
+    "lsio",
+    "ngc",
+    "gitops",
+    "argo-workflows",
+    "apps"
+  ],
+  "category": "Applications",
+  "missionClass": "install",
+  "difficulty": "Beginner",
+  "author": "Project Bluefin lab",
+  "authorGithub": "projectbluefin",
+  "prerequisites": [
+    "KubeStellar and KubeStellar Console running on the cluster",
+    "Argo Workflows installed in the argo namespace",
+    "zot-cache pull-through registry mirror active"
+  ],
+  "steps": [
+    {
+      "title": "Inspect in-cluster catalog provider indexes",
+      "description": "The lab cluster maintains thin OCI index files refreshed by CronWorkflows: linuxserver.json (~200 homelab media/server apps) and ngc.json (~725 official NVIDIA AI/GPU containers).",
+      "command": "python3 -c \"import json, glob; [print(f, len(json.load(open(f)).get('apps', []))) for f in glob.glob('docs/data/catalog/*.json') if not f.endswith('installed.json')]\""
+    },
+    {
+      "title": "Check currently installed catalog apps",
+      "description": "View the list of open-source homelab applications currently installed and tracked in the cluster.",
+      "command": "cat docs/data/catalog/installed.json"
+    },
+    {
+      "title": "Submit a GitOps app install (default)",
+      "description": "Triggers the in-cluster catalog-install-lsio WorkflowTemplate. This fetches upstream app config, applies lab storage/security policies, renders Kubernetes manifests, and opens a GitOps PR for review.",
+      "command": "argo submit --from workflowtemplate/catalog-install-lsio -p app=jellyfin -p mode=gitops -n argo --watch"
+    },
+    {
+      "title": "Submit an imperative app install (direct apply)",
+      "description": "For immediate execution without waiting for PR review: renders manifests, runs offline structural validation, applies directly to the cluster, and records the installation.",
+      "command": "argo submit --from workflowtemplate/catalog-install-lsio -p app=jellyfin -p mode=imperative -n argo --watch"
+    },
+    {
+      "title": "Verify installed app health and CVE scans",
+      "description": "Installed catalog apps run under their designated namespaces (e.g. catalog-jellyfin). Nightly CronWorkflows scan installed workloads with Grype and output display-only CVE summaries.",
+      "command": "kubectl get pods,svc,pvc -n catalog-jellyfin && cat docs/data/catalog/installed-scans.json"
+    }
+  ],
+  "troubleshooting": [
+    {
+      "title": "Workflow submission fails on resource quota",
+      "description": "Ensure the workflow pod spec includes explicit requests and limits for CPU, memory, and ephemeral-storage.",
+      "command": "kubectl get resourcequota argo-quota -n argo -o yaml"
+    },
+    {
+      "title": "App image pull error from upstream registry",
+      "description": "Check that the zot-cache pull-through registry mirror is running and that the upstream registry (lscr.io, nvcr.io) is listed in the allowlist.",
+      "command": "kubectl get pods -n local-registry"
+    }
+  ]
+}

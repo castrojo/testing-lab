@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubestellar-console-catalog-card
+  namespace: kubestellar-console
+  labels:
+    app.kubernetes.io/name: kubestellar-console
+    app.kubernetes.io/component: card-definition
+    lab.projectbluefin.io/surface: catalog
+data:
+  card.json: |
+    {
+      "id": "kubestellar-app-catalog",
+      "title": "Homelab Application Catalog & OCI Store",
+      "description": "In-cluster OCI application catalog for KubeStellar. Browse transparent LinuxServer.io and NVIDIA NGC indexes, manage installed homelab workloads, and trigger GitOps or imperative app deployments.",
+      "category": "Applications",
+      "provider": "projectbluefin",
+      "refreshIntervalSeconds": 60,
+      "views": [
+        {
+          "id": "installed-apps",
+          "title": "Installed Homelab Workloads",
+          "source": "docs/data/catalog/installed.json",
+          "displayType": "table",
+          "columns": ["name", "provider", "namespace", "manifest_path", "installed_at"]
+        },
+        {
+          "id": "cve-scans",
+          "title": "Installed Workload Vulnerability Scans",
+          "source": "docs/data/catalog/installed-scans.json",
+          "displayType": "table",
+          "columns": ["app", "image_ref", "scan_date", "critical", "high", "medium", "low"]
+        },
+        {
+          "id": "provider-indexes",
+          "title": "Provider Indexes",
+          "providers": [
+            {
+              "name": "linuxserver",
+              "title": "LinuxServer.io Homelab Catalog",
+              "indexFile": "docs/data/catalog/linuxserver.json",
+              "installerWorkflow": "catalog-install-lsio"
+            },
+            {
+              "name": "ngc",
+              "title": "NVIDIA NGC AI & GPU Containers",
+              "indexFile": "docs/data/catalog/ngc.json",
+              "installerWorkflow": "catalog-install-lsio"
+            }
+          ]
+        }
+      ]
+    }
