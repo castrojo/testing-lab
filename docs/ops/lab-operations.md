@@ -59,11 +59,13 @@ fallback. A successful local build/push or container E2E is diagnostic evidence
 only and does not satisfy this gate. Do not increase jobs, workers, or semaphore
 capacity while the full SDK input root or runner remains unhealthy.
 
-For the current Dakota incident, inspect runner logs for `rustc -vV`,
-`Permission denied`, invalid `TMPDIR`, and CAS materialization errors. Confirm
-the live ConfigMaps and pods match the checked-in manifests; a GitOps/config
-drift can leave the cluster running an obsolete virtual/FUSE or
-`setTmpdirEnvironmentVariable` configuration even when the repository is fixed.
+For Dakota distributed-build failures, inspect runner logs for `rustc -vV`,
+`Permission denied`, invalid `TMPDIR`, CAS materialization errors, BuildBarn
+storage DNS failures, and disappeared workers. Confirm the live ConfigMaps and
+pods match the checked-in manifests; GitOps/config drift can leave the cluster
+running an obsolete virtual/FUSE or `setTmpdirEnvironmentVariable` configuration
+even when the repository is fixed. Treat storage/DNS/worker failures as lab
+blockers and recover them before judging a PR.
 
 ---
 

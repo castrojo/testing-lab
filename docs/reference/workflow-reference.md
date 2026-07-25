@@ -47,6 +47,7 @@ bridge that submits Argo Workflows from ephemeral ARC runners, see
 - **DAG:** `validate-suites` → parallel `test-lane` items (`smoke`, `common`, `developer`,
   `software`, `system`) through `run-container-tests`.
 - **Just recipe:** `run-dakota-qa`.
+- **PR review:** use the [Dakota PR review skill](../skills/dakota-pr-review/SKILL.md). Build the exact PR SHA first, then run smoke and required E2E suites against the resulting image. If lab validation identifies a scoped PR defect, repair the PR branch, rebuild from its new SHA, rerun E2E, and merge directly only after a fresh pass; do not use merge queue when Dakota GHA is known-broken.
 
 ### dakota-build-pipeline
 - **Purpose:** The actual BuildStream compile step for Dakota — builds
@@ -70,14 +71,12 @@ bridge that submits Argo Workflows from ephemeral ARC runners, see
   BuildStream run, so the lab build checks out the same source revision that
   GitHub is building instead of drifting to a later branch tip.
 
-**Current distributed-gate status (2026-07-22):** Dakota's five full distributed
-  benchmark attempts all failed; the latest failures reached remote execution but
-  exposed runner temporary-directory/Rust execution errors, and subsequent direct
-  isolation identified full SDK input-root CAS materialization stalls and shard
-  inconsistency. The local BuildStream fallback and independent Dakota container E2E
-  are useful diagnostics only and do not satisfy the distributed gate. No green
-  distributed image publication or registry-digest validation may be claimed until
-  a fresh `build-mode=re` run completes and its pushed image is verified.
+**Distributed-gate rule:** A Dakota PR build is valid only when a fresh
+`build-mode=re` run completes for the exact PR head SHA and its pushed registry
+image is verified. Local, cache-only, or fallback builds are diagnostic evidence
+and do not satisfy the distributed gate. Inspect failed child nodes even when the
+Argo parent phase is successful; classify BuildBarn storage/DNS/worker failures as
+infrastructure blockers and repair the lab before retrying.
 
 ### cosmic-build-pipeline
 - **Purpose:** BuildStream compile pipeline for the default COSMIC image

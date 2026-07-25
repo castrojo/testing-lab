@@ -229,7 +229,7 @@ lab/
 | 4 — Atomic OS contract | `system` | Nightly, every image build |
 | 5 — Flatcar substrate | `flatcar` | Dedicated workflow |
 | — Migration validation | `migration` | On rechunk → chunkah switches |
-| — Dakota BST | `dakota` | Every Dakota PR |
+| — Dakota BST | `dakota` | Every Dakota PR; see [Dakota PR review](docs/skills/dakota-pr-review/SKILL.md) for exact-SHA build, E2E, repair, and direct-merge policy |
 
 ---
 
@@ -355,7 +355,7 @@ See [/docs/skills/test-authoring/dogtail-patterns.md](/docs/skills/test-authorin
 
 - [Project Bluefin](https://projectbluefin.io) — primary subject under test; this lab validates every image publish
 - [ublue-os/bluefin](https://github.com/ublue-os/bluefin) — upstream Bluefin image builds
-- [Project Dakota](https://github.com/projectbluefin/dakota) — BST-built Bluefin variant; Dakota PRs trigger `dakota-qa-pipeline`
+- [Project Dakota](https://github.com/projectbluefin/dakota) — BST-built Bluefin variant; Dakota PRs use the lab-authoritative [Dakota PR review process](docs/skills/dakota-pr-review/SKILL.md) and `dakota-qa-pipeline`
 - [projectbluefin/testsuite](https://github.com/projectbluefin/testsuite) — shared behave suites and container QA inputs
 - [projectbluefin/actions](https://github.com/projectbluefin/actions) — shared GitHub Actions workflows around the release pipeline
 - [bootc](https://containers.github.io/bootc/) — image-based Linux standard
