@@ -69,8 +69,28 @@ client id/secret in a Secret referenced via `github.existingSecret`, keep
 
 - Multi-cluster resource views cover CRDs generically: ArgoCD Applications,
   Argo Workflows, KubeVirt VMs all appear as resources with status.
+- The Console ServiceAccount's chart RBAC reads core resources only. Lab
+  surfaces come from `manifests/kubestellar-console-crd-read.yaml`
+  (ClusterRole `kubestellar-console-lab-surfaces`, GitOps-managed): CRD
+  discovery + read on Argo/ArgoCD/KubeVirt/KubeStellar/OCM groups, plus the
+  imperative verbs listed below. If a surface shows "no resources", check
+  that ClusterRole before debugging the Console.
 - Marketplace cards (kubestellar/console-marketplace) fill dedicated views
   (GitOps, networking, security). Prefer a marketplace card over custom UI.
+
+### Per-surface action wiring
+
+| Surface | View in Console | Imperative (Console SA verb) | GitOps (PR to this repo) | Deep-dive fallback |
+|---|---|---|---|---|
+| ArgoCD apps | Applications CRD status | none — read-only by design | edit `argocd/`, `manifests/`, `argo/workflow-templates/` | ArgoCD UI: `kubectl -n argocd port-forward svc/argocd-server 8081:443` |
+| Argo Workflows | Workflow/CronWorkflow CRDs | `create workflows` (resubmit/submit-from) | edit templates in `argo/workflow-templates/` | Argo UI: `kubectl -n argo port-forward svc/argo-server 2746:2746`; `argo logs` |
+| KubeVirt VMs | VirtualMachine CRDs | `patch virtualmachines` (`spec.running` start/stop/restart) | VM definitions in `manifests/` | `virtctl console` / `virtctl vnc` |
+| KubeStellar | ManagedClusters (its1 surfaces on host) | none | BindingPolicies in git, downsynced via wds1 | `kubestellar/SKILL.md` |
+| Catalog apps | index at `docs/data/catalog/*.json` | install workflow (imperative mode) | install workflow (gitops mode, default capture) | `registry-catalog` skill (when it lands) |
+
+BindingPolicy note: the `control.kubestellar.io` CRDs live in **wds1**, not
+the hosting cluster — `kubectl auth can-i get bindingpolicies` on ghost
+correctly answers no. The Console reaches wds1 as a registered cluster.
 - **Missions** (`kc-mission-v1`): step sequences with `yaml` (one-click
   apply) and `command` blocks; custom missions are shareable via built-in
   PR flow. The "add your second PC" onboarding flow is a custom mission —
