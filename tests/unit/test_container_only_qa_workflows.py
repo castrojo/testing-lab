@@ -70,6 +70,7 @@ def test_container_runner_uses_a_nested_systemd_target_with_bounded_resources():
     assert "podman run --detach --systemd=always" in content
     assert "--network host" in content
     assert "--volume /etc/resolv.conf:/etc/resolv.conf:ro" in content
+    assert '"${IMAGE}" /sbin/init' in content
     assert "systemctl is-active dbus systemd-logind" in content
     assert "useradd -m -u 1000" in content
     assert "bluefin-test ALL=(ALL) NOPASSWD: ALL" in content
