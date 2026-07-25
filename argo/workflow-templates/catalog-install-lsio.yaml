@@ -47,11 +47,23 @@ spec:
             template: render
         - - name: validate
             template: validate
+            arguments:
+              parameters:
+                - name: manifest-b64
+                  value: "{{steps.render.outputs.parameters.manifest-b64}}"
         - - name: apply
             template: apply
             when: "{{workflow.parameters.mode}} == imperative"
+            arguments:
+              parameters:
+                - name: manifest-b64
+                  value: "{{steps.render.outputs.parameters.manifest-b64}}"
         - - name: publish-git
             template: publish-git
+            arguments:
+              parameters:
+                - name: manifest-b64
+                  value: "{{steps.render.outputs.parameters.manifest-b64}}"
 
     - name: render
       inputs:
@@ -125,8 +137,9 @@ spec:
     - name: validate
       inputs:
         parameters:
+          # Supplied by the install steps call site; steps.* scope does not
+          # resolve inside leaf templates.
           - name: manifest-b64
-            value: "{{steps.render.outputs.parameters.manifest-b64}}"
       metadata:
         labels:
           app.kubernetes.io/part-of: bluefin-test-suite
@@ -174,7 +187,6 @@ spec:
           - name: namespace
             value: "{{workflow.parameters.namespace}}"
           - name: manifest-b64
-            value: "{{steps.render.outputs.parameters.manifest-b64}}"
       metadata:
         labels:
           app.kubernetes.io/part-of: bluefin-test-suite
@@ -217,7 +229,6 @@ spec:
           - name: base-branch
             value: "{{workflow.parameters.base-branch}}"
           - name: manifest-b64
-            value: "{{steps.render.outputs.parameters.manifest-b64}}"
       metadata:
         labels:
           app.kubernetes.io/part-of: bluefin-test-suite
