@@ -20,6 +20,7 @@ ALLOWLISTED_REGISTRIES = {
     "registry.fedoraproject.org",
     "registry.k8s.io",
     "cgr.dev",
+    "lscr.io",
     "192.168.1.102",
     "192.168.1.102:30500",
     "192.168.1.102:30501",

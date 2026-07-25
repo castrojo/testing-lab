@@ -68,7 +68,7 @@ jobs:
             # skip bare names (no dot or colon = implicit docker.io, handled by zot-docker)
             echo "$registry" | grep -qE '[.:]' || continue
             case "$registry" in
-              ghcr.io|quay.io|registry.fedoraproject.org|registry.k8s.io|cgr.dev|192.168.1.102|192.168.1.102:30500|192.168.1.102:30501|localhost) ;;
+              ghcr.io|quay.io|registry.fedoraproject.org|registry.k8s.io|cgr.dev|lscr.io|192.168.1.102|192.168.1.102:30500|192.168.1.102:30501|localhost) ;;
               *) echo "FAIL: uncached registry '$registry' in $(echo "$line" | cut -d: -f1-2): $imgref"; FAIL=1 ;;
             esac
           done < <(grep -rn 'image:' argo/ manifests/)
