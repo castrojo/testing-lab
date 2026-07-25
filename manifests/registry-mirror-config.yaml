@@ -2,7 +2,7 @@
 # Writes containerd hosts.toml to each node's certs.d path.
 # containerd v2.0 (k3s v1.32+) hot-reloads these — no k3s restart needed.
 #
-# All 8 registries mirror through a single zot-cache instance (NodePort 30501).
+# All 6 registries mirror through a single zot-cache instance (NodePort 30501).
 # Zot stores each upstream under a repo prefix via sync destination mapping:
 #   ghcr.io                    → ghcr/<repo>
 #   docker.io                  → docker/<repo>
@@ -10,8 +10,6 @@
 #   registry.fedoraproject.org → fedora/<repo>
 #   registry.k8s.io            → k8s/<repo>
 #   cgr.dev                    → cgr/<repo>
-#   public.ecr.aws             → ecr/<repo>
-#   lscr.io                    → lscr/<repo>
 #
 # containerd should talk to the mirror root and use override_path to point the
 # request at the registry-specific Zot namespace for each upstream.
@@ -69,12 +67,6 @@ data:
     [host."http://192.168.1.102:30501/v2/ecr"]
       capabilities = ["pull", "resolve"]
       override_path = true
-  lscr.io.hosts.toml: |
-    server = "https://lscr.io"
-
-    [host."http://192.168.1.102:30501/v2/lscr"]
-      capabilities = ["pull", "resolve"]
-      override_path = true
   local-zot.hosts.toml: |
     server = "http://192.168.1.102:30500"
 
@@ -114,7 +106,6 @@ spec:
                 /certs.d/registry.k8s.io \
                 /certs.d/cgr.dev \
                 /certs.d/public.ecr.aws \
-                /certs.d/lscr.io \
                 "/certs.d/192.168.1.102:30500"
               cp /config/ghcr.io.hosts.toml                    /certs.d/ghcr.io/hosts.toml
               cp /config/docker.io.hosts.toml                  /certs.d/docker.io/hosts.toml
@@ -123,7 +114,6 @@ spec:
               cp /config/registry.k8s.io.hosts.toml            /certs.d/registry.k8s.io/hosts.toml
               cp /config/cgr.dev.hosts.toml                    /certs.d/cgr.dev/hosts.toml
               cp /config/public.ecr.aws.hosts.toml             /certs.d/public.ecr.aws/hosts.toml
-              cp /config/lscr.io.hosts.toml                    /certs.d/lscr.io/hosts.toml
               cp /config/local-zot.hosts.toml                  "/certs.d/192.168.1.102:30500/hosts.toml"
               echo "Mirror hosts written."
           volumeMounts:

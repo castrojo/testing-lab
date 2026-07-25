@@ -84,9 +84,8 @@ Lab conventions applied:
 - `storageClassName: local-path` on every PVC.
 - PVC size heuristic based on mount path (`/config` 5Gi, media paths 100Gi,
   `/transcode` 50Gi, default 1Gi).
-- Images emitted as `lscr.io/linuxserver/<app>:latest` so the cluster's
-  zot-lscr mirror resolves them; this matches how other lab workloads
-  reference their upstream mirrored registries.
+- Images emitted as bare `linuxserver/<app>:latest` so the cluster's
+  zot-docker mirror resolves them (avoids the registry allowlist lint).
 - PUID/PGID become env vars and, when the image supports it, a
   `securityContext` with `runAsUser`, `runAsGroup`, `fsGroup`, `runAsNonRoot`,
   and `readOnlyRootFilesystem`.
@@ -135,9 +134,8 @@ The install WorkflowTemplate takes a `mode` parameter:
 - Heredocs (`<<'EOF'`) inside YAML `script:` block scalars break the Argo
   linter. Build JSON payloads with inline `python3 -c` or write helper scripts
   to files instead.
-- LSIO images use the upstream `lscr.io/linuxserver/<app>` form in rendered
-  manifests; `lscr.io` is mirrored by the lab zot cache and is in the
-  registry allowlist.
+- LSIO images must use the bare docker.io form in rendered manifests;
+  `lscr.io/...` is not in the registry allowlist and fails CI lint.
 - The manifest travels between workflow steps as a base64 output parameter
   supplied via *call-site* `arguments:` — `{{steps.render.outputs...}}`
   inside a leaf template's input defaults never resolves (three live
