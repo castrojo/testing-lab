@@ -63,7 +63,15 @@ For linuxserver.io it is the `application_setup` README anchor.
 
 - **linuxserver.io** is the reference rich-API tier. The poller uses
   `https://api.linuxserver.io/api/v1/images?include_config=true`.
-- Future providers (NGC, AMD, DockerHub) reuse the same index schema but may
+- **NGC (NVIDIA)** is live (`scripts/collect_ngc_catalog.py`,
+  `manifests/catalog-ngc-poller.yaml`, `docs/data/catalog/ngc.json`).
+  Use the PUBLIC unauthenticated search endpoint
+  `https://api.ngc.nvidia.com/v2/search/catalog/resources/CONTAINER`
+  (paginated `q={"query":"*","pageSize":N,"page":M}`); the per-org
+  containers endpoint (`/v2/orgs/nvidia/containers`) returns 401 without
+  an API key — do not use it. Filter results to `orgName == "nvidia"` to
+  keep only official images; image refs are `nvcr.io/<resourceId>`.
+- Future providers (AMD, DockerHub) reuse the same index schema but may
   leave many fields `null`/`false`. They only need to populate `name`,
   `description`, `image_ref`, and `config_pointer`.
 
