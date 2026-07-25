@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kubestellar
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: lab
+spec:
+  project: default
+  source:
+    repoURL: ghcr.io/kubestellar/kubestellar
+    chart: core-chart
+    targetRevision: 0.29.0
+    helm:
+      valuesObject:
+        # its1 type host reuses ghost's API server (OCM hub in-cluster).
+        # wds1 is a KubeFlex-hosted API server ArgoCD writes workloads to.
+        ITSes:
+          - name: its1
+            type: host
+        WDSes:
+          - name: wds1
+        # External reachability deferred per ADR-0004: in-cluster Service
+        # DNS suffices until external WECs exist. KubeFlex-generated nginx
+        # Ingress objects are inert (no controller claims them).
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kubestellar
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

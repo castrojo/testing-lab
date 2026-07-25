@@ -1,0 +1,92 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: kubestellar-smoke-test
+  namespace: argo
+spec:
+  entrypoint: smoke
+  serviceAccountName: argo
+  arguments:
+    parameters:
+    - name: wec-name
+      value: ghost
+  templates:
+  - name: smoke
+    inputs:
+      parameters:
+      - name: wec-name
+        value: "{{workflow.parameters.wec-name}}"
+    script:
+      command:
+      - bash
+      image: cgr.dev/chainguard/kubectl:latest-dev
+      source: |
+        set -euo pipefail
+        WEC="{{inputs.parameters.wec-name}}"
+        echo "-> Fetching wds1 kubeconfig from KubeFlex secret..."
+        kubectl get secret -n wds1-system admin-kubeconfig \
+          -o jsonpath='{.data.kubeconfig}' | base64 -d > /tmp/wds1.kubeconfig
+        WDS="kubectl --kubeconfig /tmp/wds1.kubeconfig"
+
+        echo "-> Applying smoke BindingPolicy + Deployment to wds1..."
+        cat <<EOF | $WDS apply -f -
+        apiVersion: control.kubestellar.io/v1alpha1
+        kind: BindingPolicy
+        metadata:
+          name: smoke-test
+        spec:
+          clusterSelectors:
+          - matchLabels:
+              name: ${WEC}
+          downsync:
+          - objectSelectors:
+            - matchLabels:
+                app.kubernetes.io/part-of: kubestellar-smoke
+            wantSingletonReportedState: true
+        ---
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: kubestellar-smoke
+          labels:
+            app.kubernetes.io/part-of: kubestellar-smoke
+        ---
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: smoke
+          namespace: kubestellar-smoke
+          labels:
+            app.kubernetes.io/part-of: kubestellar-smoke
+        spec:
+          replicas: 1
+          selector:
+            matchLabels: {app: smoke}
+          template:
+            metadata:
+              labels: {app: smoke}
+            spec:
+              containers:
+              - name: pause
+                image: ghcr.io/projectbluefin/lab-runner:latest
+                command: [sleep, infinity]
+        EOF
+
+        echo "-> Waiting for downsync to $WEC..."
+        kubectl wait -n kubestellar-smoke deploy/smoke \
+          --for=condition=Available --timeout=300s
+
+        echo "-> Verifying singleton status upsync into wds1..."
+        for i in $(seq 1 30); do
+          READY=$($WDS get deploy smoke -n kubestellar-smoke \
+            -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "")
+          [ "$READY" = "1" ] && break
+          sleep 10
+        done
+        [ "$READY" = "1" ] || { echo "FAIL: status did not upsync"; exit 1; }
+
+        echo "-> Cleaning up..."
+        $WDS delete deploy smoke -n kubestellar-smoke --ignore-not-found
+        $WDS delete namespace kubestellar-smoke --ignore-not-found
+        $WDS delete bindingpolicy smoke-test --ignore-not-found
+        echo "OK smoke test passed: downsync + status upsync verified"
