@@ -87,6 +87,8 @@ client id/secret in a Secret referenced via `github.existingSecret`, keep
 | KubeVirt VMs | VirtualMachine CRDs | `patch virtualmachines` (`spec.running` start/stop/restart) | VM definitions in `manifests/` | `virtctl console` / `virtctl vnc` |
 | KubeStellar | ManagedClusters (its1 surfaces on host) | none | BindingPolicies in git, downsynced via wds1 | `kubestellar/SKILL.md` |
 | Catalog apps | index at `docs/data/catalog/*.json` | install workflow (imperative mode) | install workflow (gitops mode, default capture) | `registry-catalog` skill (when it lands) |
+| Host OS updates (bootc) | none — stays on the Astro Pages site (decision: lab update data already feeds Astro; no Console card duplication) | none | image/branch changes via factory repos | Astro dashboard, `bluefin.io/*` lanes |
+| BuildStream builds | Workflow CRD status (dakota pipeline runs) | `create workflows` (rerun via submit-from) | pipeline templates in `argo/workflow-templates/` | BuildBarn/artifact-cache health stays on Astro |
 
 BindingPolicy note: the `control.kubestellar.io` CRDs live in **wds1**, not
 the hosting cluster — `kubectl auth can-i get bindingpolicies` on ghost
