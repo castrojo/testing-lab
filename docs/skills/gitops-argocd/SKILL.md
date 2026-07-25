@@ -205,24 +205,6 @@ Commit and push. ArgoCD sets the CronWorkflow's suspend flag and stops schedulin
 `dakota-qa-pipeline`). Keep this suspended while the QA lane still requires
 `bootc install to-disk` on a dakota image without UKI support.
 
-### 10. Reconciling orphan templates (cluster-only → git)
-
-When a template exists in the cluster but not in git:
-```bash
-# Export and clean metadata
-kubectl get workflowtemplate -n argo <name> -o json \
-  | python3 -c "
-import json,sys,yaml
-d=json.load(sys.stdin)
-for k in ['resourceVersion','uid','creationTimestamp','generation','managedFields']:
-    d['metadata'].pop(k,None)
-d.pop('status',None)
-print(yaml.dump(d,default_flow_style=False,sort_keys=False))" \
-  > argo/workflow-templates/<name>.yaml
-```
-
-Then lint, commit, push. ArgoCD will adopt the resource on next sync.
-
 ### 9. Taking GitOps ownership of unmanaged Deployments/Services
 
 When a Deployment or Service exists in the cluster but has no manifest in git (e.g. was created
