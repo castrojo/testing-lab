@@ -254,16 +254,23 @@ accessCredentials rather than baking them into disk images.
 
 ---
 
-## 6.5. Dakota PR batch workflow
+## 6.5. Dakota PR review and repair loop
 
-Use the Dakota PR batch workflow when you want to validate a Dakota PR branch
-without switching to the full container-only QA lane. It sits alongside the
-existing Dakota entry points:
-- `just run-bst-build` — the BuildStream artifact build lane.
-- `just run-dakota-qa` — the full Dakota container-only QA lane.
-- `just run-dakota-container-qa` — containerized QA that runs image-level smoke checks directly inside the OCI image. Use this for `dakota:testing` while the VM path is blocked; NVIDIA builds are disabled (Dakota's composefs-oci backend declares systemd-boot but ships no UKI, so `bootc install to-disk` fails).
+Use the [Dakota PR review skill](../skills/dakota-pr-review/SKILL.md) for the
+repeatable pre-merge path. Do not rely on the older batch workflow as the merge
+gate when Dakota GHA or merge queue is unhealthy.
 
-Trigger it with:
+For each open PR:
+
+1. Confirm the current head SHA and mergeability.
+2. Submit `dakota-build-pipeline` with that exact SHA and `build-mode=re`.
+3. Run `dakota-container-qa-pipeline` against the built local registry image,
+   then `dakota-qa-pipeline` for required BDD/GUI coverage.
+4. If a scoped PR defect is found, fix it on the PR branch, push the new SHA,
+   rebuild, and rerun E2E. Old evidence is invalid after a push.
+5. Merge directly only after the fresh lab build and E2E pass; do not enter merge queue.
+
+The older batch workflow remains useful for validation-only runs:
 
 ```bash
 argo submit -n argo --from workflowtemplate/dakota-pr-batch-pipeline \

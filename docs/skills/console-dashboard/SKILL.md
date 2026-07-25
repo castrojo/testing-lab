@@ -96,7 +96,7 @@ correctly answers no. The Console reaches wds1 as a registered cluster.
 - **Missions** (`kc-mission-v1`): step sequences with `yaml` (one-click
   apply) and `command` blocks; custom missions are shareable via built-in
   PR flow. The "add your second PC" onboarding flow is committed as
-  [`missions/add-your-second-pc.json`](../../missions/add-your-second-pc.json).
+  [`missions/add-your-second-pc.json`](../../../missions/add-your-second-pc.json).
   The Console v0.3.34 does not read custom missions from a ConfigMap/CRD yet;
   import it via **Missions > Local Files > Import**. See
   `node-lifecycle/SKILL.md` for the agent-executable version.
