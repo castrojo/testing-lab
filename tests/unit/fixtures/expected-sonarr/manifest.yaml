@@ -1,0 +1,143 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: catalog-sonarr
+  labels:
+    app.kubernetes.io/part-of: catalog-apps
+    bluefin.io/catalog-provider: linuxserver
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sonarr-config
+  labels:
+    app: sonarr
+    app.kubernetes.io/part-of: catalog-apps
+    bluefin.io/catalog-provider: linuxserver
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sonarr-tv
+  labels:
+    app: sonarr
+    app.kubernetes.io/part-of: catalog-apps
+    bluefin.io/catalog-provider: linuxserver
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sonarr-downloads
+  labels:
+    app: sonarr
+    app.kubernetes.io/part-of: catalog-apps
+    bluefin.io/catalog-provider: linuxserver
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sonarr
+  namespace: catalog-sonarr
+  labels:
+    app: sonarr
+    app.kubernetes.io/part-of: catalog-apps
+    bluefin.io/catalog-provider: linuxserver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sonarr
+  template:
+    metadata:
+      labels:
+        app: sonarr
+        app.kubernetes.io/part-of: catalog-apps
+        bluefin.io/catalog-provider: linuxserver
+    spec:
+      containers:
+        - name: sonarr
+          image: "linuxserver/sonarr:latest"
+          ports:
+            - name: tcp-8989
+              containerPort: 8989
+              protocol: TCP
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: Etc/UTC
+          volumeMounts:
+            - name: sonarr-config
+              mountPath: /config
+            - name: sonarr-tv
+              mountPath: /tv
+            - name: sonarr-downloads
+              mountPath: /downloads
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              ephemeral-storage: 100Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+              ephemeral-storage: 1Gi
+      volumes:
+        - name: sonarr-config
+          persistentVolumeClaim:
+            claimName: sonarr-config
+        - name: sonarr-tv
+          persistentVolumeClaim:
+            claimName: sonarr-tv
+        - name: sonarr-downloads
+          persistentVolumeClaim:
+            claimName: sonarr-downloads
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sonarr
+  namespace: catalog-sonarr
+  labels:
+    app: sonarr
+    app.kubernetes.io/part-of: catalog-apps
+    bluefin.io/catalog-provider: linuxserver
+spec:
+  selector:
+    app: sonarr
+  type: ClusterIP
+  ports:
+    - name: tcp-8989
+      port: 8989
+      targetPort: 8989
+      protocol: TCP
