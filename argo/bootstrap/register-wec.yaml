@@ -65,6 +65,7 @@ spec:
         done
 
         echo "-> Verifying ManagedCluster..."
+        kubectl label managedcluster "$WEC" name="$WEC" --overwrite
         kubectl get managedclusters "$WEC" -o wide
         kubectl wait managedcluster/"$WEC" \
           --for=condition=ManagedClusterConditionAvailable --timeout=300s

@@ -32,7 +32,7 @@ spec:
         WEC="{{inputs.parameters.wec-name}}"
         echo "-> Fetching wds1 kubeconfig from KubeFlex secret..."
         kubectl get secret -n wds1-system admin-kubeconfig \
-          -o jsonpath='{.data.kubeconfig}' | base64 -d > /tmp/wds1.kubeconfig
+          -o jsonpath='{.data.kubeconfig-incluster}' | base64 -d > /tmp/wds1.kubeconfig
         WDS="kubectl --kubeconfig /tmp/wds1.kubeconfig"
 
         echo "-> Applying smoke BindingPolicy + Deployment to wds1..."
@@ -80,6 +80,15 @@ spec:
         EOF
 
         echo "-> Waiting for downsync to $WEC..."
+        for i in $(seq 1 30); do
+          kubectl get ns kubestellar-smoke >/dev/null 2>&1 && break
+          sleep 10
+        done
+        kubectl get ns kubestellar-smoke
+        for i in $(seq 1 30); do
+          kubectl get deploy smoke -n kubestellar-smoke >/dev/null 2>&1 && break
+          sleep 10
+        done
         kubectl wait -n kubestellar-smoke deploy/smoke \
           --for=condition=Available --timeout=300s
 
