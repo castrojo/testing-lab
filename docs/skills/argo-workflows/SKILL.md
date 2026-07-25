@@ -54,6 +54,13 @@ The workflow authoring guidance is split by topic:
 - A pipeline with VMs and no `spec.activeDeadlineSeconds` — a stuck VM holds its semaphore slot forever
 - A pipeline with VMs that adds `spec.synchronization.semaphores` — semaphores are removed; k8s scheduler handles concurrency via virt-launcher memory requests
 - A `steps` or `dag` task calling a sub-template without `arguments:`
+- `{{steps.X.outputs...}}` or `{{tasks.X.outputs...}}` used as an input
+  parameter *default inside a leaf template* — that scope only exists at
+  the steps/dag call site, and unresolved literals reach the shell (live
+  failures: catalog-install-lsio-njq2s, -vhbcb). Pass via call-site
+  `arguments:`. Corollary: each step is its own pod — never pass file
+  paths between steps; pass file *content* via an output parameter
+  (`valueFrom.path`, 256KB cap) or an artifact.
 - A pipeline with no `onExit` handler (VM will leak on failure)
 - Any `script:` template without `resources:` limits
 - Templates in `argo/workflow-templates/` applied with `kubectl apply` (not via git)
