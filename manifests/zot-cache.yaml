@@ -125,6 +125,14 @@ spec:
     spec:
       automountServiceAccountToken: false
       priorityClassName: system-cluster-critical
+      # Capability-based placement: only nodes carrying the zot-cache data
+      # disk run the cache (label ghost once:
+      #   kubectl label node ghost lab.projectbluefin.io/zot-cache-data=true).
+      # Without this the DaemonSet lands on every node and fails on hosts
+      # that lack /var/mnt/ghost-data (exo-0 sat in CreateContainerError for
+      # 14d and wedged every lab-infra sync at "waiting for healthy state").
+      nodeSelector:
+        lab.projectbluefin.io/zot-cache-data: "true"
       containers:
         - name: zot
           image: ghcr.io/project-zot/zot-linux-amd64:v2.1.1
