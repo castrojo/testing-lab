@@ -18,4 +18,5 @@ Load the skill for the area you are touching, then stop.
 | [kubevirt-vms](kubevirt-vms/SKILL.md) | KubeVirt VM provisioning, lifecycle, or debugging boot failures. |
 | [meta-skill-improvement](meta-skill-improvement/SKILL.md) | Self-improvement loop, nightly failure triage, and adding new skills. |
 | [node-lifecycle](node-lifecycle/SKILL.md) | Adding/removing nodes or WECs, second-PC expansion, BST grid scaling. |
+| [registry-catalog](registry-catalog/SKILL.md) | Transparent registry catalog: LSIO index, install translation, validation, and future providers. |
 | [test-authoring](test-authoring/SKILL.md) | Writing or debugging behave/qecore/dogtail GNOME GUI tests. |

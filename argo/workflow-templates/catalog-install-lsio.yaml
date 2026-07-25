@@ -42,21 +42,22 @@ spec:
 
   templates:
     - name: install
-      dag:
-        tasks:
-          - name: render-and-apply
-            template: render-and-apply
-          - name: publish-git
-            depends: "render-and-apply.Succeeded"
+      steps:
+        - - name: render
+            template: render
+        - - name: validate
+            template: validate
+        - - name: apply
+            template: apply
+            when: "{{workflow.parameters.mode}} == imperative"
+        - - name: publish-git
             template: publish-git
 
-    - name: render-and-apply
+    - name: render
       inputs:
         parameters:
           - name: app
             value: "{{workflow.parameters.app}}"
-          - name: mode
-            value: "{{workflow.parameters.mode}}"
           - name: namespace
             value: "{{workflow.parameters.namespace}}"
           - name: image-tag
@@ -88,7 +89,6 @@ spec:
           set -euo pipefail
 
           APP="{{inputs.parameters.app}}"
-          MODE="{{inputs.parameters.mode}}"
           NS_PARAM="{{inputs.parameters.namespace}}"
           IMAGE_TAG="{{inputs.parameters.image-tag}}"
           NAMESPACE="${NS_PARAM:-catalog-${APP}}"
@@ -97,14 +97,14 @@ spec:
           rm -rf "${RENDER_DIR}" /tmp/lab-code
           mkdir -p "${RENDER_DIR}"
 
-          # Fetch the translator from the repo (public clone, token optional).
+          # Fetch the translator/validator from the repo (public clone, token optional).
           CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/projectbluefin/lab.git"
           if [[ -z "${GITHUB_TOKEN:-}" ]]; then
             CLONE_URL="https://github.com/projectbluefin/lab.git"
           fi
           git clone --depth 1 --branch main "${CLONE_URL}" /tmp/lab-code
 
-          echo "Rendering manifests for ${APP} (namespace=${NAMESPACE}, mode=${MODE})" >&2
+          echo "Rendering manifests for ${APP} (namespace=${NAMESPACE})" >&2
           python3 /tmp/lab-code/scripts/catalog_install_lsio.py "${APP}" \
             --namespace "${NAMESPACE}" \
             --image-tag "${IMAGE_TAG}" \
@@ -113,12 +113,6 @@ spec:
           echo "Rendered manifests:" >&2
           cat "${RENDER_DIR}/manifest.yaml" >&2
 
-          if [[ "${MODE}" == "imperative" ]]; then
-            echo "Applying manifests imperatively" >&2
-            kubectl apply -f "${RENDER_DIR}/manifest.yaml"
-            kubectl rollout status "deployment/${APP}" -n "${NAMESPACE}" --timeout=300s >&2 || true
-          fi
-
           # Pass the render directory forward as an artifact path convention.
           echo "${RENDER_DIR}" > /tmp/render-dir
       outputs:
@@ -126,6 +120,72 @@ spec:
           - name: render-dir
             valueFrom:
               path: /tmp/render-dir
+
+    - name: validate
+      inputs:
+        parameters:
+          - name: render-dir
+            value: "{{tasks.render.outputs.parameters.render-dir}}"
+      metadata:
+        labels:
+          app.kubernetes.io/part-of: bluefin-test-suite
+          bluefin.io/step: catalog-install-lsio-validate
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+            ephemeral-storage: 100Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+        source: |
+          set -euo pipefail
+          RENDER_DIR="{{inputs.parameters.render-dir}}"
+          echo "Running offline structural validation" >&2
+          python3 /tmp/lab-code/scripts/catalog_validate.py "${RENDER_DIR}/manifest.yaml"
+
+    - name: apply
+      inputs:
+        parameters:
+          - name: app
+            value: "{{workflow.parameters.app}}"
+          - name: namespace
+            value: "{{workflow.parameters.namespace}}"
+          - name: render-dir
+            value: "{{tasks.render.outputs.parameters.render-dir}}"
+      metadata:
+        labels:
+          app.kubernetes.io/part-of: bluefin-test-suite
+          bluefin.io/step: catalog-install-lsio-apply
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+            ephemeral-storage: 100Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+        source: |
+          set -euo pipefail
+          APP="{{inputs.parameters.app}}"
+          NS_PARAM="{{inputs.parameters.namespace}}"
+          NAMESPACE="${NS_PARAM:-catalog-${APP}}"
+          RENDER_DIR="{{inputs.parameters.render-dir}}"
+
+          echo "Server-side dry-run" >&2
+          kubectl apply --dry-run=server -f "${RENDER_DIR}/manifest.yaml"
+
+          echo "Applying manifests imperatively" >&2
+          kubectl apply -f "${RENDER_DIR}/manifest.yaml"
+          kubectl rollout status "deployment/${APP}" -n "${NAMESPACE}" --timeout=300s >&2 || true
 
     - name: publish-git
       inputs:
@@ -137,7 +197,7 @@ spec:
           - name: base-branch
             value: "{{workflow.parameters.base-branch}}"
           - name: render-dir
-            value: "{{tasks.render-and-apply.outputs.parameters.render-dir}}"
+            value: "{{tasks.render.outputs.parameters.render-dir}}"
       metadata:
         labels:
           app.kubernetes.io/part-of: bluefin-test-suite

@@ -144,7 +144,7 @@ def security_context_from_config(config):
     return ctx if ctx else None
 
 
-def render_volumes(app_name, volumes):
+def render_volumes(app_name, volumes, namespace):
     """Return (pvcs, volume_mounts, volumes) for the Deployment."""
     pvcs = []
     mounts = []
@@ -161,6 +161,7 @@ def render_volumes(app_name, volumes):
             "kind": "PersistentVolumeClaim",
             "metadata": {
                 "name": name,
+                "namespace": namespace,
                 "labels": {
                     "app": app_name,
                     "app.kubernetes.io/part-of": "catalog-apps",
@@ -213,7 +214,7 @@ def render_manifests(app_name, entry, namespace, image_tag="latest"):
     """Render the full manifest resource list for ``app_name``."""
     config = entry.get("config") or {}
     envs = env_vars_from_config(config)
-    pvcs, mounts, vols = render_volumes(app_name, config.get("volumes"))
+    pvcs, mounts, vols = render_volumes(app_name, config.get("volumes"), namespace)
     container_ports, service_ports = render_ports(config.get("ports"))
     sec_ctx = security_context_from_config(config)
 
