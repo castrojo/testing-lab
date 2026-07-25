@@ -40,6 +40,8 @@ Lab-specific values (do not regress these):
   which local-path cannot provision. DB protection belongs to the
   storage/backup ADR (Velero, user-data-only).
 - `service.type: ClusterIP`, `ingress.enabled: false`.
+- `enabledDashboards: "dashboard,clusters,workloads,pods,services,nodes,events,gitops,helm,security,storage"` — restricts sidebar views to real cluster resources only.
+- `extraEnv`: `NO_LOCAL_AGENT: "false"`, `ENABLE_DEMO_DASHBOARDS: "false"`, `SHOW_DEMO_TO_LOCAL_CTA: "false"`, `DISABLE_DYNAMIC_CARDS: "true"` — disables demo mode fallback data so the Console connects directly to the in-cluster K8s API and reflects 100% real cluster status.
 
 ## Exposure and auth policy (locked, ADR-0003)
 
