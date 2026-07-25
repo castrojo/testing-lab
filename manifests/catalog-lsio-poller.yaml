@@ -61,7 +61,8 @@ spec:
 
             python3 scripts/collect_lsio_catalog.py
 
-            if git diff --quiet -- docs/data/catalog/linuxserver.json; then
+            # Ignore diffs that only touch the generated_at timestamp.
+            if git diff --quiet -I '"generated_at"' -- docs/data/catalog/linuxserver.json; then
               echo "No catalog changes — skipping PR"
               exit 0
             fi
@@ -73,12 +74,12 @@ spec:
             git commit -m "chore: refresh linuxserver.io catalog index (${NOW})" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
             git push origin "${BRANCH}"
 
-            # gh uses GH_TOKEN when present.
-            gh pr create \
-              --repo "${REPO}" \
-              --title "chore: refresh linuxserver.io catalog index" \
-              --body "Weekly refresh of docs/data/catalog/linuxserver.json from ${NOW}." \
-              --base main \
-              --head "${BRANCH}"
+            # lab-runner has no gh CLI — create the PR via the REST API.
+            PR_URL=$(curl -sf -X POST \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/pulls" \
+              -d "{\"title\":\"chore: refresh linuxserver.io catalog index\",\"body\":\"Weekly refresh of docs/data/catalog/linuxserver.json from ${NOW}.\",\"base\":\"main\",\"head\":\"${BRANCH}\"}" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["html_url"])')
 
-            echo "Opened PR for ${BRANCH}"
+            echo "Opened PR: ${PR_URL}"
