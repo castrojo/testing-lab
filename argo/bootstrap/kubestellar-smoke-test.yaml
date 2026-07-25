@@ -5,7 +5,7 @@ metadata:
   namespace: argo
 spec:
   entrypoint: smoke
-  serviceAccountName: argo
+  serviceAccountName: kubestellar-bootstrap
   arguments:
     parameters:
     - name: wec-name
@@ -20,6 +20,13 @@ spec:
       command:
       - bash
       image: cgr.dev/chainguard/kubectl:latest-dev
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
       source: |
         set -euo pipefail
         WEC="{{inputs.parameters.wec-name}}"

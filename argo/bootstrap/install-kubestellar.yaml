@@ -12,9 +12,17 @@ spec:
       command:
       - bash
       image: cgr.dev/chainguard/kubectl:latest-dev
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
       source: |
         set -euo pipefail
-        echo "-> Installing KubeStellar via ArgoCD Application (ADR-0003)..."
+        echo "-> Installing KubeStellar via ArgoCD Applications (ADR-0003)..."
+        kubectl apply -f https://raw.githubusercontent.com/projectbluefin/lab/main/argocd/kubestellar-postgres-app.yaml
         kubectl apply -f https://raw.githubusercontent.com/projectbluefin/lab/main/argocd/kubestellar-app.yaml
         echo "-> Waiting for ArgoCD to sync the core-chart..."
         kubectl -n argocd wait application/kubestellar \

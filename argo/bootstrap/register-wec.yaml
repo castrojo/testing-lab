@@ -5,7 +5,7 @@ metadata:
   namespace: argo
 spec:
   entrypoint: register
-  serviceAccountName: argo
+  serviceAccountName: kubestellar-bootstrap
   arguments:
     parameters:
     - name: wec-name
@@ -19,13 +19,25 @@ spec:
     script:
       command:
       - bash
-      image: cgr.dev/chainguard/kubectl:latest-dev
+      image: ghcr.io/projectbluefin/lab-runner:latest
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
       source: |
         set -euo pipefail
         WEC="{{inputs.parameters.wec-name}}"
-        echo "-> Installing clusteradm..."
-        curl -sL https://raw.githubusercontent.com/open-cluster-management-io/clusteradm/main/install.sh | bash
-        export PATH="$PATH:/usr/local/bin"
+        echo "-> Installing clusteradm (pinned, extracted via python tarfile)..."
+        CLUSTERADM_VERSION=0.10.1
+        curl -sSL -o /tmp/clusteradm.tar.gz \
+          "https://github.com/open-cluster-management-io/clusteradm/releases/download/v${CLUSTERADM_VERSION}/clusteradm_linux_amd64.tar.gz"
+        python3 -c "import tarfile; tarfile.open('/tmp/clusteradm.tar.gz').extractall('/tmp/clusteradm-bin')"
+        chmod +x /tmp/clusteradm-bin/clusteradm
+        export PATH="/tmp/clusteradm-bin:$PATH"
+        clusteradm version || true
 
         echo "-> Fetching its1 (hub) kubeconfig from KubeFlex secret..."
         # its1 is type host: the hub runs on this cluster's API server, but
