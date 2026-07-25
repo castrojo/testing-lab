@@ -106,6 +106,13 @@ spec:
           NS="{{inputs.parameters.namespace}}"
           LANE="{{inputs.parameters.lane}}"
           CONTENT="${LANE}-ready"
+
+          # Wait for RBAC RoleBinding propagation in newly created namespace
+          for i in $(seq 1 10); do
+            if kubectl get pods -n "${NS}" >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+
           kubectl apply -n "${NS}" -f - <<EOF
           apiVersion: v1
           kind: PersistentVolumeClaim
