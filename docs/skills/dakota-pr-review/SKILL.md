@@ -57,6 +57,20 @@ Dakota PR review is a lab-backed admission process. GitHub Actions status is adv
 6. On a clean pass, re-read the PR head SHA, confirm it remains mergeable, and merge directly rather than entering merge queue.
 7. After merge, verify the merge commit and watch the next build/publish workflow; do not report success merely because the merge API accepted the operation.
 
+## Repair Loop
+
+When lab validation exposes a fixable issue in the PR itself, repair the PR instead of merely reporting failure:
+
+1. Confirm the failure is caused by the PR and is within its stated scope; do not absorb unrelated cleanup.
+2. Check out the PR branch, make the smallest source fix, and add or update a regression test when practical.
+3. Run the lightest local checks first, then push the fix to the PR branch with a clear commit message. Never force-push or rewrite contributor history.
+4. Re-read the PR head SHA after the push and rerun the distributed build from that new SHA.
+5. Run the image smoke and required E2E suites against the rebuilt image. Old lab evidence is invalid after a PR change.
+6. If the repaired PR passes, merge the PR directly using the fresh head SHA; if it fails, leave it open with the exact source/test blocker.
+7. Record the repair, test workflow names, and merge result in the operator handoff; do not post duplicate status comments when the PR UI already shows the state.
+
+A repair is appropriate for a localized build recipe, element, workflow, or test defect that the PR is clearly responsible for. Stop and ask for human direction for design changes, security-sensitive changes, cross-repo API changes, or fixes that expand the PR's purpose.
+
 ## Known Lab Lessons
 
 - The `dakota-pr-import-poller` historically watched `test-on-lab`, while the active Dakota queue uses `clanker-queue`; inspect the live poller/template before assuming labels will dispatch work.
@@ -81,4 +95,5 @@ Dakota PR review is a lab-backed admission process. GitHub Actions status is adv
 - [ ] Dakota smoke/E2E workflow passed for the resulting image
 - [ ] BuildBarn and Argo child nodes were checked; no hidden failed nodes remain
 - [ ] Workflow logs were checked for secret redaction before linking them
+- [ ] If the PR was repaired, the fix was pushed to the PR branch and tested from its new head SHA
 - [ ] If merged, the merge was direct (not merge queue) and the post-merge workflow was checked
