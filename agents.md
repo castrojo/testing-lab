@@ -58,6 +58,9 @@ npm ci && npm run build
 | Astro dashboard pages, charts, visual design | [`docs/skills/astro-dashboard-pages/SKILL.md`](docs/skills/astro-dashboard-pages/SKILL.md) |
 | Cluster add-ons, k3s, registries, K8sGPT | [`docs/skills/cluster-tooling/SKILL.md`](docs/skills/cluster-tooling/SKILL.md) |
 | Flatcar node onboarding | [`docs/skills/flatcar-node-onboarding/SKILL.md`](docs/skills/flatcar-node-onboarding/SKILL.md) |
+| KubeStellar core, WECs, BindingPolicies | [`docs/skills/kubestellar/SKILL.md`](docs/skills/kubestellar/SKILL.md) |
+| KubeStellar Console deploy/auth/cards | [`docs/skills/console-dashboard/SKILL.md`](docs/skills/console-dashboard/SKILL.md) |
+| Add/remove nodes or WECs, BST grid scaling | [`docs/skills/node-lifecycle/SKILL.md`](docs/skills/node-lifecycle/SKILL.md) |
 | End of session write-back loop | [`docs/skills/meta-skill-improvement/SKILL.md`](docs/skills/meta-skill-improvement/SKILL.md) |
 | Workflow parameter contracts | [`docs/reference/WORKFLOWS.md`](docs/reference/WORKFLOWS.md) |
 | Release verdict / dashboard data contracts | [`docs/adr/0002-release-verdict-definition.md`](docs/adr/0002-release-verdict-definition.md), [`docs/reference/page-contracts.md`](docs/reference/page-contracts.md) |

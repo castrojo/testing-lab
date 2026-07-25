@@ -138,6 +138,16 @@ Argo Workflow (argo namespace)
 | Service-catalog deploy step fails with "No manifests found" | Lane directory missing `manifests.yaml` | Create `tests/service_catalog/<lane>/manifests.yaml` per the contract |
 | Service-catalog test step fails with "No test suite" | Lane directory missing under `tests/service_catalog/` | Create the lane test directory with at least one `test_*.py` file |
 | Service-catalog namespace stuck terminating | Finalizer or PVC not released | Check for stuck PVCs or pods with `kubectl get all -n <ns>`, delete manually if needed |
+| `testing-lab-infra` sync wedged "waiting for healthy state of DaemonSet/..." | A DaemonSet pod is unhealthy on some node (e.g. hostPath missing on that host), blocking every subsequent manifests/ change | Fix or scope the DaemonSet (capability-label nodeSelector), then terminate the stuck operation so ArgoCD retries: `kubectl patch application testing-lab-infra -n argocd --type=merge -p '{"status":{"operationState":{"phase":"Terminating"}}}'` |
+| KubeStellar app sync stuck at kubeflex-controller-manager | Postgres hook deadlock under ArgoCD | Keep `installPostgreSQL: false` + separate `kubestellar-postgres` app; see `docs/skills/kubestellar/SKILL.md` |
+| Workflow pod rejected `failed quota: argo-quota` | Template missing resources requests/limits | Add explicit cpu+memory requests and limits to every container/script |
+
+### KubeStellar / Console failure modes
+
+See `docs/skills/kubestellar/SKILL.md` (downsync, WEC join, RBAC) and
+`docs/skills/console-dashboard/SKILL.md` (Console recovery, exposure policy).
+Upgrade order: KubeFlex/postgres -> core-chart -> Console; rerun
+`kubestellar-smoke-test` after every core upgrade.
 
 ## Historical notes
 
