@@ -1,0 +1,72 @@
+{
+  "status": "OK",
+  "last_updated": "2026-07-24 21:44:51+00:00",
+  "data": {
+    "repositories": {
+      "linuxserver": [
+        {
+          "name": "jellyfin",
+          "description": "jellyfin is a Free Software Media System that puts you in control of managing and streaming your media.",
+          "category": "Media Servers,Music,Audiobooks",
+          "project_logo": "https://raw.githubusercontent.com/linuxserver/docker-templates/master/linuxserver.io/img/jellyfin-logo.png",
+          "monthly_pulls": 2955411,
+          "stars": 888,
+          "architectures": [
+            {"arch": "x86_64", "tag": "amd64-latest"},
+            {"arch": "arm64", "tag": "arm64v8-latest"}
+          ],
+          "config": {
+            "application_setup": "https://github.com/linuxserver/docker-jellyfin?tab=readme-ov-file#application-setup",
+            "env_vars": [
+              {"name": "PUID", "value": "1000", "desc": "User ID", "optional": false},
+              {"name": "PGID", "value": "1000", "desc": "Group ID", "optional": false},
+              {"name": "TZ", "value": "Etc/UTC", "desc": "Timezone", "optional": false},
+              {"name": "JELLYFIN_PublishedServerUrl", "value": "http://192.168.0.5", "desc": "Set the autodiscovery response domain or IP address.", "optional": true}
+            ],
+            "volumes": [
+              {"path": "/config", "host_path": "/path/to/jellyfin/library", "desc": "Jellyfin data storage location.", "optional": false},
+              {"path": "/data/tvshows", "host_path": "/path/to/tvseries", "desc": "Media goes here.", "optional": false},
+              {"path": "/data/movies", "host_path": "/path/to/movies", "desc": "Media goes here.", "optional": false}
+            ],
+            "ports": [
+              {"external": "8096", "internal": "8096", "desc": "Http webUI.", "optional": false},
+              {"external": "8920", "internal": "8920", "desc": "Optional - Https webUI.", "optional": true},
+              {"external": "7359", "internal": "7359/udp", "desc": "Optional - Allows clients to discover Jellyfin.", "optional": true},
+              {"external": "1900", "internal": "1900/udp", "desc": "Optional - Service discovery used by DNLA and clients.", "optional": true}
+            ]
+          }
+        },
+        {
+          "name": "sonarr",
+          "description": "Sonarr is a PVR for Usenet and BitTorrent users.",
+          "category": "Media Servers",
+          "project_logo": "https://raw.githubusercontent.com/linuxserver/docker-templates/master/linuxserver.io/img/sonarr-logo.png",
+          "monthly_pulls": 1234567,
+          "stars": 500,
+          "architectures": [
+            {"arch": "x86_64", "tag": "amd64-latest"},
+            {"arch": "arm64", "tag": "arm64v8-latest"}
+          ],
+          "config": {
+            "application_setup": "https://github.com/linuxserver/docker-sonarr?tab=readme-ov-file#application-setup",
+            "readonly_supported": true,
+            "nonroot_supported": true,
+            "env_vars": [
+              {"name": "PUID", "value": "1000", "desc": "User ID", "optional": false},
+              {"name": "PGID", "value": "1000", "desc": "Group ID", "optional": false},
+              {"name": "TZ", "value": "Etc/UTC", "desc": "Timezone", "optional": false}
+            ],
+            "volumes": [
+              {"path": "/config", "host_path": "/path/to/sonarr/data", "desc": "Database and sonarr configs", "optional": false},
+              {"path": "/tv", "host_path": "/path/to/tvseries", "desc": "Location of TV library on disk", "optional": true},
+              {"path": "/downloads", "host_path": "/path/to/downloadclient-downloads", "desc": "Location of download managers output directory", "optional": true}
+            ],
+            "ports": [
+              {"external": "8989", "internal": "8989", "desc": "The port for the Sonarr web interface", "optional": false}
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

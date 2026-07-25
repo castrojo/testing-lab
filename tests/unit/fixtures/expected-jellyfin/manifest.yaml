@@ -1,0 +1,162 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: catalog-jellyfin
+  labels:
+    app.kubernetes.io/part-of: catalog-apps
+    bluefin.io/catalog-provider: linuxserver
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jellyfin-config
+  labels:
+    app: jellyfin
+    app.kubernetes.io/part-of: catalog-apps
+    bluefin.io/catalog-provider: linuxserver
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jellyfin-data-tvshows
+  labels:
+    app: jellyfin
+    app.kubernetes.io/part-of: catalog-apps
+    bluefin.io/catalog-provider: linuxserver
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jellyfin-data-movies
+  labels:
+    app: jellyfin
+    app.kubernetes.io/part-of: catalog-apps
+    bluefin.io/catalog-provider: linuxserver
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jellyfin
+  namespace: catalog-jellyfin
+  labels:
+    app: jellyfin
+    app.kubernetes.io/part-of: catalog-apps
+    bluefin.io/catalog-provider: linuxserver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jellyfin
+  template:
+    metadata:
+      labels:
+        app: jellyfin
+        app.kubernetes.io/part-of: catalog-apps
+        bluefin.io/catalog-provider: linuxserver
+    spec:
+      containers:
+        - name: jellyfin
+          image: "linuxserver/jellyfin:latest"
+          ports:
+            - name: tcp-8096
+              containerPort: 8096
+              protocol: TCP
+            - name: tcp-8920
+              containerPort: 8920
+              protocol: TCP
+            - name: udp-7359
+              containerPort: 7359
+              protocol: UDP
+            - name: udp-1900
+              containerPort: 1900
+              protocol: UDP
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: Etc/UTC
+            - name: JELLYFIN_PublishedServerUrl
+              value: "http://192.168.0.5"
+          volumeMounts:
+            - name: jellyfin-config
+              mountPath: /config
+            - name: jellyfin-data-tvshows
+              mountPath: /data/tvshows
+            - name: jellyfin-data-movies
+              mountPath: /data/movies
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              ephemeral-storage: 100Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+              ephemeral-storage: 1Gi
+      volumes:
+        - name: jellyfin-config
+          persistentVolumeClaim:
+            claimName: jellyfin-config
+        - name: jellyfin-data-tvshows
+          persistentVolumeClaim:
+            claimName: jellyfin-data-tvshows
+        - name: jellyfin-data-movies
+          persistentVolumeClaim:
+            claimName: jellyfin-data-movies
+      securityContext:
+        fsGroup: 1000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jellyfin
+  namespace: catalog-jellyfin
+  labels:
+    app: jellyfin
+    app.kubernetes.io/part-of: catalog-apps
+    bluefin.io/catalog-provider: linuxserver
+spec:
+  selector:
+    app: jellyfin
+  type: ClusterIP
+  ports:
+    - name: tcp-8096
+      port: 8096
+      targetPort: 8096
+      protocol: TCP
+    - name: tcp-8920
+      port: 8920
+      targetPort: 8920
+      protocol: TCP
+    - name: udp-7359
+      port: 7359
+      targetPort: 7359
+      protocol: UDP
+    - name: udp-1900
+      port: 1900
+      targetPort: 1900
+      protocol: UDP

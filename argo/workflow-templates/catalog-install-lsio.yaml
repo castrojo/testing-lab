@@ -1,0 +1,205 @@
+# WorkflowTemplate: install an app from the linuxserver.io catalog.
+#
+# Fetches the app's upstream config at install time from the LSIO images API,
+# renders Kubernetes manifests via scripts/catalog_install_lsio.py, and either
+# commits them to git and opens a PR (mode=gitops, default) or applies them
+# immediately and captures them in git afterwards (mode=imperative).
+#
+# Lab conventions applied by the translator:
+#   * local-path storage class for PVCs
+#   * PUID/PGID env vars + securityContext
+#   * bare docker.io image names so the zot-docker mirror resolves them
+#   * ClusterIP Service for in-cluster reachability
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: catalog-install-lsio
+  namespace: argo
+  labels:
+    app.kubernetes.io/component: catalog-install-lsio
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  serviceAccountName: argo
+  activeDeadlineSeconds: 1800
+  podGC:
+    strategy: OnWorkflowCompletion
+  ttlStrategy:
+    secondsAfterSuccess: 3600
+    secondsAfterFailure: 86400
+  entrypoint: install
+
+  arguments:
+    parameters:
+      - name: app
+      - name: mode
+        value: "gitops"
+      - name: namespace
+        value: ""
+      - name: image-tag
+        value: "latest"
+      - name: base-branch
+        value: "main"
+
+  templates:
+    - name: install
+      dag:
+        tasks:
+          - name: render-and-apply
+            template: render-and-apply
+          - name: publish-git
+            depends: "render-and-apply.Succeeded"
+            template: publish-git
+
+    - name: render-and-apply
+      inputs:
+        parameters:
+          - name: app
+            value: "{{workflow.parameters.app}}"
+          - name: mode
+            value: "{{workflow.parameters.mode}}"
+          - name: namespace
+            value: "{{workflow.parameters.namespace}}"
+          - name: image-tag
+            value: "{{workflow.parameters.image-tag}}"
+      metadata:
+        labels:
+          app.kubernetes.io/part-of: bluefin-test-suite
+          bluefin.io/step: catalog-install-lsio-render
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+            ephemeral-storage: 100Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+                optional: true
+        source: |
+          set -euo pipefail
+
+          APP="{{inputs.parameters.app}}"
+          MODE="{{inputs.parameters.mode}}"
+          NS_PARAM="{{inputs.parameters.namespace}}"
+          IMAGE_TAG="{{inputs.parameters.image-tag}}"
+          NAMESPACE="${NS_PARAM:-catalog-${APP}}"
+          RENDER_DIR="/tmp/rendered/${APP}"
+
+          rm -rf "${RENDER_DIR}" /tmp/lab-code
+          mkdir -p "${RENDER_DIR}"
+
+          # Fetch the translator from the repo (public clone, token optional).
+          CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/projectbluefin/lab.git"
+          if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+            CLONE_URL="https://github.com/projectbluefin/lab.git"
+          fi
+          git clone --depth 1 --branch main "${CLONE_URL}" /tmp/lab-code
+
+          echo "Rendering manifests for ${APP} (namespace=${NAMESPACE}, mode=${MODE})" >&2
+          python3 /tmp/lab-code/scripts/catalog_install_lsio.py "${APP}" \
+            --namespace "${NAMESPACE}" \
+            --image-tag "${IMAGE_TAG}" \
+            --output-dir "${RENDER_DIR}"
+
+          echo "Rendered manifests:" >&2
+          cat "${RENDER_DIR}/manifest.yaml" >&2
+
+          if [[ "${MODE}" == "imperative" ]]; then
+            echo "Applying manifests imperatively" >&2
+            kubectl apply -f "${RENDER_DIR}/manifest.yaml"
+            kubectl rollout status "deployment/${APP}" -n "${NAMESPACE}" --timeout=300s >&2 || true
+          fi
+
+          # Pass the render directory forward as an artifact path convention.
+          echo "${RENDER_DIR}" > /tmp/render-dir
+      outputs:
+        parameters:
+          - name: render-dir
+            valueFrom:
+              path: /tmp/render-dir
+
+    - name: publish-git
+      inputs:
+        parameters:
+          - name: app
+            value: "{{workflow.parameters.app}}"
+          - name: mode
+            value: "{{workflow.parameters.mode}}"
+          - name: base-branch
+            value: "{{workflow.parameters.base-branch}}"
+          - name: render-dir
+            value: "{{tasks.render-and-apply.outputs.parameters.render-dir}}"
+      metadata:
+        labels:
+          app.kubernetes.io/part-of: bluefin-test-suite
+          bluefin.io/step: catalog-install-lsio-publish
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+            ephemeral-storage: 100Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+        source: |
+          set -euo pipefail
+
+          APP="{{inputs.parameters.app}}"
+          MODE="{{inputs.parameters.mode}}"
+          BASE="{{inputs.parameters.base-branch}}"
+          RENDER_DIR="{{inputs.parameters.render-dir}}"
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          BRANCH="bot/catalog-install-${APP}-$(date -u +%Y%m%d-%H%M%S)"
+
+          REPO="projectbluefin/lab"
+          CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
+          WORK_DIR="/tmp/lab-catalog-install"
+
+          rm -rf "${WORK_DIR}"
+          git clone --depth 1 --branch "${BASE}" "${CLONE_URL}" "${WORK_DIR}"
+          cd "${WORK_DIR}"
+
+          mkdir -p "manifests/catalog-apps/${APP}"
+          cp "${RENDER_DIR}/manifest.yaml" "manifests/catalog-apps/${APP}/manifest.yaml"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${BRANCH}"
+          git add "manifests/catalog-apps/${APP}/manifest.yaml"
+          git commit -m "chore(catalog): install ${APP} (${NOW})" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+          git push origin "${BRANCH}"
+
+          if [[ "${MODE}" == "gitops" ]]; then
+            echo "Opening pull request for ${BRANCH}" >&2
+            PR_BODY="Catalog install for ${APP} rendered at ${NOW}."
+            python3 -c "import json; print(json.dumps({'title':'chore(catalog): install ${APP}','body':'${PR_BODY}','head':'${BRANCH}','base':'${BASE}'}))" > /tmp/pr-payload.json
+            PR_RESPONSE=$(curl -sf -X POST \
+              -H "Authorization: token ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPO}/pulls" \
+              -d @/tmp/pr-payload.json)
+            PR_NUM=$(echo "${PR_RESPONSE}" | python3 -c 'import sys, json; print(json.load(sys.stdin).get("number", "unknown"))')
+            echo "Opened PR #${PR_NUM}"
+          else
+            echo "Imperative mode: pushed capture branch ${BRANCH} (no PR opened)" >&2
+          fi
