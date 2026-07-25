@@ -2,6 +2,11 @@
 # The worker cache is node-local and intentionally persistent across pod
 # restarts; losing it turns every remote-execution build into a cold bootstrap.
 #
+# Resource requests are intentionally modest so the DaemonSet schedules on
+# newly joined homelab nodes (minimum 16 GiB RAM). Limits stay high so the
+# same manifest bursts on large nodes. This is the elastic BuildStream grid:
+# add a node, a worker lands automatically, builds get faster.
+#
 # Runner is BuildStream-specific: chrootIntoInputRoot (see buildbarn-config
 # runner.jsonnet) requires CAP_SYS_CHROOT, so it runs as root with only that
 # capability added — not privileged. The runner container's own image is
@@ -112,8 +117,11 @@ spec:
             procMount: Default
           resources:
             requests:
-              cpu: "8"
-              memory: 16Gi
+              # Sized to fit a 16 GiB / 4-core homelab node alongside system
+              # DaemonSets. The scheduler admits the worker on small nodes;
+              # limits preserve burst performance on large nodes.
+              cpu: "2"
+              memory: 4Gi
             limits:
               # 32-core nodes with 4 concurrent action slots: allow bursts up
               # to 24 cores so parallel compiles saturate the node instead of
