@@ -23,9 +23,11 @@ Read the published JSON contract at prerender time, join any linked result JSON 
 
 - Adding or revising `src/pages/*.astro` routes for dashboard detail pages
 - Rendering repo-tracked JSON from `docs/data/*.json` plus linked `docs/results/*.json`
+- Rendering multi-provider catalog indexes from `docs/data/catalog/*.json` (see `/catalog`)
 - Adding Apache ECharts visualizations to GitHub Pages-safe static output
 - Wiring evidence links like `results_path`, `source_url`, screenshots, or workflow URLs into detail cards
 - Splitting one dataset across multiple page routes using deterministic build-time filters
+- Adding read-only GitOps affordances (copyable CLI commands, workflow docs links) to static pages
 
 ## When NOT to Use
 

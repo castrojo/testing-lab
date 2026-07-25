@@ -216,6 +216,39 @@ just run-dakota-build                 # default + nvidia variants
 
 ---
 
+## Catalog installs
+
+### `catalog-install-lsio`
+
+Install an app from the linuxserver.io catalog. The workflow fetches the app's
+upstream config from the LSIO images API at install time, renders Kubernetes
+manifests via `scripts/catalog_install_lsio.py`, and either opens a GitOps PR
+(`mode=gitops`, default) or applies the manifests immediately (`mode=imperative`).
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `app` | *(required)* | Catalog app name (e.g. `jellyfin`) |
+| `mode` | `gitops` | `gitops` opens a PR; `imperative` applies directly |
+| `namespace` | `catalog-<app>` | Target namespace |
+| `image-tag` | `latest` | Image tag to render |
+| `base-branch` | `main` | Base branch for the GitOps PR |
+
+GitOps mode:
+
+1. Renders manifests.
+2. Runs offline structural validation (`scripts/catalog_validate.py`).
+3. Commits `manifests/catalog-apps/<app>/manifest.yaml` to branch `bot/catalog-install-<app>-<ts>`.
+4. Opens a PR via the GitHub REST API.
+
+```
+argo submit --from workflowtemplate/catalog-install-lsio \
+  -p app=jellyfin \
+  -p mode=gitops \
+  -n argo --watch
+```
+
+Installed apps are tracked in `docs/data/catalog/installed.json`.
+
 ## CronWorkflows
 
 Lives in `manifests/`, applied via the `testing-lab-infra` ArgoCD app:
