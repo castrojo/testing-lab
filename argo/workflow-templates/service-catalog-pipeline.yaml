@@ -83,6 +83,13 @@ spec:
       script:
         image: quay.io/fedora/fedora:latest
         command: [bash, -c]
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
         source: |
           set -euo pipefail
           NS="{{inputs.parameters.namespace}}"
@@ -128,6 +135,13 @@ spec:
       script:
         image: cgr.dev/chainguard/kubectl:latest-dev
         command: [bash, -c]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
         source: |
           set -euo pipefail
           NS="svc-{{workflow.parameters.lane}}-{{workflow.uid}}"
