@@ -1,0 +1,57 @@
+# KubeStellar Console — the control GUI for the home control plane
+# (ADR-0003). Applied manually once, like the other argocd/ Applications.
+#
+# Exposure policy (locked decision): dev-mode (anonymous cluster-admin UI)
+# NEVER ships exposed. This install is ClusterIP-only with ingress disabled —
+# reachable exclusively via kubectl port-forward:
+#   kubectl -n kubestellar-console port-forward svc/kubestellar-console 8080:8080
+# Before ANY ingress/Gateway exposure, wire GitHub OAuth: create a GitHub
+# OAuth app, put client id/secret in a Secret referenced by
+# github.existingSecret, and keep auth.allowedGitHubLogins tight.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kubestellar-console
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: lab
+spec:
+  project: default
+  source:
+    repoURL: https://kubestellar.github.io/console
+    chart: kubestellar-console
+    targetRevision: 0.3.34
+    helm:
+      valuesObject:
+        # local-path is RWO; chart defaults to RWX. Single replica +
+        # Recreate avoids the RWO RollingUpdate mount deadlock the chart
+        # documents.
+        persistence:
+          accessModes:
+            - ReadWriteOnce
+        # Chart's backup PVC hardcodes ReadWriteMany, which local-path
+        # cannot provision. Console DB protection is part of the
+        # gap-storage-backup ADR scope (Velero user-data-only stance).
+        backup:
+          enabled: false
+        deployment:
+          strategy:
+            type: Recreate
+            rollingUpdate: null
+        service:
+          type: ClusterIP
+        ingress:
+          enabled: false
+        auth:
+          allowedGitHubLogins: castrojo
+          adminGitHubLogins: castrojo
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kubestellar-console
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
