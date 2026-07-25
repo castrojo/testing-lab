@@ -69,6 +69,22 @@ spec:
             labels:
               app.kubernetes.io/part-of: bluefin-test-suite
               bluefin.io/lane: service-catalog
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: homelab-runner-workspace-binding
+            namespace: "{{inputs.parameters.namespace}}"
+            labels:
+              app.kubernetes.io/part-of: bluefin-test-suite
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: homelab-runner-workspace-role
+          subjects:
+            - kind: ServiceAccount
+              name: homelab-runner
+              namespace: argo
 
     - name: deploy-fixture
       inputs:
