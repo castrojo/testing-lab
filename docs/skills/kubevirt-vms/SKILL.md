@@ -34,6 +34,26 @@ KubeVirt guidance is split by topic:
 - [VM lifecycle](vm-lifecycle.md) — disk placement, containerDisk, SSH injection, scheduling, teardown.
 - [VM troubleshooting](vm-troubleshooting.md) — LTS boot, fsetxattr, Flatcar kernel builds, bootupd, UsrMerge.
 
+## Console-driven VM control (imperative path)
+
+The KubeStellar Console ServiceAccount can start/stop/restart VMs
+imperatively via `patch virtualmachines` (ClusterRole
+`kubestellar-console-lab-surfaces`, see `console-dashboard/SKILL.md`).
+Verified live (2026-07-25): a probe VM was started and stopped via
+`kubectl patch vm <name> --as=system:serviceaccount:kubestellar-console:kubestellar-console
+--type=merge -p '{"spec":{"running":true}}'`; the VMI scheduled on exo-0
+with no pinning.
+
+- `spec.running` is deprecated (warning emitted); prefer
+  `spec.runStrategy: Always|Halted` in new manifests. Both work today.
+- Serial/graphical access: `virtctl console <vm>` / `virtctl vnc <vm>`
+  from a workstation with cluster access — the Console GUI does not
+  proxy VNC; virtctl is the documented fallback.
+- VM *definitions* remain GitOps (manifests in git); only runtime
+  start/stop/restart is imperative. Ephemeral test VMs created by
+  workflows are exempt (owned by the workflow, cleaned by onExit and
+  `orphan-vm-cleanup`).
+
 ## Common Rationalizations
 
 | Rationalization | Reality |
