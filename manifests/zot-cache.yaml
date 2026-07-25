@@ -1,4 +1,4 @@
-# Zot pull-through cache — single instance proxying all 7 upstream registries
+# Zot pull-through cache — single instance proxying all 8 upstream registries
 # Zot sync destination prefix mapping stores each registry under a separate subpath:
 #   ghcr.io                    → /ghcr   (pull via http://192.168.1.102:30501/ghcr/...)
 #   docker.io                  → /docker (pull via http://192.168.1.102:30501/docker/...)
@@ -7,6 +7,7 @@
 #   registry.k8s.io            → /k8s    (pull via http://192.168.1.102:30501/k8s/...)
 #   cgr.dev                    → /cgr    (pull via http://192.168.1.102:30501/cgr/...)
 #   public.ecr.aws             → /ecr    (pull via http://192.168.1.102:30501/ecr/...)
+#   lscr.io                    → /lscr   (pull via http://192.168.1.102:30501/lscr/...)
 #
 # Sync content filters are intentionally omitted so Zot mirrors whatever the
 # nodes request; the earlier prefix filtering was preventing on-demand pulls.
@@ -99,6 +100,14 @@ data:
               "maxRetries": 3,
               "retryDelay": "2m",
               "content": [{ "prefix": "**", "destination": "/ecr" }]
+            },
+            {
+              "urls": ["https://lscr.io"],
+              "onDemand": true,
+              "tlsVerify": true,
+              "maxRetries": 3,
+              "retryDelay": "2m",
+              "content": [{ "prefix": "**", "destination": "/lscr" }]
             }
           ]
         }
