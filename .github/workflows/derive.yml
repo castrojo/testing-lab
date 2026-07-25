@@ -17,6 +17,7 @@ concurrency:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   derive:
@@ -27,6 +28,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: true
+
+      - name: Configure git and create bot branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "DERIVE_BRANCH=bot/derive-metrics" >> "$GITHUB_ENV"
+          git checkout -B bot/derive-metrics
 
       - name: Set up Python 3.12
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -50,14 +58,27 @@ jobs:
         run: |
           jupyter nbconvert --to html --output-dir docs/methods .scratch/01.executed.ipynb --output 01_pass_rate_wilson.html
 
-      - name: Commit derived outputs
+      - name: Commit derived outputs and queue via merge queue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/data/derived docs/methods
           if git diff --cached --quiet; then
             echo "No derived changes to commit."
             exit 0
           fi
-          git commit -m "chore(derive): refresh derived metrics and rendered methods [skip derive]"
-          git push origin "HEAD:${GITHUB_REF#refs/heads/}"
+          git commit \
+            -m "chore(derive): refresh derived metrics and rendered methods [skip derive]" \
+            -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+          git push --force-with-lease origin "${DERIVE_BRANCH}"
+
+          PR_NUMBER=$(gh pr list --head "${DERIVE_BRANCH}" --repo "${GITHUB_REPOSITORY}" --json number --jq '.[0].number')
+          if [ -z "${PR_NUMBER}" ]; then
+            gh pr create \
+              --title "chore(derive): refresh derived metrics and rendered methods" \
+              --body "Automated refresh of derived metrics and rendered method notebooks." \
+              --head "${DERIVE_BRANCH}" \
+              --base main
+            PR_NUMBER=$(gh pr list --head "${DERIVE_BRANCH}" --repo "${GITHUB_REPOSITORY}" --json number --jq '.[0].number')
+          fi
+          gh pr merge "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --auto --squash
