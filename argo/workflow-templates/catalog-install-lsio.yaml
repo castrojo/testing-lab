@@ -42,7 +42,6 @@ spec:
 
   templates:
     - name: install
-<<<<<<< HEAD
       steps:
         - - name: render
             template: render
@@ -55,26 +54,10 @@ spec:
             template: publish-git
 
     - name: render
-=======
-      dag:
-        tasks:
-          - name: render-and-apply
-            template: render-and-apply
-          - name: publish-git
-            depends: "render-and-apply.Succeeded"
-            template: publish-git
-
-    - name: render-and-apply
->>>>>>> origin/main
       inputs:
         parameters:
           - name: app
             value: "{{workflow.parameters.app}}"
-<<<<<<< HEAD
-=======
-          - name: mode
-            value: "{{workflow.parameters.mode}}"
->>>>>>> origin/main
           - name: namespace
             value: "{{workflow.parameters.namespace}}"
           - name: image-tag
@@ -106,10 +89,6 @@ spec:
           set -euo pipefail
 
           APP="{{inputs.parameters.app}}"
-<<<<<<< HEAD
-=======
-          MODE="{{inputs.parameters.mode}}"
->>>>>>> origin/main
           NS_PARAM="{{inputs.parameters.namespace}}"
           IMAGE_TAG="{{inputs.parameters.image-tag}}"
           NAMESPACE="${NS_PARAM:-catalog-${APP}}"
@@ -118,22 +97,14 @@ spec:
           rm -rf "${RENDER_DIR}" /tmp/lab-code
           mkdir -p "${RENDER_DIR}"
 
-<<<<<<< HEAD
           # Fetch the translator/validator from the repo (public clone, token optional).
-=======
-          # Fetch the translator from the repo (public clone, token optional).
->>>>>>> origin/main
           CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/projectbluefin/lab.git"
           if [[ -z "${GITHUB_TOKEN:-}" ]]; then
             CLONE_URL="https://github.com/projectbluefin/lab.git"
           fi
           git clone --depth 1 --branch main "${CLONE_URL}" /tmp/lab-code
 
-<<<<<<< HEAD
           echo "Rendering manifests for ${APP} (namespace=${NAMESPACE})" >&2
-=======
-          echo "Rendering manifests for ${APP} (namespace=${NAMESPACE}, mode=${MODE})" >&2
->>>>>>> origin/main
           python3 /tmp/lab-code/scripts/catalog_install_lsio.py "${APP}" \
             --namespace "${NAMESPACE}" \
             --image-tag "${IMAGE_TAG}" \
@@ -142,7 +113,6 @@ spec:
           echo "Rendered manifests:" >&2
           cat "${RENDER_DIR}/manifest.yaml" >&2
 
-<<<<<<< HEAD
           # Manifest content is passed to downstream steps via an output parameter.
           # The rendered YAML is small (<256KB); base64 keeps it single-line safe.
           python3 -c "import base64,sys; data=open('${RENDER_DIR}/manifest.yaml','rb').read(); open('/tmp/manifest.b64','w').write(base64.b64encode(data).decode())"
@@ -236,21 +206,6 @@ spec:
           echo "Applying manifests imperatively" >&2
           kubectl apply -f /tmp/manifest.yaml
           kubectl rollout status "deployment/${APP}" -n "${NAMESPACE}" --timeout=300s >&2 || true
-=======
-          if [[ "${MODE}" == "imperative" ]]; then
-            echo "Applying manifests imperatively" >&2
-            kubectl apply -f "${RENDER_DIR}/manifest.yaml"
-            kubectl rollout status "deployment/${APP}" -n "${NAMESPACE}" --timeout=300s >&2 || true
-          fi
-
-          # Pass the render directory forward as an artifact path convention.
-          echo "${RENDER_DIR}" > /tmp/render-dir
-      outputs:
-        parameters:
-          - name: render-dir
-            valueFrom:
-              path: /tmp/render-dir
->>>>>>> origin/main
 
     - name: publish-git
       inputs:
@@ -261,13 +216,8 @@ spec:
             value: "{{workflow.parameters.mode}}"
           - name: base-branch
             value: "{{workflow.parameters.base-branch}}"
-<<<<<<< HEAD
           - name: manifest-b64
             value: "{{steps.render.outputs.parameters.manifest-b64}}"
-=======
-          - name: render-dir
-            value: "{{tasks.render-and-apply.outputs.parameters.render-dir}}"
->>>>>>> origin/main
       metadata:
         labels:
           app.kubernetes.io/part-of: bluefin-test-suite
@@ -296,19 +246,12 @@ spec:
           APP="{{inputs.parameters.app}}"
           MODE="{{inputs.parameters.mode}}"
           BASE="{{inputs.parameters.base-branch}}"
-<<<<<<< HEAD
           MANIFEST_B64="{{inputs.parameters.manifest-b64}}"
           NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           BRANCH="bot/catalog-install-${APP}-$(date -u +%Y%m%d-%H%M%S)"
 
           python3 -c "import base64; open('/tmp/manifest.yaml','wb').write(base64.b64decode('${MANIFEST_B64}'))"
 
-=======
-          RENDER_DIR="{{inputs.parameters.render-dir}}"
-          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          BRANCH="bot/catalog-install-${APP}-$(date -u +%Y%m%d-%H%M%S)"
-
->>>>>>> origin/main
           REPO="projectbluefin/lab"
           CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
           WORK_DIR="/tmp/lab-catalog-install"
@@ -318,11 +261,7 @@ spec:
           cd "${WORK_DIR}"
 
           mkdir -p "manifests/catalog-apps/${APP}"
-<<<<<<< HEAD
           cp /tmp/manifest.yaml "manifests/catalog-apps/${APP}/manifest.yaml"
-=======
-          cp "${RENDER_DIR}/manifest.yaml" "manifests/catalog-apps/${APP}/manifest.yaml"
->>>>>>> origin/main
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
