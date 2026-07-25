@@ -119,6 +119,59 @@ Purpose: app-first rows for the `/applications` page. V1 currently tracks Bazaar
 | `state` / `state_reason` | Explicit availability contract |
 | `source_url` / `collected_at` / `derivation` | Provenance for the row |
 
+## `docs/data/catalog/*.json`
+
+Purpose: provider indexes for the `/catalog` page. Each file describes one
+provider's published apps with metadata and a pointer to upstream deploy-time
+configuration. The separate `docs/data/catalog/installed.json` tracks apps that
+are installed on the lab cluster.
+
+### Provider index shape
+
+- `provider`: short identifier matching the file base name.
+- `generated_at`: ISO-8601 UTC timestamp when the index was generated.
+- `source_api`: upstream API endpoint that produced the index.
+- `apps[]`: provider applications, sorted deterministically by `name`.
+
+### Per-app shape
+
+| Field | Meaning |
+| --- | --- |
+| `name` | Canonical application name |
+| `description` | Short human-readable description |
+| `category` | Provider category label; may be comma-separated |
+| `logo_url` | Provider-hosted logo or icon URL, or `null` |
+| `image_ref` | Canonical OCI image reference without tag |
+| `monthly_pulls` | Estimated monthly pulls, or `null` |
+| `stars` | Upstream star/favorite count, or `null` |
+| `architectures` | Supported CPU architectures |
+| `config_pointer` | Upstream URL to fetch configuration from at deploy time, or `null` |
+| `readonly_supported` | Whether the image supports a read-only rootfs |
+| `nonroot_supported` | Whether the image supports running as non-root |
+| `verified` | Provider verification badge |
+
+### `docs/data/catalog/installed.json` shape
+
+- `schema_version`
+- `_meta` (`generated_at`, `description`, `status`)
+- `installed[]`:
+
+| Field | Meaning |
+| --- | --- |
+| `provider` | Provider identifier matching the index file |
+| `name` | App name matching the index entry |
+| `namespace` | Kubernetes namespace the app runs in |
+| `manifest_path` | Git-tracked manifest path (e.g. `manifests/catalog-apps/<app>/manifest.yaml`) |
+| `installed_at` | ISO-8601 UTC timestamp |
+
+### Page behavior
+
+- The page discovers every `docs/data/catalog/*.json` except `installed.json`.
+- Missing or invalid indexes are skipped; if no valid provider index exists the
+  page renders an explicit `unavailable` state.
+- The installed list is maintained by hand and updated by the install pipeline
+  after gitops PRs merge.
+
 ## Starter-artifact intent
 
 These files are implementation-ready contracts plus honest seed data. Later collector work should replace starter `unavailable` rows with live evidence, not redesign the shape.
