@@ -25,7 +25,6 @@ test('Astro build emits multipage factory routes into docs', () => {
     'docs/images/index.html',
     'docs/tests/index.html',
     'docs/applications/index.html',
-    'docs/catalog/index.html',
     'docs/adoption/index.html',
     'docs/userspace/index.html',
     'docs/about/index.html',
@@ -51,8 +50,6 @@ test('Astro build emits multipage factory routes into docs', () => {
   assert.match(html('docs/images/index.html'), /Image status/, 'images page renders');
   assert.match(html('docs/tests/index.html'), /Tests/, 'tests page renders');
   assert.match(html('docs/applications/index.html'), /Applications/, 'applications page renders');
-  assert.match(html('docs/catalog/index.html'), /App Catalog/, 'catalog page renders');
-  assert.match(html('docs/catalog/index.html'), /argo submit --from workflowtemplate\/catalog-install-lsio/, 'catalog page renders install command');
   assert.match(adoptionPage, /Homebrew/, 'adoption page renders integrated Homebrew content');
   assert.match(adoptionPage, /Adoption/, 'adoption page renders');
   assert.match(html('docs/about/index.html'), /Bluefin QA — Methodology/i, 'about page renders methodology');

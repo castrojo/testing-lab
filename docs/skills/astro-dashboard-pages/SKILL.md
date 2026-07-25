@@ -23,7 +23,6 @@ Read the published JSON contract at prerender time, join any linked result JSON 
 
 - Adding or revising `src/pages/*.astro` routes for dashboard detail pages
 - Rendering repo-tracked JSON from `docs/data/*.json` plus linked `docs/results/*.json`
-- Rendering multi-provider catalog indexes from `docs/data/catalog/*.json` (see `/catalog`)
 - Adding Apache ECharts visualizations to GitHub Pages-safe static output
 - Wiring evidence links like `results_path`, `source_url`, screenshots, or workflow URLs into detail cards
 - Splitting one dataset across multiple page routes using deterministic build-time filters
@@ -133,8 +132,7 @@ Read the published JSON contract at prerender time, join any linked result JSON 
 88. When a dashboard page makes an architectural claim (for example "disks are provisioned via btrfs reflink"), verify the claim against WorkflowTemplate annotations, /docs/ops/RUNBOOK.md, and live cluster state before rendering it. If the claim is stale or wrong, replace it with an explicit correction that names the current mechanism and cites the source file.
 89. For containerDisk or OCI image inventory pages, query the local Zot registry at build time with short timeouts and fall back to a static catalog definition when the registry is unreachable. Label sizes as compressed OCI layer sizes, not unpacked raw disk sizes, and show availability per tag explicitly.
 90. Load page-specific chart code as a plain-global script (no ESM imports) in `src/scripts/`, reference it from the Astro page via `import chartSrc from '../scripts/x.js?url'`, and emit it with `<script is:inline src={chartSrc} defer data-cfasync="false">` alongside the echarts CDN tag carrying the same attributes. Never use a bare `<script type="module">` for chart boot code: Cloudflare Rocket Loader rewrites module script types on the live site and the charts silently die. An Astro `<script>` with any attribute is treated as `is:inline` and ships raw — an ESM `import` statement inside it will not be bundled and will throw at runtime. Reference implementations: `src/pages/builds.astro` and `src/components/TestsCharts.astro`.
-
-91. The `/catalog` page embeds all `docs/data/catalog/*.json` provider indexes into the HTML payload at build time (`src/lib/catalog-page.ts` readdir + inline JSON script tag). Adding or refreshing a provider index file does NOT update the live page by itself — a Pages rebuild (`npm run build`, commit `docs/`) must land in the same or a follow-up PR, or the live catalog silently lags the data (this bit the NGC index in #361 and was fixed by rebuild PR #362). Verify with `grep -o '"provider":"<name>"' docs/catalog/index.html | wc -l`.
+91. The public Astro status site is for factory status reporting only (builds, images, adoption, userspace). The application catalog and app store run in-cluster inside KubeStellar and KubeStellar Console, not on this public webpage.
 
 ## Verification
 

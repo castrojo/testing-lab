@@ -33,7 +33,10 @@ metadata:
 
 ## Architecture
 
-The catalog is intentionally thin. The repo holds metadata and pointers only;
+The catalog runs **in-cluster on KubeStellar** and KubeStellar Console (`kubestellar-console` namespace).
+The public website on GitHub Pages does **not** host the catalog or app store; it is exclusively for factory status reporting.
+
+The catalog architecture is intentionally thin. The repo holds metadata and pointers only;
 it does **not** contain per-app Kubernetes manifests or vendored compose files.
 
 ```text
