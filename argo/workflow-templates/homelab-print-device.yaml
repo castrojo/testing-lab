@@ -172,7 +172,7 @@ spec:
                     # avahi-daemon sidecar that advertises the CUPS IPP service
                     # on the LAN via mDNS (_ipp._tcp).  The avahi-cups service
                     # definition is mounted from a ConfigMap.
-                    image: docker.io/library/ubuntu:22.04
+                    image: library/ubuntu:22.04 # implicit docker.io via zot-docker mirror
                     command:
                       - sh
                       - -c
@@ -279,7 +279,7 @@ spec:
                     # image following the linuxserver.io pattern.  Used here
                     # (not an nginx stub) because the USB-device and avahi
                     # tests require real CUPS commands (lpinfo, lp, lpstat).
-                    image: lscr.io/linuxserver/cups:latest
+                    image: lscr.io/linuxserver/cups:latest # registry-lint-ignore — lscr.io Zot mirror pending (catalog-supply-chain)
                     securityContext:
                       privileged: true
                     ports:

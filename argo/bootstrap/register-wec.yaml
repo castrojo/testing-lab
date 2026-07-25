@@ -1,0 +1,59 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: register-wec
+  namespace: argo
+spec:
+  entrypoint: register
+  serviceAccountName: argo
+  arguments:
+    parameters:
+    - name: wec-name
+      value: ghost
+  templates:
+  - name: register
+    inputs:
+      parameters:
+      - name: wec-name
+        value: "{{workflow.parameters.wec-name}}"
+    script:
+      command:
+      - bash
+      image: cgr.dev/chainguard/kubectl:latest-dev
+      source: |
+        set -euo pipefail
+        WEC="{{inputs.parameters.wec-name}}"
+        echo "-> Installing clusteradm..."
+        curl -sL https://raw.githubusercontent.com/open-cluster-management-io/clusteradm/main/install.sh | bash
+        export PATH="$PATH:/usr/local/bin"
+
+        echo "-> Fetching its1 (hub) kubeconfig from KubeFlex secret..."
+        # its1 is type host: the hub runs on this cluster's API server, but
+        # OCM components live in the its1 KubeFlex namespace. In-cluster SA
+        # credentials address the same API server.
+        HUB_APISERVER="https://kubernetes.default.svc"
+
+        echo "-> Getting bootstrap token from hub..."
+        TOKEN_CMD=$(clusteradm get token --use-bootstrap-token 2>/dev/null || clusteradm get token)
+        TOKEN=$(echo "$TOKEN_CMD" | grep -oP '(?<=--hub-token )\S+' | head -1)
+
+        echo "-> Joining $WEC to its1 (self-registration, in-cluster endpoint)..."
+        clusteradm join \
+          --hub-token "$TOKEN" \
+          --hub-apiserver "$HUB_APISERVER" \
+          --cluster-name "$WEC" \
+          --singleton \
+          --force-internal-endpoint-lookup \
+          --wait || true
+
+        echo "-> Accepting CSR for $WEC..."
+        for i in $(seq 1 30); do
+          if clusteradm accept --clusters "$WEC" 2>/dev/null; then break; fi
+          sleep 10
+        done
+
+        echo "-> Verifying ManagedCluster..."
+        kubectl get managedclusters "$WEC" -o wide
+        kubectl wait managedcluster/"$WEC" \
+          --for=condition=ManagedClusterConditionAvailable --timeout=300s
+        echo "OK $WEC registered as WEC"

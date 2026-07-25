@@ -5,12 +5,23 @@ metadata:
   namespace: argo
 spec:
   entrypoint: install
+  serviceAccountName: argo
   templates:
   - name: install
     script:
       command:
       - bash
       image: cgr.dev/chainguard/kubectl:latest-dev
-      source: "set -euo pipefail\necho \"\u2192 Installing KubeStellar...\"\nbash\
-        \ /workspace/kubestellar/install.sh\necho \"\u2713 KubeStellar ready\"\n"
+      source: |
+        set -euo pipefail
+        echo "-> Installing KubeStellar via ArgoCD Application (ADR-0003)..."
+        kubectl apply -f https://raw.githubusercontent.com/projectbluefin/lab/main/argocd/kubestellar-app.yaml
+        echo "-> Waiting for ArgoCD to sync the core-chart..."
+        kubectl -n argocd wait application/kubestellar \
+          --for=jsonpath='{.status.health.status}'=Healthy --timeout=900s
+        echo "-> Waiting for KubeFlex control planes..."
+        kubectl wait controlplane/its1 --for=condition=Ready --timeout=600s
+        kubectl wait controlplane/wds1 --for=condition=Ready --timeout=600s
+        echo "OK KubeStellar core ready: its1 (host) + wds1"
+
 
