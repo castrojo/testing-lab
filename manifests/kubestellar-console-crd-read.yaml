@@ -1,0 +1,63 @@
+# Extends the KubeStellar Console ServiceAccount beyond the chart's core
+# read-only role so the lab's control surfaces render (ADR-0003 dual-mode):
+# - read on Argo, KubeVirt, KubeStellar, and OCM CRDs (status views)
+# - imperative verbs only where the plan grants them: KubeVirt VM
+#   start/stop (patch virtualmachines) and Argo Workflow resubmit
+#   (create workflows). Everything declarative stays GitOps via PRs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubestellar-console-lab-surfaces
+  labels:
+    app.kubernetes.io/part-of: lab
+rules:
+  - apiGroups: [argoproj.io]
+    resources:
+      - applications
+      - applicationsets
+      - workflows
+      - workflowtemplates
+      - cronworkflows
+      - rollouts
+    verbs: [get, list, watch]
+  - apiGroups: [argoproj.io]
+    resources: [workflows]
+    verbs: [create]
+  - apiGroups: [kubevirt.io]
+    resources:
+      - virtualmachines
+      - virtualmachineinstances
+    verbs: [get, list, watch]
+  - apiGroups: [kubevirt.io]
+    resources: [virtualmachines]
+    verbs: [patch, update]
+  - apiGroups: [subresources.kubevirt.io]
+    resources:
+      - virtualmachines/start
+      - virtualmachines/stop
+      - virtualmachines/restart
+    verbs: [update]
+  - apiGroups: [control.kubestellar.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  - apiGroups: [cluster.open-cluster-management.io]
+    resources: [managedclusters]
+    verbs: [get, list, watch]
+  - apiGroups: [tenancy.kflex.kubestellar.org]
+    resources: [controlplanes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubestellar-console-lab-surfaces
+  labels:
+    app.kubernetes.io/part-of: lab
+subjects:
+  - kind: ServiceAccount
+    name: kubestellar-console
+    namespace: kubestellar-console
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubestellar-console-lab-surfaces
