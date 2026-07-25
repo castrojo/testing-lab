@@ -158,7 +158,7 @@ cache writeback and remote execution. Workflow-local state belongs on a
 PVC-backed workspace, while the shared Buildbarn frontend provides cluster-wide
 artifact reuse. Neither cache layer may use a root-backed `hostPath`.
 
-### 0. Mandatory remote execution
+### 0. Mandatory remote execution & RECC compiler distribution
 
 Dakota builds must use BuildBarn remote execution regardless of transport path.
 If remote execution is unhealthy, fail the workflow, diagnose it, and repair the
@@ -166,6 +166,18 @@ grid; do not fall back to a runner-local or cache-only build. The
 `remote-execution.conf` ConfigMap key is appended under the Dakota project in
 the generated BuildStream configuration. A healthy run has two Ready workers,
 two action slots, and observable current worker actions.
+
+**RECC (Remote Execution C/C++ Compiler) integration:**
+The build grid supports fine-grained C/C++ compiler distribution via RECC
+(`recc` wrapper) following GNOME `gnome-build-meta` MR 4704 (`!4704`) and
+FreeDesktop-SDK work item 1961 (`freedesktop-sdk#1961`).
+- **Macro level:** BuildStream schedules element builds across BuildBarn workers.
+- **Micro level (RECC):** C/C++ compilation commands (`gcc`, `g++`, `clang`)
+  inside build elements fan out as parallel remote execution actions directly
+  to `frontend.buildbarn.svc.cluster.local:8980`.
+- **Configuration:** Injected via `recc-environment.conf` ConfigMap in
+  `manifests/buildstream-remote-cache-config.yaml` (`RECC_SERVER=frontend.buildbarn.svc.cluster.local:8980`,
+  `RECC_PROJECT_ROOT=/workspace`, `RECC_PREFIX=recc`).
 
 ### 1. Shared Buildbarn frontend
 - **Endpoint**: `grpc://frontend.buildbarn.svc.cluster.local:8980`

@@ -91,6 +91,10 @@ matches the user policy of scheduler-driven, no-pinning placement.
 - The `workflow-controller` PriorityClass on the worker is unchanged. Large
   `bst-build` pods (PriorityClass `bst-build`, higher) can still preempt a
   worker if a node is overcommitted.
+- Fine-grained C/C++ compilation distribution is enabled via RECC (`recc` wrapper)
+  targeting `frontend.buildbarn.svc.cluster.local:8980` (following GNOME `gnome-build-meta!4704`
+  and FreeDesktop-SDK `freedesktop-sdk#1961`), fanning out compiler commands across
+  the active worker pool.
 
 ## Connection to the onboarding mission
 

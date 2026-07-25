@@ -66,3 +66,13 @@ data:
           retry-limit: 8
           retry-delay: 1000
           request-timeout: 1800
+  # RECC (Remote Execution C/C++ Compiler) environment configuration snippet.
+  # Enables fine-grained C/C++ compilation distribution into BuildBarn RE
+  # (following GNOME gnome-build-meta!4704 and FreeDesktop-SDK#1961).
+  recc-environment.conf: |
+    RECC_SERVER: "frontend.buildbarn.svc.cluster.local:8980"
+    RECC_CAS_SERVER: "frontend.buildbarn.svc.cluster.local:8980"
+    RECC_ACTION_UNCACHEABLE: "0"
+    RECC_PROJECT_ROOT: "/workspace"
+    RECC_PREFIX: "recc"
+    RECC_VERBOSE: "1"
