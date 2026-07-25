@@ -150,6 +150,11 @@ Key rules:
 
 #### Container-only QA runner: publish digest-pinned results
 
+When starting the nested target with Podman, pass `/sbin/init` explicitly after the
+image reference. Some bootc OCI images have an empty image `Cmd`; relying on
+`--systemd=always` alone then makes crun fail with `cannot find `` in $PATH` before
+systemd starts.
+
 `run-container-tests` runs inside a privileged `quay.io/podman/stable:latest` container, which does not include `git` or `skopeo`. When publishing BDD evidence back to the lab repo:
 
 1. Install tooling if it is missing: `command -v skopeo >/dev/null || dnf install -y skopeo` and `command -v git >/dev/null || dnf install -y git-core`.
