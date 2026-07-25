@@ -14,7 +14,6 @@
 > **CLI-first.** Tool hierarchy: `just` (lifecycle recipes) → `argo`/`kubectl` (cluster ops) → `ssh core@<control-plane>` (OS-level only).
 > MCP tools are optional — never block on them. One bash call beats a tool search + MCP roundtrip every time.
 
-
 ## 1. Command selector — what should I run?
 
 | Situation | Run |
@@ -48,7 +47,6 @@ are prohibited. Confirm the generated BuildStream configuration, both Ready
 BuildBarn workers, and live worker action activity before calling a run
 distributed.
 
-
 ## Flatcar kernel lifecycle — quick checks
 
 Use these for lifecycle-state inspection and manual gate runs:
@@ -58,7 +56,6 @@ kubectl get configmap flatcar-kernel-lifecycle-state -n argo -o yaml
 argo cron list -n argo | grep flatcar-kernel-gate
 argo submit -n argo --from workflowtemplate/flatcar-kernel-gate
 ```
-
 
 ## 2. Failure triage — symptom → exact next command
 
@@ -91,7 +88,6 @@ If no row matches:
 3. argo get -n argo <workflow-name>
 ```
 
-
 ## 3. Capacity triage — cluster feels slow
 
 ```text
@@ -109,7 +105,6 @@ If no row matches:
 | Many `virt-launcher-*` pods with no corresponding live workflow | `argo submit -n argo --from workflowtemplate/orphan-vm-cleanup` |
 
 Per-template ceilings live in [`/agents.md`](/agents.md) under **Resource Limits**.
-
 
 ## 4. ArgoCD — my template change did not take effect
 
@@ -175,7 +170,6 @@ KUBECONFIG=~/.kube/bluespeed.yaml kubectl patch application lab -n argocd \
 ```
 
 Do **not** `kubectl apply` a rejected WorkflowTemplate.
-
 
 ## 5. CronWorkflow ops — pause / resume / backfill
 
@@ -475,9 +469,7 @@ KUBECONFIG=~/.kube/bluespeed.yaml kubectl get nodes -o wide
 
 Expected: new node appears as `Ready  worker`.
 
-### Passwordless sudo for agents (required for non-interactive SSH management)
-
-On the new node, the `jorge-nopasswd` sudoers file must sort AFTER `wheel` and include `!requiretty`:
+### Passwordless sudo for agents
 
 ```bash
 sudo bash -c 'echo -e "Defaults:jorge !requiretty\njorge ALL=(ALL) NOPASSWD: ALL" \
@@ -487,21 +479,19 @@ sudo bash -c 'echo -e "Defaults:jorge !requiretty\njorge ALL=(ALL) NOPASSWD: ALL
 ### Node offboarding — removing a worker
 
 ```bash
-# 1. Drain the node (from workstation)
-KUBECONFIG=~/.kube/bluespeed.yaml kubectl drain <hostname> \
-  --ignore-daemonsets --delete-emptydir-data
+# 1. Drain node
+KUBECONFIG=~/.kube/bluespeed.yaml kubectl drain <hostname> --ignore-daemonsets --delete-emptydir-data
 
 # 2. Delete from cluster
 KUBECONFIG=~/.kube/bluespeed.yaml kubectl delete node <hostname>
 
-# 3. On the node itself (optional cleanup)
+# 3. Clean up node
 sudo /var/usrlocal/bin/k3s-agent-uninstall.sh
 ```
 
-### Key facts for image-based, atomic OS nodes
+### Key facts for atomic OS nodes
 
-- **Binary path:** `/var/usrlocal/bin/k3s` — always set `INSTALL_K3S_BIN_DIR=/var/usrlocal/bin`
-- **Flannel backend:** `host-gw` — pure L2 routes, no VXLAN/WireGuard kernel modules needed
-- **All nodes must be on <lab-subnet>/24** for host-gw to work
-- **Upgrades:** handled by system-upgrade-controller via `manifests/k3s-upgrade-plans.yaml` — ArgoCD manages it
-- **Version skew rule:** agents must never be newer than the server (ghost)
+- **Binary path:** `/var/usrlocal/bin/k3s` (`INSTALL_K3S_BIN_DIR=/var/usrlocal/bin`)
+- **Flannel backend:** `host-gw` (pure L2 routes, all nodes on `<lab-subnet>/24`)
+- **Upgrades:** managed by system-upgrade-controller via `manifests/k3s-upgrade-plans.yaml`
+- **Version skew:** agents must not be newer than the server (ghost)

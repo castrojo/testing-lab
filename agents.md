@@ -37,6 +37,7 @@ npm ci && npm run build
 
 ## Boundaries
 
+- `main` uses the GitHub merge queue. When a change passes local validation (`just lint`, `npm test`, `pytest`), agents MUST immediately create and queue PRs to `main` via `gh pr merge <number> --auto --squash`. Do not pause or delay merging verified GitOps changes.
 - Do not `kubectl apply` WorkflowTemplates — ArgoCD owns them.
 - Do not SSH into cluster nodes from a workstation; CLI access is via `just`,
   `argo`, and `kubectl`.
