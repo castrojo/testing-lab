@@ -7,5 +7,6 @@ Authoritative decisions, append-only.
 - [`0003-kubestellar-control-plane.md`](0003-kubestellar-control-plane.md)
 - [`0004-network-stack.md`](0004-network-stack.md)
 - [`0005-storage-and-backup.md`](0005-storage-and-backup.md)
+- [`0006-elastic-bst-build-grid.md`](0006-elastic-bst-build-grid.md)
 
 Add a new ADR by copying this pattern and bumping the sequence number.

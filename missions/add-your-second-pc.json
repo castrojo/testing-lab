@@ -73,8 +73,8 @@
     },
     {
       "title": "Enjoy the elastic BuildStream grid",
-      "description": "More nodes mean BuildBarn workers can spread. Run a build pipeline and confirm workers schedule on the new capacity.",
-      "command": "kubectl get pods -n buildbarn -o wide"
+      "description": "The BuildBarn worker DaemonSet automatically schedules a worker pod onto every Ready node that can admit it. After this node joins, a new worker should appear on it with no extra configuration. Verify it, then run a build pipeline and watch the scheduler place actions on the new worker.",
+      "command": "kubectl get pods -n buildbarn -o wide --field-selector spec.nodeName=<new-node>"
     }
   ],
   "troubleshooting": [
