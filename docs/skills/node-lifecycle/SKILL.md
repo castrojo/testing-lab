@@ -37,13 +37,21 @@ metadata:
 ## Node join (shared cluster)
 
 On the server (ghost): get the join token from the k3s server config
-(never commit it). On the new machine running Bluefin Server:
+(never commit it). On the new machine running Bluefin Server, install k3s
+agent as a persistent systemd service:
 
 ```bash
 # On the new node
-sudo k3s agent --server https://<server-lan-ip>:6443 --token <token>
-# or via config file /etc/rancher/k3s/config.yaml + systemctl enable k3s-agent
+curl -sfL https://get.k3s.io | \
+  K3S_URL="https://<server-lan-ip>:6443" \
+  K3S_TOKEN="<token>" \
+  INSTALL_K3S_BIN_DIR="/var/usrlocal/bin" \
+  sh -s -
 ```
+
+This creates the `k3s-agent` systemd unit; it starts automatically and
+rejoins after reboot. Use `/etc/rancher/k3s/config.yaml` plus
+`systemctl enable --now k3s-agent` if you prefer explicit configuration.
 
 Verify from any kubectl:
 

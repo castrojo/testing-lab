@@ -37,9 +37,9 @@
       "command": "sudo cat /var/lib/rancher/k3s/server/node-token"
     },
     {
-      "title": "Join the shared cluster",
-      "description": "On the new PC, run the k3s agent. Replace <server-lan-ip> with ghost's LAN IP and <token> with the value from the previous step. For a persistent setup, write the values to /etc/rancher/k3s/config.yaml and enable k3s-agent.",
-      "command": "sudo k3s agent --server https://<server-lan-ip>:6443 --token <token>"
+      "title": "Install the k3s agent service",
+      "description": "On the new PC, install k3s agent as a persistent systemd unit. On image-based Bluefin Server systems the binary must go under /var/usrlocal/bin. Replace <server-lan-ip> and <token> with the values from the previous step. The service starts automatically on boot; use `sudo systemctl disable k3s-agent` first if you prefer to opt in manually (see docs/reference/agent-cheatsheet.md).",
+      "command": "curl -sfL https://get.k3s.io | K3S_URL=\"https://<server-lan-ip>:6443\" K3S_TOKEN=\"<token>\" INSTALL_K3S_BIN_DIR=\"/var/usrlocal/bin\" sh -s -"
     },
     {
       "title": "Retrieve the hub token (WEC path)",
@@ -62,9 +62,14 @@
       "command": "kubectl get nodes -o wide && kubectl get managedclusters -o wide"
     },
     {
-      "title": "Label node capabilities (shared cluster)",
-      "description": "If the new node has a data disk that should host the zot pull-through cache, apply the capability label. Add the node's data-disk path to manifests/local-path-config.yaml via a PR so PVCs land on the data disk, not the root disk. Never hostPath onto root disks.",
-      "command": "kubectl label node <new-node> lab.projectbluefin.io/zot-cache-data=true"
+      "title": "Prepare storage for the new node (shared cluster)",
+      "description": "The local-path provisioner routes PVCs to node-local data disks via the nodePathMap in manifests/local-path-config.yaml. Before scheduling stateful workloads here, open a PR that adds the new node's data-disk path (e.g. /var/mnt/<node>-data/local-path) to that ConfigMap. Never provision storage on root disks. Do not label the node for zot-cache unless you have manually prepared /var/mnt/<node>-data/zot-cache and intend to host the cache there; the existing zot-cache DaemonSet selects on lab.projectbluefin.io/zot-cache-data=true and will fail if the directory is missing.",
+      "command": "kubectl get configmap local-path-config -n kube-system -o yaml"
+    },
+    {
+      "title": "Verify workloads are scheduling on the new node",
+      "description": "Confirm the scheduler is placing pods on the new capacity. BuildBarn workers and other daemonsets should begin to spread once the node is Ready and any required labels or taints are satisfied.",
+      "command": "kubectl get pods -A -o wide --field-selector spec.nodeName=<new-node>"
     },
     {
       "title": "Enjoy the elastic BuildStream grid",
