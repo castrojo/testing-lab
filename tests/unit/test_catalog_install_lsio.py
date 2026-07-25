@@ -54,7 +54,7 @@ class TestCatalogInstallLsio:
 
         deployment = resources[4]
         container = deployment["spec"]["template"]["spec"]["containers"][0]
-        assert container["image"] == "linuxserver/jellyfin:latest"
+        assert container["image"] == "lscr.io/linuxserver/jellyfin:latest"
         assert len(container["ports"]) == 4
         assert {p["protocol"] for p in container["ports"]} == {"TCP", "UDP"}
         assert len(container["volumeMounts"]) == 3
