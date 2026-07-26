@@ -84,10 +84,19 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: kubestellar-console
+  # ArgoCD renders Helm without cluster access, so the chart's lookup cannot
+  # preserve its generated JWT and randAlphaNum changes on every comparison.
+  ignoreDifferences:
+    - kind: Secret
+      name: kubestellar-console
+      namespace: kubestellar-console
+      jsonPointers:
+        - /data/jwt-secret
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - RespectIgnoreDifferences=true
       - ServerSideApply=true
