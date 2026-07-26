@@ -1,0 +1,56 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: node-feature-discovery
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+  labels:
+    app.kubernetes.io/part-of: lab
+spec:
+  project: default
+  source:
+    repoURL: https://kubernetes-sigs.github.io/node-feature-discovery/charts
+    chart: node-feature-discovery
+    targetRevision: 0.19.0
+    helm:
+      releaseName: node-feature-discovery
+      valuesObject:
+        master:
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 512Mi
+        worker:
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+        gc:
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+        topologyUpdater:
+          enable: false
+        prometheus:
+          enable: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: node-feature-discovery
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

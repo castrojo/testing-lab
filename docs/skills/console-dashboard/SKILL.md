@@ -37,9 +37,12 @@ turn cloud or external multi-cluster possibilities into lab requirements.
 2. Verify dashboard IDs and Helm values against that exact upstream tag.
 3. Configure supported built-ins through `enabledDashboards`; expose additional
    cluster data through precise read-only Kubernetes API permissions.
-4. Keep demo data and dynamic cards disabled, and make all desired-state
+4. For node hardware and utilization surfaces, verify the dependency chain:
+   metrics-server API → Console `metrics.k8s.io` RBAC, plus Node Feature
+   Discovery workers → `feature.node.kubernetes.io/*` labels on every node.
+5. Keep demo data and dynamic cards disabled, and make all desired-state
    changes through Git for ArgoCD reconciliation.
-5. Run `just lint`, client-side Kubernetes YAML/RBAC checks, and
+6. Run `just lint`, client-side Kubernetes YAML/RBAC checks, and
    `git diff --check`.
 
 ## Deployment
@@ -142,6 +145,8 @@ correctly answers no. The Console reaches wds1 as a registered cluster.
 | New pod stuck ContainerCreating on upgrade | strategy reverted to RollingUpdate with RWO PVC; keep Recreate |
 | Console shows sample data instead of ghost | remove chart `kubeconfig` values and verify `/health` reports `in_cluster: true`; clear the browser's stale `kc-demo-mode`/auth state once after rollout |
 | Browser reloads `/login` while APIs return `token signature is invalid` | the chart-generated JWT changed while the browser retained stale auth. Clear local-storage keys `token`, `auth_token`, `kc_token`, `kc-auth-token`, `kc-has-session`, and `kc-demo-mode`, plus the `kc_auth` and `kc_ux_ctx` cookies for the Console origin. The v0.3.34 logout request cannot recover because stale auth fails before its CSRF-protected cookie cleanup runs. |
+| CPU and memory monitors show zero although `kubectl top nodes` works | metrics-server is healthy, but the Console ServiceAccount cannot list `nodes` and `pods` in `metrics.k8s.io`; retain that scoped read permission in `kubestellar-console-lab-surfaces` |
+| Hardware inventory has no PCI, storage, CPU, or kernel features | the cluster lacks Node Feature Discovery labels; keep the pinned `node-feature-discovery` ArgoCD Application healthy and require ready workers plus `feature.node.kubernetes.io/*` labels in acceptance |
 | ArgoCD reports a duplicate-env ComparisonError | `NO_LOCAL_AGENT` was added to `extraEnv`; remove it because chart 0.3.34 emits it |
 | PVC migration hook is ImagePullBackOff on `bitnami/kubectl:latest` | retain the narrowly scoped `kubestellar-console-pvc-migration-image` admission policy; chart 0.3.34 hardcodes the image and offers no values override |
 | Console continuously syncs and reruns the PVC migration hook | retain the scoped JWT Secret ignore and `RespectIgnoreDifferences=true`; ArgoCD cannot use the chart's live `lookup`, so its random fallback otherwise changes every render |
@@ -171,6 +176,8 @@ correctly answers no. The Console reaches wds1 as a registered cluster.
 - [ ] Required CRDs have only `get`, `list`, and `watch` access
 - [ ] No unsupported card JSON/ConfigMap manifests remain
 - [ ] Browser requests do not loop on `401 token signature is invalid`
+- [ ] `metrics.k8s.io/v1beta1/nodes` returns non-zero CPU and memory usage
+- [ ] Every node has NFD `feature.node.kubernetes.io/*` labels
 - [ ] `just lint` and `git diff --check` pass
 
 ## Sources
@@ -182,6 +189,8 @@ correctly answers no. The Console reaches wds1 as a registered cluster.
 - Context7 `/kubestellar/kubestellar` documents the WDS → ITS → WEC model but
   has no Console library entry; verify Console behavior against the pinned
   upstream tag instead.
+- Context7 `/kubernetes-sigs/node-feature-discovery` documents the CPU, kernel,
+  memory, network, PCI, storage, system, and USB feature sources used by NFD.
 
 ## Upgrade
 

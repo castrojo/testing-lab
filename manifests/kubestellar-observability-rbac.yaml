@@ -20,9 +20,20 @@ rules:
       - services/proxy
       - pods
       - pods/log
+      - nodes
+    verbs: [get, list]
+  - apiGroups: [metrics.k8s.io]
+    resources:
+      - nodes
+      - pods
     verbs: [get, list]
   - apiGroups: [apps]
-    resources: [deployments]
+    resources:
+      - deployments
+      - daemonsets
+    verbs: [get, list]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
     verbs: [get]
   - apiGroups: [argoproj.io]
     resources: [applications]
