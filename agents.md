@@ -26,6 +26,9 @@ ArgoCD, KubeVirt, and the manifests that run the lab test cluster.
   **good** iff the build succeeded, the lab QA pipeline passed against that
   digest, and cosign signature verification passes. New CVEs are displayed
   alongside the verdict but do not gate it.
+- **Operator surfaces** — KubeStellar Console is the sole private
+  cluster-administration and single-pane UI. Astro is the public read-only
+  reporting surface, and Prometheus is a backend metrics service only.
 
 ## Build / test / lint
 
@@ -39,6 +42,10 @@ npm ci && npm run build
 
 - `main` uses the GitHub merge queue. When a change passes local validation (`just lint`, `npm test`, `pytest`), agents MUST immediately create and queue PRs to `main` via `gh pr merge <number> --auto --squash`. Do not pause or delay merging verified GitOps changes.
 - Do not `kubectl apply` WorkflowTemplates — ArgoCD owns them.
+- Do not introduce Grafana or another general-purpose cluster-admin/dashboard
+  framework alongside KubeStellar Console.
+- Treat the local `ghost` k3s topology as canonical; do not design lab
+  automation around cloud or external multi-cluster assumptions.
 - Do not SSH into cluster nodes from a workstation; CLI access is via `just`,
   `argo`, and `kubectl`.
 - Do not commit transient session artifacts (`TODO-*.md`, `poll-*.log`,

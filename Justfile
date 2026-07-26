@@ -180,6 +180,12 @@ run-k8sgpt namespace="" filters="Pod,Deployment,Service,Ingress,Node":
       -p filters="{{ filters }}" \
       -n {{ argo_ns }} --wait --log
 
+# Verify the GitOps-managed KubeStellar platform and final smoke acceptance gate
+run-kubestellar-verify wec-name="ghost":
+    argo submit --from workflowtemplate/kubestellar-platform-verify \
+      -p wec-name="{{ wec-name }}" \
+      -n {{ argo_ns }} --wait --log
+
 # Run first PVC/local-path restore drill (#60 #74 #84)
 run-homelab-restore:
     argo submit --from workflowtemplate/homelab-restore-drill \

@@ -3,11 +3,15 @@ kind: ServiceAccount
 metadata:
   name: prometheus-lightweight
   namespace: kube-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: prometheus-lightweight
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
 rules:
   - apiGroups: [""]
     resources:
@@ -17,6 +21,10 @@ rules:
       - endpoints
       - pods
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources:
+      - nodes/proxy
+    verbs: ["get"]
   - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
     verbs: ["get"]
 ---
@@ -24,6 +32,8 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: prometheus-lightweight
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -38,6 +48,8 @@ kind: ConfigMap
 metadata:
   name: prometheus-lightweight-config
   namespace: kube-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
 data:
   prometheus.yml: |
     global:
@@ -87,6 +99,121 @@ data:
             target_label: app
           - source_labels: [__meta_kubernetes_pod_node_name]
             target_label: node
+
+      - job_name: 'kubestellar-kubeflex-controller-manager'
+        scheme: https
+        tls_config:
+          insecure_skip_verify: true
+        authorization:
+          credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: ['kubeflex-system']
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: kubeflex-controller-manager-metrics-service
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: https
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: service
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: instance
+
+      - job_name: 'kubestellar-controller-manager'
+        scheme: https
+        tls_config:
+          insecure_skip_verify: true
+        authorization:
+          credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: ['wds1-system']
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: kubestellar-controller-manager-metrics-service
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: metrics
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: service
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: instance
+
+      - job_name: 'kubestellar-transport-controller'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: ['wds1-system']
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: ks-transport-controller
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: metrics
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: service
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: instance
+
+      - job_name: 'kubestellar-status-addon-controller'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: ['open-cluster-management']
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: status-addon-controller
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: metrics
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: service
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: instance
+
+      - job_name: 'kubestellar-status-agent'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: ['open-cluster-management-agent-addon']
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: status-agent-controller
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: metrics
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: service
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: instance
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -95,6 +222,8 @@ metadata:
   namespace: kube-system
   labels:
     app: prometheus-lightweight
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   replicas: 1
   selector:
@@ -104,6 +233,8 @@ spec:
     metadata:
       labels:
         app: prometheus-lightweight
+      annotations:
+        lab.projectbluefin.io/config-version: kubestellar-controller-metrics-v1
     spec:
       serviceAccountName: prometheus-lightweight
       containers:
@@ -140,6 +271,24 @@ kind: Service
 metadata:
   name: prometheus-lightweight
   namespace: kube-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  ports:
+    - port: 9090
+      targetPort: 9090
+      protocol: TCP
+      name: web
+  selector:
+    app: prometheus-lightweight
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: kube-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   ports:
     - port: 9090

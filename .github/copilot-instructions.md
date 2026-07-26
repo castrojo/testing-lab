@@ -6,6 +6,10 @@ Keep only these repo-specific inline reminders:
 
 - Use `just` entrypoints first; do not duplicate command tables here.
 - No SSH to ghost or exo-1.
+- KubeStellar Console is the sole private cluster-admin/single-pane UI for the
+  canonical local `ghost` k3s topology; Astro stays public and read-only,
+  Prometheus stays backend-only, and Grafana or parallel dashboard frameworks
+  are out of scope.
 - No `kubectl apply` for `argo/workflow-templates/` or `manifests/`; edit git-tracked YAML and let ArgoCD reconcile it.
 - All test runs use ephemeral KubeVirt VMs — no persistent titan VMs. `just list-vms` should show empty when no workflows run.
 - After pushing a fix, verify the live template via `argo-mcp-get_workflow_template` before resubmitting — templates snapshot at submit time.

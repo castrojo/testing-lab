@@ -5,9 +5,6 @@ description: >
   exposure policy, marketplace cards, guided missions, and the GitOps vs
   imperative action split. Use when working on the Console deployment or
   wiring dashboard surfaces.
-metadata:
-  context7-sources:
-    - /kubestellar/console
 ---
 
 # KubeStellar Console — lab Skill
@@ -23,11 +20,33 @@ metadata:
 - Public read-only status site → `astro-dashboard-pages/SKILL.md` (the
   Astro Pages site stays the reporting layer; Console is the control layer)
 - BindingPolicy/WEC mechanics → `kubestellar/SKILL.md`
+- Grafana or another general-purpose admin/dashboard framework → do not add
+  one; Prometheus is a backend service, not a parallel UI
+
+## Architecture boundary
+
+KubeStellar Console is the sole private cluster-admin and single-pane UI.
+Astro remains public and read-only, and Prometheus remains backend-only. Target
+the local `ghost` k3s topology (`wds1`, `its1`, and `ghost` as the WEC); do not
+turn cloud or external multi-cluster possibilities into lab requirements.
+
+## Core Process
+
+1. Confirm the pinned Console chart version in
+   `argocd/kubestellar-console-app.yaml`.
+2. Verify dashboard IDs and Helm values against that exact upstream tag.
+3. Configure supported built-ins through `enabledDashboards`; expose additional
+   cluster data through precise read-only Kubernetes API permissions.
+4. Keep demo data and dynamic cards disabled, and make all desired-state
+   changes through Git for ArgoCD reconciliation.
+5. Run `just lint`, client-side Kubernetes YAML/RBAC checks, and
+   `git diff --check`.
 
 ## Deployment
 
-ArgoCD Application `argocd/kubestellar-console-app.yaml` (applied manually
-once), chart `kubestellar-console` from
+ArgoCD Application `argocd/kubestellar-console-app.yaml`, continuously
+reconciled through the GitOps-managed KubeStellar parent Application. Do not
+apply it manually. The `kubestellar-console` chart comes from
 `https://kubestellar.github.io/console`, pinned version. Namespace
 `kubestellar-console`.
 
@@ -40,8 +59,15 @@ Lab-specific values (do not regress these):
   which local-path cannot provision. DB protection belongs to the
   storage/backup ADR (Velero, user-data-only).
 - `service.type: ClusterIP`, `ingress.enabled: false`.
-- `enabledDashboards: "dashboard,clusters,workloads,pods,services,nodes,events,gitops,helm,security,storage"` — restricts sidebar views to real cluster resources only.
-- `extraEnv`: `NO_LOCAL_AGENT: "true"`, `ENABLE_DEMO_DASHBOARDS: "false"`, `SHOW_DEMO_TO_LOCAL_CTA: "false"`, `DISABLE_DYNAMIC_CARDS: "true"` — suppresses local desktop agent prompts (users connect via port-forward/LAN without needing desktop agent software installed on their machine) and disables demo fallback data so the Console connects directly to the in-cluster K8s API (`https://10.43.0.1:443`).
+- `clusterName: ghost`, `consoleProject: kubestellar`, and
+  `kubeconfig.content` — the chart renders a Secret containing a credential-free
+  token-file kubeconfig for the MCP bridge. The config references the projected
+  ServiceAccount token and CA; no credential is committed to Git.
+- `enabledDashboards: "dashboard,clusters,cluster-admin,deploy,compute,workloads,deployments,pods,services,nodes,events,gitops,helm,operators,security,storage,network"` — restricts the sidebar to supported built-ins useful for local cluster administration. Do not enable demo or local-agent-only surfaces such as `arcade` or `quantum`.
+- `selfUpgrade.enabled: false` and `rbac.resourceQuotasReadOnly: true` — keep
+  declarative upgrades and quota changes in Git instead of creating Console
+  mutations that ArgoCD immediately reverts.
+- `extraEnv`: `ENABLE_DEMO_DASHBOARDS: "false"`, `SHOW_DEMO_TO_LOCAL_CTA: "false"`, `DISABLE_DYNAMIC_CARDS: "true"` — disables demo fallback data and dynamic cards. Chart 0.3.34 already emits `NO_LOCAL_AGENT`; adding it here creates a duplicate environment variable and an ArgoCD ComparisonError.
 
 ## Exposure and auth policy (locked, ADR-0003)
 
@@ -79,6 +105,11 @@ client id/secret in a Secret referenced via `github.existingSecret`, keep
   that ClusterRole before debugging the Console.
 - Marketplace cards (kubestellar/console-marketplace) fill dedicated views
   (GitOps, networking, security). Prefer a marketplace card over custom UI.
+- Console 0.3.34 does not provision external dashboard/card JSON from files or
+  ConfigMaps. The supported contract is the built-in dashboard allowlist plus
+  live Kubernetes API resources. Keep `DISABLE_DYNAMIC_CARDS=true`; do not add
+  declarative card JSON until the pinned Console release supports a real
+  Git-backed provisioning path.
 
 ### Per-surface action wiring
 
@@ -90,7 +121,7 @@ client id/secret in a Secret referenced via `github.existingSecret`, keep
 | KubeStellar | ManagedClusters (its1 surfaces on host) | none | BindingPolicies in git, downsynced via wds1 | `kubestellar/SKILL.md` |
 | Catalog apps | index at `docs/data/catalog/*.json` | install workflow (imperative mode) | install workflow (gitops mode, default capture) | `registry-catalog` skill (when it lands) |
 | Host OS updates (bootc) | none — stays on the Astro Pages site (decision: lab update data already feeds Astro; no Console card duplication) | none | image/branch changes via factory repos | Astro dashboard, `bluefin.io/*` lanes |
-| BuildStream builds | Workflow CRD status (dakota pipeline runs) | `create workflows` (rerun via submit-from) | pipeline templates in `argo/workflow-templates/` | BuildBarn/artifact-cache health stays on Astro |
+| BuildStream builds | Workflow CRD status (dakota pipeline runs) | `create workflows` (rerun via submit-from) | pipeline templates in Git | BuildBarn/artifact-cache details remain available on Astro |
 
 BindingPolicy note: the `control.kubestellar.io` CRDs live in **wds1**, not
 the hosting cluster — `kubectl auth can-i get bindingpolicies` on ghost
@@ -109,8 +140,44 @@ correctly answers no. The Console reaches wds1 as a registered cluster.
 |---|---|
 | Pod Pending, backups PVC Pending | backup re-enabled: its PVC is RWX-hardcoded; keep `backup.enabled: false` |
 | New pod stuck ContainerCreating on upgrade | strategy reverted to RollingUpdate with RWO PVC; keep Recreate |
+| MCP bridge initialization times out | rendered kubeconfig Secret is absent or not mounted; verify `/app/.kube/config` uses the projected ServiceAccount token and CA paths |
+| ArgoCD reports a duplicate-env ComparisonError | `NO_LOCAL_AGENT` was added to `extraEnv`; remove it because chart 0.3.34 emits it |
 | `/api/health` returns "Missing authorization" | expected — auth is enforced; sign in or use a token |
 | Anonymous full access | dev-mode without OAuth config — acceptable ONLY via port-forward, never exposed |
+
+## Common Rationalizations
+
+| Rationalization | Reality |
+|---|---|
+| "A card JSON ConfigMap is declarative, so Console will discover it." | Console 0.3.34 has no such provisioning contract; use a supported built-in or Kubernetes API surface. |
+| "The project preset is close enough." | It includes demo surfaces; set an explicit cluster-admin allowlist. |
+| "Read access can use another wildcard." | Add only the API groups and resource plurals the surface actually queries. |
+
+## Red Flags
+
+- External dashboard or card JSON claimed as automatically provisioned
+- `arcade`, `quantum`, or other demo/local-agent-only dashboards enabled
+- Invented Prometheus metrics without a live exporter
+- Grafana or another general-purpose cluster-admin/dashboard framework
+- Dev-mode Console exposed beyond a local port-forward
+
+## Verification
+
+- [ ] Every `enabledDashboards` ID exists in the pinned Console source
+- [ ] Demo and dynamic-card environment flags remain disabled
+- [ ] Required CRDs have only `get`, `list`, and `watch` access
+- [ ] No unsupported card JSON/ConfigMap manifests remain
+- [ ] `just lint` and `git diff --check` pass
+
+## Sources
+
+- KubeStellar Console v0.3.34 chart values:
+  `deploy/helm/kubestellar-console/values.yaml`
+- KubeStellar Console v0.3.34 built-in project dashboards:
+  `pkg/api/projects.go` and `web/src/config/routes.ts`
+- Context7 `/kubestellar/kubestellar` documents the WDS → ITS → WEC model but
+  has no Console library entry; verify Console behavior against the pinned
+  upstream tag instead.
 
 ## Upgrade
 

@@ -97,6 +97,15 @@ Use `templateRef` for cross-WorkflowTemplate calls:
       value: "{{tasks.provision.outputs.parameters.vm-ip}}"
 ```
 
+`templateRef` imports the referenced template body, not the referenced
+WorkflowTemplate's workflow-level `serviceAccountName`. A
+`serviceAccountName` declared on the referenced template itself is preserved,
+so put elevated identity only on that template and keep parent verification
+templates on a scoped ServiceAccount.
+
+> Source: `/argoproj/argo-workflows` — Workflow Templates, “Referencing other
+> WorkflowTemplates”; `TemplateRef` fields (`name`, `template`, `clusterScope`).
+
 ### 3a. Container-only QA caller contract
 
 The container-only QA templates (`bluefin-qa-pipeline`, `dakota-qa-pipeline`,
@@ -469,4 +478,3 @@ spec:
     secondsAfterCompletion: 86400  # 24h for successful runs
     secondsAfterFailure: 604800    # 7d for failed runs (matches controller configmap)
 ```
-
