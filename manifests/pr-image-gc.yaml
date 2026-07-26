@@ -34,9 +34,21 @@ spec:
     - name: gc
       nodeSelector:
         kubernetes.io/hostname: ghost
+      volumes:
+      - name: zot-auth
+        secret:
+          secretName: zot-writer-auth
+          optional: true
+          items:
+          - key: .dockerconfigjson
+            path: config.json
       script:
         image: ghcr.io/projectbluefin/lab-runner:latest
         command: [sh]
+        volumeMounts:
+        - name: zot-auth
+          mountPath: /auth
+          readOnly: true
         resources:
           requests:
             cpu: 100m
@@ -74,8 +86,13 @@ spec:
 
           echo "=== PR image GC: ${REGISTRY}/${REPO} ==="
 
+          ORAS_AUTH=()
+          if [[ -s /auth/config.json ]]; then
+            ORAS_AUTH=(--registry-config /auth/config.json)
+          fi
+
           # List all tags matching bluefin-pr-*
-          TAGS=$(oras repo tags "${REGISTRY}/${REPO}" --plain-http 2>/dev/null || true)
+          TAGS=$(oras repo tags "${REGISTRY}/${REPO}" --plain-http "${ORAS_AUTH[@]}" 2>/dev/null || true)
           if [[ -z "$TAGS" ]]; then
             echo "No tags found in ${REGISTRY}/${REPO} — nothing to clean."
             exit 0
@@ -92,7 +109,7 @@ spec:
             PR_NUM=$(echo "$TAG" | grep -oP '(?<=bluefin-pr-)\d+' || true)
 
             # Check age via manifest created timestamp
-            CREATED=$(oras manifest fetch "${REGISTRY}/${REPO}:${TAG}" --plain-http \
+            CREATED=$(oras manifest fetch "${REGISTRY}/${REPO}:${TAG}" --plain-http "${ORAS_AUTH[@]}" \
               | jq -r '.annotations["org.opencontainers.image.created"] // empty' 2>/dev/null || true)
 
             if [[ -n "$CREATED" ]]; then
@@ -124,7 +141,7 @@ spec:
             fi
 
             if [[ "$DELETE" == "true" ]]; then
-              oras manifest delete "${REGISTRY}/${REPO}:${TAG}" --plain-http --force 2>&1 && \
+              oras manifest delete "${REGISTRY}/${REPO}:${TAG}" --plain-http "${ORAS_AUTH[@]}" --force 2>&1 && \
                 DELETED=$((DELETED + 1)) || \
                 echo "WARNING: failed to delete ${TAG} (non-fatal)"
             else

@@ -11,6 +11,7 @@ bridge that submits Argo Workflows from ephemeral ARC runners, see
   - [dakota-qa-pipeline](#dakota-qa-pipeline)
   - [dakota-build-pipeline](#dakota-build-pipeline)
   - [dakota-publish-pipeline](#dakota-publish-pipeline)
+  - [zot-candidate-lifecycle](#zot-candidate-lifecycle)
   - [cosmic-build-pipeline](#cosmic-build-pipeline)
   - [bluefin-server-build-pipeline](#bluefin-server-build-pipeline)
   - [bst-qa-pipeline](#bst-qa-pipeline)
@@ -104,6 +105,19 @@ infrastructure blockers and repair the lab before retrying.
 - **Concurrency:** the `dakota-publish` semaphore allows one publication
   workflow while preserving parallel lane execution inside it.
 - **Just recipe:** `run-dakota-publish`.
+
+### zot-candidate-lifecycle
+- **Purpose:** Reusable, independent single-lane lifecycle for immutable local
+  Zot candidates and digest-preserving promotion to `:testing`.
+- **Preflight:** rejects reused `candidate-<commit-sha>` tags and fails when the
+  Zot data filesystem has less than 20 GiB or 10% free.
+- **Integrity:** resolves the expected digest, fetches and hashes the raw
+  manifest, copies that digest to `:testing`, and verifies the target digest.
+- **Evidence:** attaches and rediscovers
+  `application/vnd.projectbluefin.lab.promotion-evidence.v1+json` with ORAS.
+- **Authentication:** optionally mounts `zot-writer-auth` while anonymous writes
+  remain active; the secret becomes required at the Zot auth activation gate.
+- **Just recipe:** `run-zot-promotion`.
 
 ### cosmic-build-pipeline
 - **Purpose:** BuildStream compile pipeline for the default COSMIC image

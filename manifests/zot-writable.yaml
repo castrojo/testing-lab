@@ -1,7 +1,10 @@
-# Writable OCI registry at NodePort 30500 — BIB push target and PR image store.
+# Writable OCI registry at NodePort 30500 — BIB push target and candidate store.
 # Replaces the unmanaged registry:2 Deployment that was running outside GitOps.
-# No upstream proxy — write-only / local storage.
+# No upstream proxy — local storage.
 # GC enabled: orphaned layers reclaimed after 1h delay, checked every 24h.
+# The active config keeps anonymous writes until every existing writer consumes
+# zot-writer-auth. config-authenticated.json is the activation-ready policy:
+# anonymous read, authenticated create/update/delete, authenticated metrics.
 # ArgoCD: lab-infra syncs this
 ---
 apiVersion: v1
@@ -19,13 +22,37 @@ data:
         "rootDirectory": "/var/lib/registry",
         "gc": true,
         "gcDelay": "1h",
-        "gcInterval": "24h"
+        "gcInterval": "24h",
+        "retention": {
+          "dryRun": false,
+          "delay": "24h",
+          "policies": [
+            {
+              "repositories": ["dakota", "dakota-nvidia"],
+              "deleteReferrers": true,
+              "deleteUntagged": true,
+              "keepTags": [
+                {
+                  "patterns": ["^testing$"]
+                },
+                {
+                  "patterns": ["^candidate-([0-9a-f]{40}|[0-9a-f]{64})$"],
+                  "mostRecentlyPushedCount": 10
+                },
+                {
+                  "patterns": ["^([0-9a-f]{40}|[0-9a-f]{64})$"],
+                  "mostRecentlyPushedCount": 10
+                }
+              ]
+            }
+          ]
+        }
       },
       "http": {
         "address": "0.0.0.0",
         "port": "5000"
       },
-      "log": { "level": "debug" },
+      "log": { "level": "info" },
       "extensions": {
         "metrics": {
           "enable": true,
@@ -35,6 +62,83 @@ data:
         }
       }
     }
+  config-authenticated.json: |
+      {
+        "distSpecVersion": "1.1.0",
+        "storage": {
+          "rootDirectory": "/var/lib/registry",
+          "gc": true,
+          "gcDelay": "1h",
+          "gcInterval": "24h",
+          "retention": {
+            "dryRun": false,
+            "delay": "24h",
+            "policies": [
+              {
+                "repositories": ["dakota", "dakota-nvidia"],
+                "deleteReferrers": true,
+                "deleteUntagged": true,
+                "keepTags": [
+                  {
+                    "patterns": ["^testing$"]
+                  },
+                  {
+                    "patterns": ["^candidate-([0-9a-f]{40}|[0-9a-f]{64})$"],
+                    "mostRecentlyPushedCount": 10
+                  },
+                  {
+                    "patterns": ["^([0-9a-f]{40}|[0-9a-f]{64})$"],
+                    "mostRecentlyPushedCount": 10
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "http": {
+          "address": "0.0.0.0",
+          "port": "5000",
+          "realm": "zot",
+          "auth": {
+            "failDelay": 5,
+            "htpasswd": {
+              "path": "/etc/zot/auth/htpasswd"
+            }
+          },
+          "accessControl": {
+            "metrics": {
+              "users": ["zot-metrics"]
+            },
+            "repositories": {
+              "**": {
+                "policies": [
+                  {
+                    "users": ["zot-writer"],
+                    "actions": [
+                      "read",
+                      "create",
+                      "update",
+                      "delete",
+                      "detectManifestCollision"
+                    ]
+                  }
+                ],
+                "defaultPolicy": ["read"],
+                "anonymousPolicy": ["read"]
+              }
+            }
+          }
+        },
+        "log": { "level": "info" },
+        "extensions": {
+          "metrics": {
+            "enable": true,
+            "prometheus": {
+              "path": "/metrics"
+            }
+          }
+        }
+      }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -75,6 +179,9 @@ spec:
               subPath: config.json
             - name: data
               mountPath: /var/lib/registry
+            - name: auth
+              mountPath: /etc/zot/auth
+              readOnly: true
           resources:
             requests: { cpu: "100m", memory: "256Mi" }
             limits: { cpu: "2", memory: "4Gi" }
@@ -92,6 +199,15 @@ spec:
           hostPath:
             path: /var/mnt/ghost-data/zot-local
             type: DirectoryOrCreate
+        # Activation gate: provision local-registry/zot-auth, migrate every
+        # writer, then set optional=false and mount config-authenticated.json.
+        - name: auth
+          secret:
+            secretName: zot-auth
+            optional: true
+            items:
+              - key: htpasswd
+                path: htpasswd
 ---
 apiVersion: v1
 kind: Service

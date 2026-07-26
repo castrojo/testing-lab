@@ -62,6 +62,14 @@ Grafana, Prometheus Operator, or another cluster dashboard.
   `kubestellar-*` controller jobs.
 - Zot metrics require `extensions.metrics` in both `zot-cache-config` and
   `zot-local-config`; both expose `/metrics` on their existing HTTP port. Bump
+- Zot v2.1.1 requires an authenticated user in
+  `http.accessControl.metrics.users` once repository access control is enabled.
+  Migrate Prometheus to basic auth in the same rollout; do not activate auth
+  while the scrape still depends on anonymous `/metrics`.
+- Stage Zot authentication separately from activation when anonymous writers
+  already exist: commit the htpasswd/Secret contract and auth-ready config,
+  migrate every writer, then switch the mounted config and make Secrets required
+  in one GitOps rollout. Bump
   each workload's `lab.projectbluefin.io/config-version` annotation when either
   ConfigMap changes because Zot reads the subPath-mounted config only at startup.
 - Argo custom build metrics use only constant `pipeline` and bounded `status`
@@ -162,6 +170,9 @@ Do not guess flags, chart schema, or MCP method names. The K8sGPT MCP server exp
 - [ ] Prometheus PVC is `Bound` on `local-path` and survives a rollout restart.
 - [ ] Required Prometheus targets report `health: up`; no target exposes a
       user-facing dashboard.
+- [ ] Authenticated Zot rollouts preserve anonymous pulls, reject anonymous
+      writes, admit the configured writer, and keep the authenticated metrics
+      scrape healthy.
 - [ ] Build workflow metric labels remain limited to `pipeline` and `status`.
 
 ## Key references

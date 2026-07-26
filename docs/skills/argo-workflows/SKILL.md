@@ -102,6 +102,10 @@ The workflow authoring guidance is split by topic:
 - A BuildStream poller relying only on the `bst-build` semaphore — execution is serialized, but waiting workflows can still grow without bound. Automated callers must enforce the two-workflow `bluefin.io/bst-workload=true` admission ceiling before submission.
 - **Queue Starvation / `activeDeadlineSeconds` Trap**: Leaving a workflow's `activeDeadlineSeconds` at default (or unspecified) when it queues under a template-level semaphore or resource limit. The workflow-level deadline starts ticking upon *submission/creation*, not *execution/scheduling*. If a workflow queues for longer than the global default deadline (e.g., 2h), it gets instantly canceled with `DeadlineExceeded` as soon as it begins running. Always set a generous workflow-level deadline (e.g., 4h/14400s) on queueable templates and dynamic API submission specs.
 - **Secret leakage via shell tracing**: Never use `set -x`/`set -eux` in a script that invokes authenticated APIs or expands secret-bearing variables. Argo retains command output in workflow logs. Disable tracing for the whole script or bracket only non-secret diagnostics with explicit `set +x`/`set -x` boundaries, then inspect logs for credentials before publishing evidence.
+- **Assuming registry tools exist in `lab-runner`**: the image does not include
+  ORAS or skopeo. Use a pinned tool image (or an explicit, checked bootstrap),
+  and validate flags against that pinned release. In particular, ORAS v1.2.3
+  `discover` supports `--format json` but not `--depth`.
 - **PR approval gate bypass**: Routine labels such as `automerge` or `chore/deps` are not maintainer approval. PR-batch templates must stop before build/QA when `pr/needs-review` remains or live GitHub review data lacks a verified maintainer approval.
 - **Custom metric cardinality**: Never label workflow metrics with workflow
   names, UIDs, commit SHAs, refs, image digests, or build elements. Use only
@@ -138,3 +142,5 @@ Before marking any WorkflowTemplate change done:
 - [ ] After any disk wipe/registry migration/Zot cleanup, every affected containerDisk tag manually force-rebuilt rather than assuming a digest-comparison poller will self-heal
 - [ ] Custom metrics share identical help text and histogram buckets across
       templates, and labels are limited to low-cardinality constants/states
+- [ ] Registry workflows use a pinned image that actually contains every CLI
+      invoked by the script, with flags valid for that exact version

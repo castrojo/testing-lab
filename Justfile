@@ -299,6 +299,16 @@ validate-dakota-history:
 report-dakota-history window="20":
     python3 scripts/publish_dakota_run.py report --window {{ window }}
 
+# Promote one immutable Zot candidate to :testing after its lane passes QA.
+# Usage: just run-zot-promotion dakota-testing dakota candidate-<sha> sha256:<digest>
+run-zot-promotion lane repository candidate_tag expected_digest:
+    argo submit --from workflowtemplate/zot-candidate-lifecycle \
+      -p lane={{ lane }} \
+      -p repository={{ repository }} \
+      -p candidate-tag={{ candidate_tag }} \
+      -p expected-digest={{ expected_digest }} \
+      -n {{ argo_ns }} --watch
+
 # Run the in-cluster BuildStream build pipeline for bluefin-server
 # Usage: just run-bluefin-server-build
 run-bluefin-server-build ref="main" repo="https://github.com/projectbluefin/server.git":
