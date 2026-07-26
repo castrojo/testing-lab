@@ -91,6 +91,37 @@ The 2026-07-22 Dakota investigation established the following decision tree:
    is reliable. Low utilization during a failed action is expected and is not a
    reason to add workers or jobs.
 
+## Rechunking a Dakota BuildStream OCI export
+
+`scripts/rechunk_bst_image.sh` is the reusable layout-to-layout transform for
+Dakota BST exports:
+
+```bash
+FAKECAP_RESTORE=/src/files/fakecap/fakecap-restore \
+  scripts/rechunk_bst_image.sh \
+  /workspace/export \
+  /workspace/rechunked \
+  /src/files/fakecap-manifest.tsv > /workspace/rechunk-metrics.json
+```
+
+The script uses the existing privileged builder tools (`podman`, `skopeo`,
+`jq`, overlayfs, and Dakota's compiled `fakecap-restore`); it installs nothing.
+It pins chunkah v0.6.0, physically restores the manifest xattrs, emits at most
+128 compressed layers, prunes `/sysroot/`, preserves `containers.bootc`, and
+removes `ostree.commit` plus `ostree.final-diffid`. Stdout is one JSON object
+with input/output digests, compressed bytes, layer count, duration, and tool
+version. Logs go to stderr.
+
+In Argo, keep build/export, rechunk, publish, and metrics persistence as
+artifact-connected DAG tasks. Pass the Dakota manifest/helper paths into this
+script; do not duplicate the transform inline in Workflow YAML.
+
+Sources:
+
+- [chunkah v0.6.0 usage and bootc compatibility](https://github.com/coreos/chunkah/blob/v0.6.0/README.md)
+- [Project Bluefin chunkah action](https://github.com/projectbluefin/actions/blob/main/bootc-build/chunka/action.yml)
+- [Dakota fakecap convention](https://github.com/projectbluefin/dakota/blob/main/Justfile)
+
 ## BST build scheduling: avoid preemption
 
 BST build pods use the `bst-build` PriorityClass. Long distributed builds lose all
@@ -405,4 +436,3 @@ When `buildbarn-config` changes, also bump the `buildbarn-config-revision` pod-t
 - `manifests/buildbarn-scheduler.yaml`
 - `manifests/buildbarn-storage.yaml`
 - `manifests/buildbarn-worker.yaml`
-

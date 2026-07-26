@@ -300,6 +300,11 @@ run-bluefin-server-build ref="main" repo="https://github.com/projectbluefin/serv
 
 # ── Validation ───────────────────────────────────────────────────────────────
 
+# Validate the reusable BuildStream OCI rechunk transform.
+test-rechunk:
+    bash -n scripts/rechunk_bst_image.sh
+    python -m pytest -q tests/unit/test_rechunk_bst_image.py
+
 # Apply bootstrap WorkflowTemplates to the cluster (run once during initial setup)
 apply-bootstrap:
     kubectl apply -f argo/bootstrap/ -n {{ argo_ns }}
