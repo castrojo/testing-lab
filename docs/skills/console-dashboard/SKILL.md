@@ -142,6 +142,7 @@ correctly answers no. The Console reaches wds1 as a registered cluster.
 | New pod stuck ContainerCreating on upgrade | strategy reverted to RollingUpdate with RWO PVC; keep Recreate |
 | MCP bridge initialization times out | rendered kubeconfig Secret is absent or not mounted; verify `/app/.kube/config` uses the projected ServiceAccount token and CA paths |
 | ArgoCD reports a duplicate-env ComparisonError | `NO_LOCAL_AGENT` was added to `extraEnv`; remove it because chart 0.3.34 emits it |
+| PVC migration hook is ImagePullBackOff on `bitnami/kubectl:latest` | retain the narrowly scoped `kubestellar-console-pvc-migration-image` admission policy; chart 0.3.34 hardcodes the image and offers no values override |
 | `/api/health` returns "Missing authorization" | expected — auth is enforced; sign in or use a token |
 | Anonymous full access | dev-mode without OAuth config — acceptable ONLY via port-forward, never exposed |
 
