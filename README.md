@@ -5,7 +5,7 @@
 
 > A production-quality, fully GitOps-driven QA pipeline for testing
 > [bootc](https://containers.github.io/bootc/) (image-based Linux) deployments,
-> built entirely on CNCF projects running on a single homelab node.
+> built entirely on CNCF projects running on the local `ghost` k3s cluster.
 > This instance is deployed as the CI infrastructure for [Project Bluefin](https://projectbluefin.io).
 > The productized form of this will ships as [Bluefin Server](https://projectbluefin.io/server) someday. Welcome.
 >
@@ -65,15 +65,21 @@ See [/docs/reference/bluefin-integration.md](/docs/reference/bluefin-integration
 
 | Layer | Project | CNCF Status | Role |
 |---|---|---|---|
-| Kubernetes | [k3s](https://k3s.io) | [Sandbox](https://www.cncf.io/projects/k3s/) | Lightweight single-node cluster |
+| Kubernetes | [k3s](https://k3s.io) | [Sandbox](https://www.cncf.io/projects/k3s/) | Lightweight local cluster |
 | VM workloads | [KubeVirt](https://kubevirt.io) | [Incubating](https://www.cncf.io/projects/kubevirt/) | Ephemeral test VMs on bare metal |
 | CI/CD | [Argo Workflows](https://argoproj.github.io/argo-workflows/) | [Graduated](https://www.cncf.io/projects/argo/) | DAG pipeline orchestration |
 | GitOps | [Argo CD](https://argo-cd.readthedocs.io) | [Graduated](https://www.cncf.io/projects/argo/) | Declarative cluster state from git |
+| Control plane | [KubeStellar](https://kubestellar.io) | CNCF Sandbox | WDS/ITS control plane for the local lab |
+| Private administration | [KubeStellar Console](https://github.com/kubestellar/console) | KubeStellar project | Sole private cluster-admin and single-pane UI |
+| Metrics | [Prometheus](https://prometheus.io) | [Graduated](https://www.cncf.io/projects/prometheus/) | Backend metrics service; not a dashboard |
+| Public reporting | [Astro](https://astro.build) on GitHub Pages | — | Read-only Factory and Lab reporting |
 | Observability | [Grafana Loki](https://grafana.com/oss/loki/) | CNCF landscape | Log aggregation for workflow pods |
 | Images | [OCI](https://opencontainers.org) + [bootc](https://containers.github.io/bootc/) | Standard | Atomic OS image format |
 
 > All pipelines run on commodity x86_64 hardware (single Ryzen AI node, 64GB RAM).
-> The architecture scales horizontally — add worker nodes and the workflows follow.
+> The canonical target is the local `ghost` k3s topology. Local workers can
+> join it, but lab design and verification do not assume cloud infrastructure
+> or external clusters.
 
 <img width="926" height="988" alt="image" src="https://github.com/user-attachments/assets/718ee70c-aa7d-470e-ab9f-e526ee7c39ea" />
 
@@ -109,6 +115,13 @@ ArgoCD polls (or webhook)
     └─ manifests/               ──► CronWorkflows, RBAC, infra reconciled in cluster
 ```
 
+**Operator surfaces:**
+
+- KubeStellar Console is the sole private cluster-admin and single-pane UI.
+- Astro remains the public read-only reporting surface.
+- Prometheus remains backend-only. Do not add Grafana or a parallel
+  general-purpose cluster-admin/dashboard framework.
+
 ---
 
 ## Repository Layout
@@ -140,6 +153,9 @@ lab/
 │   │   ├── knuckle-qa-pipeline.yaml     Knuckle installer QA pipeline
 │   │   ├── image-poller.yaml            Digest poller: compare → run-container-tests → publish → persist
 │   │   ├── pr-poller.yaml               PR label poller for CI gate
+│   │   ├── register-wec.yaml             register a cluster with KubeStellar
+│   │   ├── kubestellar-smoke-test.yaml   verify downsync + status upsync
+│   │   ├── kubestellar-platform-verify.yaml  ordered platform acceptance gate
 │   │   ├── ghost-cleanup.yaml           Clear stale podman lock files on ghost
 │   │   └── ghost-kernel-args.yaml       Set Strix Halo performance kernel args
 │   │
@@ -148,7 +164,6 @@ lab/
 │   │   ├── install-kubevirt.yaml         install KubeVirt (CNCF Incubating)
 │   │   ├── install-cdi.yaml             install Containerized Data Importer
 │   │   ├── install-kubevirt-manager.yaml install KubeVirt Manager web UI
-│   │   ├── install-kubestellar.yaml     install KubeStellar (optional, multi-cluster)
 │   │   ├── install-test-vms.yaml        apply initial test VM manifests
 │   │   └── setup-otel.yaml              deploy OTel observability stack
 │   │
@@ -315,6 +330,11 @@ show zero VMs when no workflows are running.
 Kubernetes API (MCP tools or `just` wrappers). No SSH to the cluster host for
 operations. The only SSH in this system is **in-cluster**: workflow pods SSHing
 into freshly-booted test VMs to run behave steps.
+
+**One administration pane** — KubeStellar Console is the private UI for the
+canonical local `ghost` k3s topology. Astro reports public read-only status,
+and Prometheus supplies backend metrics. New operational views belong in the
+Console rather than Grafana or another general-purpose dashboard framework.
 
 **WorkflowTemplate over inline DAG** — All reusable pipeline logic lives in
 `WorkflowTemplate` objects in `argo/workflow-templates/`. Submit-time `Workflow`

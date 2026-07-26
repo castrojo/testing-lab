@@ -8,6 +8,7 @@ description: >
 metadata:
   context7-sources:
     - /argoproj/argo-cd
+    - /websites/argo-cd_readthedocs_io_en_stable
 ---
 
 # GitOps / ArgoCD — lab Skill
@@ -27,22 +28,27 @@ metadata:
 
 ## Core Process
 
-### 1. Two ArgoCD Applications — know which owns what
+### 1. ArgoCD Applications — know which owns what
 
 | Application | Git path | Namespace | What it manages |
 |---|---|---|---|
 | `lab` | `argo/workflow-templates/` | argo | WorkflowTemplates |
 | `lab-infra` | `manifests/` | argo + others | CronWorkflows, RBAC, NodePorts, ConfigMaps |
+| `kubestellar-applications` | selected files in `argocd/` | argocd | KubeStellar PostgreSQL, core, and Console Applications |
 | `arc-systems` | `argocd/arc-controller-app.yaml` | arc-systems | ARC controller |
 | `arc-runners` | `argocd/arc-runners-app.yaml` | arc-runners | Org `ghost-runners` scale set |
 | `arc-runners-personal` (optional) | `argocd/arc-runners-personal-app.yaml` | arc-runners | Personal-account scale set |
 
-Both use `automated: { prune: true, selfHeal: true }` — per
+Managed Applications use `automated: { prune: true, selfHeal: true }` — per
 [Argo CD best practices](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/).
-The `argocd/` Applications (ARC controller, ARC runner scale sets) are also
-ArgoCD-managed, but the Application manifests themselves are applied manually
-once during cluster setup because ArgoCD cannot create its own Application
-definitions from git before it is running.
+App-of-apps sync waves require Application health evaluation. The `argocd-cm`
+patch in `manifests/argocd-tuning.yaml` marks child Applications Progressing
+until they are both Synced and Healthy, so later waves do not race ahead of
+PostgreSQL or KubeStellar core.
+The root `lab` and `lab-infra` Applications are applied manually once because
+ArgoCD cannot create its own initial definitions. `lab-infra` then creates the
+`kubestellar-applications` parent, which owns only the three KubeStellar child
+Application manifests selected from `argocd/`.
 
 **`prune: true`** — resources removed from git are deleted from the cluster.
 **`selfHeal: true`** — manual cluster changes are reverted within ~3 minutes.
@@ -249,6 +255,8 @@ This protocol was established after multiple sessions where:
   the live Deployment still had the old value
 - A new workflow was submitted immediately after push but before ArgoCD synced,
   running the stale template for the full pipeline duration
+
+## Common Rationalizations
 
 | Rationalization | Reality |
 |---|---|

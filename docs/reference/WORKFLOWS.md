@@ -261,16 +261,11 @@ Lives in `manifests/`, applied via the `testing-lab-infra` ArgoCD app:
 
 ---
 
-## KubeStellar bootstrap runbooks
+## KubeStellar workflows
 
-One-shot WorkflowTemplates in `argo/bootstrap/` (NOT ArgoCD-managed; apply
-with `kubectl apply -f argo/bootstrap/ -n argo`). All run with explicit
-resources (argo-quota) and the `kubestellar-bootstrap` SA where noted.
-
-### `install-kubestellar`
-
-Applies the `kubestellar-postgres` and `kubestellar` ArgoCD Applications
-and waits for its1/wds1 ControlPlanes Ready. No parameters.
+Reusable WorkflowTemplates in `argo/workflow-templates/`, reconciled by the
+`testing-lab` ArgoCD Application. KubeStellar installation and upgrades are
+owned by the `kubestellar-applications` ArgoCD parent Application.
 
 ### `register-wec`
 
@@ -287,6 +282,30 @@ SA: `kubestellar-bootstrap` (cluster-admin; klusterlet install writes CRDs).
 | `wec-name` | `ghost` | Target WEC. Verifies BindingPolicy downsync and singleton status upsync via wds1 (`kubeconfig-incluster` key), then cleans up. |
 
 SA: `kubestellar-bootstrap`. Acceptance gate after any core upgrade.
+
+### `kubestellar-platform-verify`
+
+Ordered, read-only platform gate:
+
+```text
+verify-datasource → verify-query-surfaces → verify-controller-wiring
+  → kubestellar-smoke-test
+```
+
+The first three tasks verify Prometheus/cAdvisor and Console kubeconfig wiring,
+real KubeStellar/OCM API surfaces and PromQL syntax, then all five controller
+scrape jobs. The referenced smoke template is the only task that creates
+resources, and it uses only its existing ephemeral BindingPolicy, Namespace,
+and Deployment.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `wec-name` | `ghost` | Passed explicitly to the final smoke gate. |
+
+Run with `just run-kubestellar-verify`. Read-only checks use the scoped
+`kubestellar-observability` ServiceAccount. Argo `templateRef` does not inherit
+the referenced WorkflowTemplate's workflow-level identity, so the smoke
+template declares `kubestellar-bootstrap` at template level.
 
 ---
 

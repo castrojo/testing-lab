@@ -1,0 +1,391 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: kubestellar-platform-verify
+  namespace: argo
+  annotations:
+    description: |
+      Verifies the GitOps-managed KubeStellar datasource, Console query
+      surfaces, and controller metrics before running the downsync/status
+      upsync smoke test as the final acceptance gate.
+  labels:
+    app.kubernetes.io/component: platform-verification
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  activeDeadlineSeconds: 2400
+  entrypoint: verify
+  arguments:
+    parameters:
+      - name: wec-name
+        value: ghost
+  templates:
+    - name: verify
+      dag:
+        tasks:
+          - name: verify-datasource
+            template: verify-datasource
+          - name: verify-query-surfaces
+            depends: verify-datasource.Succeeded
+            template: verify-query-surfaces
+          - name: verify-controller-wiring
+            depends: verify-query-surfaces.Succeeded
+            template: verify-controller-wiring
+          - name: kubestellar-smoke-test
+            depends: verify-controller-wiring.Succeeded
+            templateRef:
+              name: kubestellar-smoke-test
+              template: smoke
+            arguments:
+              parameters:
+                - name: wec-name
+                  value: "{{workflow.parameters.wec-name}}"
+
+    - name: verify-datasource
+      serviceAccountName: kubestellar-observability
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        source: |
+          set -euo pipefail
+
+          PROM_PROXY=/api/v1/namespaces/kube-system/services/http:prometheus:9090/proxy
+
+          require_endpoints() {
+            local namespace=$1 service=$2 endpoints ready
+            kubectl get service -n "$namespace" "$service" >/dev/null
+            endpoints=$(kubectl get endpoints -n "$namespace" "$service" -o json)
+            ready=$(jq '[.subsets[]?.addresses[]?] | length' <<<"$endpoints")
+            if [ "$ready" -lt 1 ]; then
+              echo "FAIL: service $namespace/$service has no ready endpoints" >&2
+              return 1
+            fi
+            echo "OK service $namespace/$service has $ready ready endpoint(s)"
+          }
+
+          prom_get() {
+            kubectl get --raw "${PROM_PROXY}$1"
+          }
+
+          prom_query() {
+            local encoded
+            encoded=$(jq -rn --arg query "$1" '$query | @uri')
+            prom_get "/api/v1/query?query=${encoded}"
+          }
+
+          require_endpoints kube-system prometheus
+          require_endpoints kube-system prometheus-lightweight
+          prom_get /-/ready >/dev/null
+          echo "OK Prometheus is ready through the Kubernetes Service proxy"
+
+          query_response={}
+          targets_response={}
+          for attempt in $(seq 1 24); do
+            if query_response=$(prom_query 'up{job="kubernetes-cadvisor"}' 2>/dev/null) &&
+               targets_response=$(prom_get '/api/v1/targets?state=active' 2>/dev/null) &&
+               jq -e '
+                 .status == "success" and
+                 (.data.result | length) > 0 and
+                 all(.data.result[]; .value[1] == "1")
+               ' <<<"$query_response" >/dev/null &&
+               jq -e '
+                 .status == "success" and
+                 ([.data.activeTargets[]? |
+                   select(.labels.job == "kubernetes-cadvisor" and .health == "up")] |
+                  length) > 0
+               ' <<<"$targets_response" >/dev/null; then
+              echo "OK cAdvisor query is non-empty and active targets are up"
+              break
+            fi
+            if [ "$attempt" -eq 24 ]; then
+              echo "FAIL: cAdvisor did not converge to non-empty/up within 120s" >&2
+              jq -c '{status, values: [.data.result[]?.value[1]]}' \
+                <<<"$query_response" >&2 || true
+              jq -c '{status, targets: [.data.activeTargets[]? |
+                select(.labels.job == "kubernetes-cadvisor") |
+                {scrapeUrl, health, lastError}]}' <<<"$targets_response" >&2 || true
+              exit 1
+            fi
+            sleep 5
+          done
+
+          for app_name in kubestellar-applications kubestellar-postgres \
+            kubestellar kubestellar-console; do
+            application=$(kubectl get application -n argocd "$app_name" -o json)
+            if ! jq -e '
+              .status.sync.status == "Synced" and
+              .status.health.status == "Healthy" and
+              ([.status.conditions[]? |
+                select(.type == "ComparisonError")] | length == 0)
+            ' <<<"$application" >/dev/null; then
+              echo "FAIL: Application $app_name is not Synced/Healthy" >&2
+              jq -c '{sync: .status.sync.status, health: .status.health.status,
+                conditions: .status.conditions}' <<<"$application" >&2
+              exit 1
+            fi
+          done
+
+          deployment=$(kubectl get deployment -n kubestellar-console \
+            kubestellar-console -o json)
+          jq -e '
+            .status.conditions |
+            any(.type == "Available" and .status == "True")
+          ' <<<"$deployment" >/dev/null
+          [ "$(kubectl get service -n kubestellar-console \
+            kubestellar-console -o jsonpath='{.spec.type}')" = "ClusterIP" ]
+          if kubectl get service -n kubestellar-console \
+            kubestellar-console-nodeport-tonight >/dev/null 2>&1; then
+            echo "FAIL: temporary unauthenticated Console NodePort still exists" >&2
+            exit 1
+          fi
+
+          secret_volume=$(jq -r '
+            first(.spec.template.spec.volumes[]? |
+              select(.secret.secretName == "kubestellar-console-kubeconfig") |
+              .name) // empty
+          ' <<<"$deployment")
+          [ -n "$secret_volume" ] || {
+            echo "FAIL: Console Deployment does not mount the kubeconfig Secret" >&2
+            exit 1
+          }
+          mount_path=$(jq -r --arg volume "$secret_volume" '
+            first(.spec.template.spec.containers[]?.volumeMounts[]? |
+              select(.name == $volume) | .mountPath) // empty
+          ' <<<"$deployment")
+          kubeconfig_path=$(jq -r '
+            first(.spec.template.spec.containers[]?.env[]? |
+              select(.name == "KUBECONFIG") | .value) // empty
+          ' <<<"$deployment")
+          [ -n "$mount_path" ] &&
+            [[ "$kubeconfig_path" == "$mount_path/"* ]] || {
+              echo "FAIL: Console KUBECONFIG does not point into its Secret mount" >&2
+              exit 1
+            }
+
+          health=$(kubectl get --raw \
+            '/api/v1/namespaces/kubestellar-console/services/http:kubestellar-console:8080/proxy/health')
+          jq -e '
+            .status == "ok" and
+            .project == "kubestellar" and
+            .no_local_agent == true and
+            (.enabled_dashboards | index("cluster-admin")) != null and
+            (.enabled_dashboards | index("deploy")) != null and
+            (.enabled_dashboards | index("arcade")) == null and
+            (.enabled_dashboards | index("quantum")) == null
+          ' <<<"$health" >/dev/null
+          console_pod=$(kubectl get pods -n kubestellar-console \
+            -l app.kubernetes.io/name=kubestellar-console -o json |
+            jq -r 'first(.items[] |
+              select(.status.phase == "Running") | .metadata.name) // empty')
+          [ -n "$console_pod" ] || {
+            echo "FAIL: no running Console pod found" >&2
+            exit 1
+          }
+          pod_started=$(kubectl get pod -n kubestellar-console "$console_pod" \
+            -o jsonpath='{.status.startTime}')
+          console_logs=$(kubectl logs -n kubestellar-console "$console_pod" \
+            --since-time="$pod_started")
+          bridge_state=$(grep -E \
+            'MCP bridge (started successfully|not available)' \
+            <<<"$console_logs" | tail -1 || true)
+          if [[ "$bridge_state" != *'MCP bridge started successfully'* ]] ||
+             grep -q 'bridge ListClusters failed.*ops client not available' \
+               <<<"$console_logs"; then
+            echo "FAIL: Console MCP bridge is unavailable" >&2
+            printf '%s\n' "$bridge_state" >&2
+            exit 1
+          fi
+          echo "OK ArgoCD ownership, Console health, dashboards, and MCP wiring"
+
+    - name: verify-query-surfaces
+      serviceAccountName: kubestellar-observability
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        source: |
+          set -euo pipefail
+
+          PROM_PROXY=/api/v1/namespaces/kube-system/services/http:prometheus:9090/proxy
+
+          prom_query() {
+            local encoded
+            encoded=$(jq -rn --arg query "$1" '$query | @uri')
+            kubectl get --raw \
+              "${PROM_PROXY}/api/v1/query?query=${encoded}"
+          }
+
+          require_condition() {
+            local resource=$1 name=$2 condition=$3 object
+            object=$(kubectl get "$resource" "$name" -o json)
+            if ! jq -e --arg condition "$condition" '
+              .status.conditions |
+              any(.type == $condition and .status == "True")
+            ' <<<"$object" >/dev/null; then
+              echo "FAIL: $resource/$name condition $condition is not True" >&2
+              jq -c '.status.conditions' <<<"$object" >&2
+              return 1
+            fi
+            echo "OK $resource/$name condition $condition=True"
+          }
+
+          require_list_api() {
+            local resource=$1 response count
+            response=$(kubectl get "$resource" -A -o json)
+            jq -e '.kind == "List" and (.items | type == "array")' \
+              <<<"$response" >/dev/null
+            count=$(jq '.items | length' <<<"$response")
+            echo "OK $resource list API returned $count item(s)"
+          }
+
+          require_condition controlplane its1 Ready
+          require_condition controlplane wds1 Ready
+          require_condition managedcluster ghost ManagedClusterJoined
+          require_condition managedcluster ghost ManagedClusterConditionAvailable
+
+          require_list_api manifestworks.work.open-cluster-management.io
+          require_list_api workstatuses.control.kubestellar.io
+          require_list_api managedclusteraddons.addon.open-cluster-management.io
+
+          queries=(
+            'workqueue|sum by (job) (workqueue_depth{job=~"kubestellar-.+"})'
+            'rest-client|sum by (job) (rest_client_requests_total{job=~"kubestellar-.+"})'
+          )
+          for contract in "${queries[@]}"; do
+            name=${contract%%|*}
+            query=${contract#*|}
+            response=$(prom_query "$query")
+            if ! jq -e '
+              .status == "success" and
+              .data.resultType == "vector" and
+              (.data.result | type == "array") and
+              (.data.result | length) > 0
+            ' <<<"$response" >/dev/null; then
+              echo "FAIL: PromQL $name query returned an error or empty result" >&2
+              jq -c '{status, errorType, error}' <<<"$response" >&2
+              exit 1
+            fi
+            echo "OK PromQL $name query returned $(jq '.data.result | length' \
+              <<<"$response") series"
+          done
+
+    - name: verify-controller-wiring
+      serviceAccountName: kubestellar-observability
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        source: |
+          set -euo pipefail
+
+          PROM_PROXY=/api/v1/namespaces/kube-system/services/http:prometheus:9090/proxy
+
+          require_endpoints() {
+            local namespace=$1 service=$2 endpoints ready
+            kubectl get service -n "$namespace" "$service" >/dev/null
+            endpoints=$(kubectl get endpoints -n "$namespace" "$service" -o json)
+            ready=$(jq '[.subsets[]?.addresses[]?] | length' <<<"$endpoints")
+            if [ "$ready" -lt 1 ]; then
+              echo "FAIL: service $namespace/$service has no ready endpoints" >&2
+              return 1
+            fi
+            echo "OK service $namespace/$service has $ready ready endpoint(s)"
+          }
+
+          prom_query() {
+            local encoded
+            encoded=$(jq -rn --arg query "$1" '$query | @uri')
+            kubectl get --raw \
+              "${PROM_PROXY}/api/v1/query?query=${encoded}"
+          }
+
+          require_endpoints wds1-system ks-transport-controller
+          require_endpoints open-cluster-management status-addon-controller
+          require_endpoints open-cluster-management-agent-addon \
+            status-agent-controller
+
+          jobs=(
+            kubestellar-kubeflex-controller-manager
+            kubestellar-controller-manager
+            kubestellar-transport-controller
+            kubestellar-status-addon-controller
+            kubestellar-status-agent
+          )
+          response={}
+          targets_response={}
+          missing=()
+          unhealthy=()
+          missing_process=()
+          for attempt in $(seq 1 24); do
+            missing=()
+            unhealthy=()
+            missing_process=()
+            if response=$(prom_query 'up{job=~"kubestellar-.+"}' 2>/dev/null) &&
+               targets_response=$(kubectl get --raw \
+                 "${PROM_PROXY}/api/v1/targets?state=active" 2>/dev/null) &&
+               process_response=$(prom_query \
+                 'process_cpu_seconds_total{job=~"kubestellar-.+"}' 2>/dev/null) &&
+               jq -e '.status == "success"' <<<"$response" >/dev/null &&
+               jq -e '.status == "success"' <<<"$targets_response" >/dev/null &&
+               jq -e '.status == "success"' <<<"$process_response" >/dev/null; then
+              for job in "${jobs[@]}"; do
+                count=$(jq --arg job "$job" '
+                  [.data.result[]? | select(.metric.job == $job)] | length
+                ' <<<"$response")
+                up_count=$(jq --arg job "$job" '
+                  [.data.result[]? |
+                    select(.metric.job == $job and .value[1] == "1")] | length
+                ' <<<"$response")
+                target_count=$(jq --arg job "$job" '
+                  [.data.activeTargets[]? |
+                    select(.labels.job == $job and .health == "up")] | length
+                ' <<<"$targets_response")
+                process_count=$(jq --arg job "$job" '
+                  [.data.result[]? | select(.metric.job == $job)] | length
+                ' <<<"$process_response")
+                if [ "$count" -eq 0 ]; then
+                  missing+=("$job")
+                elif [ "$up_count" -ne "$count" ] || [ "$target_count" -lt 1 ]; then
+                  unhealthy+=("$job")
+                fi
+                [ "$process_count" -gt 0 ] || missing_process+=("$job")
+              done
+              if [ "${#missing[@]}" -eq 0 ] &&
+                 [ "${#unhealthy[@]}" -eq 0 ] &&
+                 [ "${#missing_process[@]}" -eq 0 ]; then
+                echo "OK all five KubeStellar controller jobs are healthy and export process metrics"
+                exit 0
+              fi
+            fi
+            [ "$attempt" -eq 24 ] || sleep 5
+          done
+
+          [ "${#missing[@]}" -eq 0 ] ||
+            printf 'FAIL: missing controller job(s): %s\n' "${missing[*]}" >&2
+          [ "${#unhealthy[@]}" -eq 0 ] ||
+            printf 'FAIL: controller job(s) not up=1: %s\n' \
+              "${unhealthy[*]}" >&2
+          [ "${#missing_process[@]}" -eq 0 ] ||
+            printf 'FAIL: controller job(s) missing process metrics: %s\n' \
+              "${missing_process[*]}" >&2
+          jq -c '{status, jobs: [.data.result[]? |
+            {job: .metric.job, value: .value[1]}]}' <<<"$response" >&2 || true
+          exit 1

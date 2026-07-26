@@ -8,6 +8,8 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: kubestellar-console-lab-surfaces
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
   labels:
     app.kubernetes.io/part-of: lab
 rules:
@@ -38,10 +40,21 @@ rules:
       - virtualmachines/restart
     verbs: [update]
   - apiGroups: [control.kubestellar.io]
-    resources: ["*"]
+    resources: [workstatuses]
     verbs: [get, list, watch]
   - apiGroups: [cluster.open-cluster-management.io]
     resources: [managedclusters]
+    verbs: [get, list, watch]
+  - apiGroups: [work.open-cluster-management.io]
+    resources:
+      - manifestworks
+      - manifestworkreplicasets
+      - appliedmanifestworks
+    verbs: [get, list, watch]
+  - apiGroups: [addon.open-cluster-management.io]
+    resources:
+      - managedclusteraddons
+      - clustermanagementaddons
     verbs: [get, list, watch]
   - apiGroups: [tenancy.kflex.kubestellar.org]
     resources: [controlplanes]
@@ -51,6 +64,8 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: kubestellar-console-lab-surfaces
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
   labels:
     app.kubernetes.io/part-of: lab
 subjects:

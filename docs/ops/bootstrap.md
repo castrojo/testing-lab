@@ -121,6 +121,10 @@ Both applications use `automated: { prune: true, selfHeal: true }` — resources
 removed from git are removed from the cluster, and manual changes are reverted.
 This is the [recommended Argo CD GitOps model](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/).
 
+`testing-lab-infra` also creates the `kubestellar-applications` app-of-apps,
+which reconciles PostgreSQL, KubeStellar core, and KubeStellar Console in that
+order. Do not apply the child Applications manually.
+
 ---
 
 ## 6. Create the SSH Key Secret
@@ -214,7 +218,6 @@ Run them once during initial cluster setup.
 | `install-kubevirt` | `workflowtemplate/install-kubevirt` | Install KubeVirt (CNCF Incubating) |
 | `install-cdi` | `workflowtemplate/install-cdi` | Install CDI for disk import |
 | `install-kubevirt-manager` | `workflowtemplate/install-kubevirt-manager` | Web UI at :30180 |
-| `install-kubestellar` | `workflowtemplate/install-kubestellar` | Multi-cluster (optional) |
 | `ghost-kernel-args` | `workflowtemplate/ghost-kernel-args` | Strix Halo kernel tuning |
 | `setup-ghost-ssh-banner` | `workflowtemplate/setup-ghost-ssh-banner` | API-only SSH warning |
 | `setup-otel` | `workflowtemplate/setup-otel` | OTel observability stack |
@@ -224,6 +227,10 @@ Run them once during initial cluster setup.
 > kubectl apply -f argo/bootstrap/ -n argo
 > ```
 > After initial setup they remain in the cluster as runbooks for re-execution.
+>
+> Reusable KubeStellar workflows (`register-wec` and
+> `kubestellar-smoke-test`) live in `argo/workflow-templates/` and are
+> reconciled by ArgoCD; do not apply them from this directory.
 
 ---
 

@@ -8,6 +8,8 @@ description: >
 metadata:
   context7-sources:
     - /kubestellar/kubestellar
+    - /websites/argo-cd_readthedocs_io_en_stable
+    - /websites/prometheus_io
 ---
 
 # KubeStellar — lab Skill
@@ -41,16 +43,27 @@ metadata:
   status upsyncs into the WDS object — without it ArgoCD/Console see specs,
   not truth.
 
+## Core Process
+
+1. Change the KubeStellar child Application manifests in `argocd/`.
+2. Let `kubestellar-applications` reconcile PostgreSQL, core, then Console.
+3. Submit `register-wec` for registration or `kubestellar-platform-verify` for
+  ordered platform and smoke acceptance from their managed WorkflowTemplates.
+4. Verify ArgoCD health, control-plane readiness, and WEC availability.
+
 ## Install (GitOps, ADR-0003)
 
-Two ArgoCD Applications, applied manually once (argocd/ convention):
+The `testing-lab-infra` Application reconciles
+`manifests/kubestellar-applications.yaml`, which owns exactly three child
+Applications in order: PostgreSQL, KubeStellar core, then Console. Installation
+and upgrades happen through Git; do not apply the child Applications manually.
 
 ```bash
-kubectl apply -f argocd/kubestellar-postgres-app.yaml   # MUST exist first
-kubectl apply -f argocd/kubestellar-app.yaml
+argocd app get kubestellar-applications
+argocd app get kubestellar-postgres
+argocd app get kubestellar
+argocd app get kubestellar-console
 ```
-
-Or run the runbook: `argo submit --from workflowtemplate/install-kubestellar -n argo --wait`
 
 **Critical gotcha — postgres deadlock**: the core-chart installs PostgreSQL
 via a `helm.sh/hook: post-install` Job. Under ArgoCD that hook maps to
@@ -89,7 +102,7 @@ argo submit --from workflowtemplate/register-wec -n argo --wait --log \
   -p wec-name=<cluster-name>
 ```
 
-What it does (argo/bootstrap/register-wec.yaml): pinned clusteradm download
+What it does (`argo/workflow-templates/register-wec.yaml`): pinned clusteradm download
 (python tarfile extract — lab-runner has no tar), `clusteradm get token` →
 `join --singleton --force-internal-endpoint-lookup` → `accept` → labels the
 ManagedCluster `name=<wec>` (OCM does NOT set this; lab BindingPolicies
@@ -109,6 +122,18 @@ downsynced objects on the WEC (downsync is async — never `kubectl wait`
 immediately), verifies `readyReplicas` upsyncs back into the wds1 object,
 cleans up. Green = downsync AND status upsync both work.
 
+For the full ordered gate, use:
+
+```bash
+just run-kubestellar-verify
+```
+
+This verifies the datasource, API/PromQL query surfaces, and all five
+controller scrape jobs before composing `kubestellar-smoke-test` as the final
+gate. Read-only checks use `kubestellar-observability`; the referenced smoke
+template declares `kubestellar-bootstrap` at template level because
+`templateRef` does not inherit WorkflowTemplate-level identity.
+
 ## BindingPolicy authoring rules
 
 - Select clusters by ManagedCluster labels (`name: ghost`, later
@@ -118,6 +143,19 @@ cleans up. Green = downsync AND status upsync both work.
   the objects, or the namespace arrives without contents.
 - BindingPolicies live in the WDS, committed to git like any manifest once
   the GitOps lane for wds1 exists.
+
+## Controller metrics
+
+The lab uses the standalone `prometheus-lightweight` deployment, not
+Prometheus Operator resources. `manifests/kubestellar-controller-metrics.yaml`
+provides Services for the transport controller, status addon controller, and
+status agent; the existing KubeFlex and KubeStellar controller-manager Services
+provide their kube-rbac-proxy endpoints. Scrape jobs are named
+`kubestellar-*`; query controller-runtime, process, REST client, and workqueue
+families rather than inventing BindingPolicy or ManifestWork gauges. Prometheus
+`role: endpoints` discovery attaches service and backing-pod metadata, so filter
+on service and endpoint port names and relabel only namespace, service, pod, and
+instance.
 
 ## Failure modes
 
@@ -131,8 +169,28 @@ cleans up. Green = downsync AND status upsync both work.
 | ManagedCluster stuck JOINED empty | CSR not accepted — rerun `clusteradm accept --clusters <wec>` |
 | BindingPolicy matches nothing | ManagedCluster lacks the `name=<wec>` label (register-wec adds it; manual joins must too) |
 
+## Common Rationalizations
+
+| Rationalization | Reality |
+|---|---|
+| "Applying one child Application manually is faster." | The parent self-heals from Git; change the tracked file instead. |
+| "These workflows are bootstrap-only." | `register-wec` and `kubestellar-smoke-test` are reusable, ArgoCD-managed templates. |
+
+## Red Flags
+
+- Manual `kubectl apply` of a KubeStellar child Application
+- A reusable KubeStellar WorkflowTemplate under `argo/bootstrap/`
+- Core synced before the PostgreSQL child Application is healthy
+
 ## Upgrade order
 
 KubeFlex/postgres → core-chart (bump `targetRevision` in
 argocd/kubestellar-app.yaml via PR) → Console. Rerun the smoke test after
 every core upgrade.
+
+## Verification
+
+- [ ] `kubestellar-applications` and all three child Applications are healthy
+- [ ] `its1` and `wds1` report Ready
+- [ ] The target ManagedCluster reports Joined and Available
+- [ ] `kubestellar-smoke-test` passes after a core upgrade

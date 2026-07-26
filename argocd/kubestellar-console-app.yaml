@@ -1,5 +1,5 @@
 # KubeStellar Console — the control GUI for the home control plane
-# (ADR-0003). Applied manually once, like the other argocd/ Applications.
+# (ADR-0003). Reconciled by the kubestellar-applications parent Application.
 #
 # Exposure policy (locked decision): dev-mode (anonymous cluster-admin UI)
 # NEVER ships exposed. This install is ClusterIP-only with ingress disabled —
@@ -13,6 +13,8 @@ kind: Application
 metadata:
   name: kubestellar-console
   namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
   labels:
     app.kubernetes.io/part-of: lab
 spec:
@@ -34,6 +36,10 @@ spec:
         # gap-storage-backup ADR scope (Velero user-data-only stance).
         backup:
           enabled: false
+        selfUpgrade:
+          enabled: false
+        rbac:
+          resourceQuotasReadOnly: true
         deployment:
           strategy:
             type: Recreate
@@ -42,10 +48,30 @@ spec:
           type: ClusterIP
         ingress:
           enabled: false
-        enabledDashboards: "dashboard,clusters,workloads,pods,services,nodes,events,gitops,helm,security,storage"
+        clusterName: ghost
+        consoleProject: kubestellar
+        kubeconfig:
+          existingSecretKey: config
+          content: |
+            apiVersion: v1
+            kind: Config
+            clusters:
+              - name: ghost
+                cluster:
+                  server: https://kubernetes.default.svc
+                  certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            contexts:
+              - name: ghost
+                context:
+                  cluster: ghost
+                  user: ghost
+            current-context: ghost
+            users:
+              - name: ghost
+                user:
+                  tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+        enabledDashboards: "dashboard,clusters,cluster-admin,deploy,compute,workloads,deployments,pods,services,nodes,events,gitops,helm,operators,security,storage,network"
         extraEnv:
-          - name: NO_LOCAL_AGENT
-            value: "true"
           - name: ENABLE_DEMO_DASHBOARDS
             value: "false"
           - name: SHOW_DEMO_TO_LOCAL_CTA
