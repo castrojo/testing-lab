@@ -2,7 +2,7 @@
 # pre-upgrade PVC migration hook. Replace only that exact upstream image with
 # the pinned, shell-enabled FSDK cluster-ops image before the Job is admitted.
 # The upstream security context assumes Bitnami's uid 1001, so also select an
-# explicit non-root uid and writable HOME for the FSDK image.
+# explicit non-root uid for the FSDK image.
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingAdmissionPolicy
 metadata:
@@ -48,16 +48,6 @@ spec:
               op: "add",
               path: "/spec/template/spec/containers/0/securityContext/runAsUser",
               value: 65532
-            },
-            JSONPatch{
-              op: "add",
-              path: "/spec/template/spec/containers/0/env",
-              value: [
-                Object.spec.template.spec.containers.env{
-                  name: "HOME",
-                  value: "/tmp"
-                }
-              ]
             }
           ]
 ---
