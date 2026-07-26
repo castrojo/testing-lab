@@ -323,7 +323,8 @@ kubectl patch workflow <name> -n argo -p '{"spec":{"shutdown":"Stop"}}' --type=m
 ```
 
 **Dakota lanes and the mutex:** keep the lanes separate.
-- `dakota-commit-poller` → `dakota-build-pipeline` (BuildStream publish lane) is expected to run.
+- `dakota-commit-poller` → `bst-commit-poller` → `dakota-build-pipeline`
+  (BuildStream publish lane) is expected to run.
 - `image-poll-dakota` → `dakota-qa-pipeline` is the active container-only QA lane.
 If mutex contention appears, stop stale failed workflows holding `ghost-heavy-compute`; do not
 blanket-stop all Dakota build-publish runs or suspend the active QA poller.
@@ -344,18 +345,18 @@ obvious to downstream lab jobs.
 If the template is retagged, update the dashboard fallback writable-repos list in
 `src/pages/index.astro` and `src/pages/userspace.astro` to match the new repository names.
 
-### 20aa. Report Dakota PR workflows through one GitHub Check Run
+### 20aa. Report factory PR workflows through one GitHub Check Run
 
-Dakota PR validation uses one native Check Run named
-`testing-lab / dakota`, owned by the existing MergeRaptor GitHub App. Do not
-post PR comments or a parallel commit status for the same result.
+Bluefin, Bluefin LTS, and Dakota PR validation each use one native Check Run
+named `testing-lab / <repository>`, owned by the existing MergeRaptor GitHub
+App. Do not post PR comments or a parallel commit status for the same result.
 
 The auth boundary is deliberate:
 
 1. The lab uses its existing GitHub credential only to send a
-   `repository_dispatch` event to `projectbluefin/dakota`.
-2. Dakota's `lab-check.yml` mints a short-lived MergeRaptor installation token
-   from the existing GitHub Actions org secrets.
+   `repository_dispatch` event to the target repository.
+2. The target repository's `lab-check.yml` mints a short-lived MergeRaptor
+   installation token from the existing GitHub Actions org secrets.
 3. MergeRaptor creates or updates the Check Run for the exact PR head SHA.
 
 Never copy the MergeRaptor private key into Kubernetes. Keep the dispatch
@@ -368,8 +369,21 @@ The PR poller must create the Argo workflow before dispatching the queued check.
 If the queued dispatch fails, delete that new workflow so the next five-minute
 poll retries the entire operation, then return success from that PR handler so
 one GitHub API failure does not abort processing the remaining PRs in the poll
-cycle. The generated Dakota workflow sends an `in_progress` update at admission
-and a `completed` update from `onExit`.
+cycle. The generated workflow sends an `in_progress` update at admission and a
+`completed` update from `onExit`.
+
+### 20ab. Bound BuildStream admission before the semaphore queue
+
+The `bst-build` semaphore limits execution to one pipeline, but a semaphore by
+itself permits an unbounded list of waiting workflows. Automated callers must
+also count active workflows labeled `bluefin.io/bst-workload=true` and defer
+when two are already admitted: one may execute while one waits.
+
+The generic PR poller runs at minute `0/5`; Dakota and Cosmic source pollers run
+at minute `2/5` and `4/5`. This staggering makes the count-and-submit guard
+deterministic for automatic traffic. Source pollers must persist a new commit
+SHA only after the referenced build succeeds, so deferred or failed work is
+retried.
 
 MergeRaptor requires `checks: write`. GitHub's Checks endpoints require GitHub
 App authentication; classic PATs and OAuth apps cannot update checks.

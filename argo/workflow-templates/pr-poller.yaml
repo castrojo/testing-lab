@@ -51,7 +51,7 @@ spec:
           MAX_DISPATCH=8
           DISPATCHED=0
 
-          dispatch_dakota_check() {
+          dispatch_lab_check() {
             local repo="$1"
             local sha="$2"
             local pr_number="$3"
@@ -117,6 +117,7 @@ spec:
           dispatch_pr() {
            local PR="$1"
            local REPO SHA PR_NUM HEAD_BRANCH BRANCH TESTSUITE_BRANCH EXISTING TMPL TITLE TITLE_SLUG
+           local PRODUCT DISPLAY_NAME PR_IMAGE PR_IMAGE_TAG PR_SUITES BST_WORKLOAD
 
            # Rate-limit: stop dispatching once we hit MAX_DISPATCH this run
            if [[ "$DISPATCHED" -ge "$MAX_DISPATCH" ]]; then
@@ -236,7 +237,43 @@ spec:
                  value: ${TESTSUITE_REPO}" ;;
            esac
 
-           if [[ "$TMPL" == "dakota-build-qa" ]]; then
+           if [[ "$REPO" == "projectbluefin/bluefin" ||
+                 "$REPO" == "projectbluefin/bluefin-lts" ||
+                 "$REPO" == "projectbluefin/dakota" ]]; then
+            PRODUCT="${REPO##*/}"
+            case "${PRODUCT}" in
+              dakota)
+                DISPLAY_NAME="Dakota"
+                PR_IMAGE="192.168.1.102:30500/dakota"
+                PR_IMAGE_TAG="${SHA}"
+                PR_SUITES="smoke,common,developer,software,system"
+                BST_WORKLOAD="true"
+                ACTIVE_BST=$(
+                  kubectl get workflows -n argo \
+                    -l bluefin.io/bst-workload=true \
+                    -o json \
+                    | jq '[.items[] | select(.status.phase == "Running")] | length'
+                )
+                if (( ACTIVE_BST >= 2 )); then
+                  echo "PR #${PR_NUM} ${REPO}: BST queue full (${ACTIVE_BST}/2); deferring to the next poll" >&2
+                  return
+                fi
+                ;;
+              bluefin)
+                DISPLAY_NAME="Bluefin"
+                PR_IMAGE="ghcr.io/projectbluefin/bluefin"
+                PR_IMAGE_TAG="testing"
+                PR_SUITES="smoke"
+                BST_WORKLOAD="false"
+                ;;
+              bluefin-lts)
+                DISPLAY_NAME="Bluefin LTS"
+                PR_IMAGE="ghcr.io/projectbluefin/bluefin-lts"
+                PR_IMAGE_TAG="testing"
+                PR_SUITES="smoke"
+                BST_WORKLOAD="false"
+                ;;
+            esac
             WORKFLOW_NAME=$(kubectl create -f - -o jsonpath='{.metadata.name}' <<EOF
           apiVersion: argoproj.io/v1alpha1
           kind: Workflow
@@ -247,6 +284,8 @@ spec:
              bluefin.io/trigger: pr-auto
              bluefin.io/pr-number: "${PR_NUM}"
              bluefin.io/pr-sha: "${SHA12}"
+             bluefin.io/repository: "${PRODUCT}"
+             bluefin.io/bst-workload: "${BST_WORKLOAD}"
           spec:
            serviceAccountName: argo
            activeDeadlineSeconds: 90000
@@ -261,13 +300,13 @@ spec:
                - name: commit-sha
                  value: "${SHA}"
                - name: image
-                 value: "192.168.1.102:30500/dakota"
+                 value: "${PR_IMAGE}"
                - name: image-tag
-                 value: "${SHA}"
+                 value: "${PR_IMAGE_TAG}"
                - name: suites
-                 value: "smoke,common,developer,software,system"
+                 value: "${PR_SUITES}"
                - name: variant
-                 value: "dakota"
+                 value: "${PRODUCT}"
                - name: branch
                  value: "${BRANCH}"
                - name: testsuite-branch
@@ -299,12 +338,12 @@ spec:
                          - name: workflow-url
                            value: "${ARGO_WORKFLOW_URL_BASE}/{{workflow.name}}"
                          - name: title
-                           value: Dakota lab validation is running
+                           value: ${DISPLAY_NAME} lab validation is running
                          - name: summary
                            value: |
                              The lab admitted PR #${PR_NUM} at commit \`${SHA}\`.
 
-                             BuildStream remote execution and container QA are running in Argo workflow \`{{workflow.name}}\`.
+                             Validation is running in Argo workflow \`{{workflow.name}}\`.
                          - name: text
                            value: ""
                          - name: started-at
@@ -313,6 +352,7 @@ spec:
                            value: ""
                    - name: build
                      depends: "(report-start.Succeeded || report-start.Failed || report-start.Errored)"
+                     when: "'{{workflow.parameters.repository}}' == 'projectbluefin/dakota'"
                      templateRef:
                        name: dakota-build-pipeline
                        template: build
@@ -330,8 +370,9 @@ spec:
                            value: "re"
                          - name: lock-key
                            value: "bst-build"
-                   - name: qa
+                   - name: qa-dakota
                      depends: "build.Succeeded"
+                     when: "'{{workflow.parameters.repository}}' == 'projectbluefin/dakota'"
                      templateRef:
                        name: dakota-qa-pipeline
                        template: pipeline
@@ -351,6 +392,34 @@ spec:
                            value: "{{workflow.parameters.testsuite-branch}}"
                          - name: testsuite-repo
                            value: "{{workflow.parameters.testsuite-repo}}"
+                   - name: qa-bluefin
+                     depends: "(report-start.Succeeded || report-start.Failed || report-start.Errored)"
+                     when: "'{{workflow.parameters.repository}}' != 'projectbluefin/dakota'"
+                     templateRef:
+                       name: bluefin-qa-pipeline
+                       template: pipeline
+                     arguments:
+                       parameters:
+                          - name: image
+                            value: "{{workflow.parameters.image}}"
+                          - name: image-tag
+                            value: "{{workflow.parameters.image-tag}}"
+                          - name: suites
+                            value: "{{workflow.parameters.suites}}"
+                          - name: variant
+                            value: "{{workflow.parameters.variant}}"
+                          - name: branch
+                            value: "{{workflow.parameters.branch}}"
+                          - name: pr-number
+                            value: "{{workflow.parameters.pr-number}}"
+                          - name: sha
+                            value: "{{workflow.parameters.commit-sha}}"
+                          - name: repo
+                            value: "{{workflow.parameters.repository}}"
+                          - name: testsuite-branch
+                            value: "{{workflow.parameters.testsuite-branch}}"
+                          - name: testsuite-repo
+                            value: "{{workflow.parameters.testsuite-repo}}"
              - name: report-final
                steps:
                  - - name: github-check
@@ -372,7 +441,7 @@ spec:
           EOF
             )
             WORKFLOW_URL="${ARGO_WORKFLOW_URL_BASE}/${WORKFLOW_NAME}"
-            if ! dispatch_dakota_check \
+            if ! dispatch_lab_check \
               "${REPO}" \
               "${SHA}" \
               "${PR_NUM}" \
@@ -380,7 +449,7 @@ spec:
               "" \
               "${WORKFLOW_NAME}" \
               "${WORKFLOW_URL}" \
-              "Dakota lab validation queued" \
+              "${DISPLAY_NAME} lab validation queued" \
               "The lab queued PR #${PR_NUM} at commit \`${SHA}\` as Argo workflow \`${WORKFLOW_NAME}\`."; then
               echo "PR #${PR_NUM} ${REPO}: failed to create queued GitHub check; deleting ${WORKFLOW_NAME} so the next poll retries" >&2
               kubectl delete workflow "${WORKFLOW_NAME}" -n argo --ignore-not-found

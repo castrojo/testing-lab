@@ -19,7 +19,7 @@ def test_github_check_reporter_exposes_detailed_safe_results():
 
     assert 'event_type: "lab-check"' in send_source
     assert "Authorization: Bearer ${GITHUB_TOKEN}" in send_source
-    assert "projectbluefin/dakota" in send_source
+    assert "projectbluefin/bluefin|projectbluefin/bluefin-lts|projectbluefin/dakota" in send_source
     assert "### Pod placement" in collect_source
     assert "### Workflow nodes" in collect_source
     assert "## Failure diagnostics" in collect_source
@@ -34,10 +34,12 @@ def test_dakota_pr_workflow_updates_one_check_without_comments():
     ).read_text(encoding="utf-8")
     justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
 
-    assert "dispatch_dakota_check()" in poller
+    assert "dispatch_lab_check()" in poller
     assert "onExit: report-final" in poller
     assert "name: report-start" in poller
     assert "name: github-check-reporter" in poller
+    assert "name: qa-bluefin" in poller
+    assert "projectbluefin/bluefin-lts" in poller
     assert "value: in_progress" in poller
     assert "template: final" in poller
     assert "failed to create queued GitHub check" in poller
@@ -47,6 +49,6 @@ def test_dakota_pr_workflow_updates_one_check_without_comments():
     assert "gh pr comment" not in poller
     assert "/issues/comments" not in poller
 
-    assert "lab-check-status pr_number:" in justfile
-    assert 'select(.name == "testing-lab / dakota"' in justfile
+    assert "lab-check-status repo pr_number:" in justfile
+    assert 'select(.name == "testing-lab / {{ repo }}"' in justfile
     assert "lab-report pr_number" not in justfile

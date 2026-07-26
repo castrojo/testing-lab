@@ -1,0 +1,183 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: bst-commit-poller
+  namespace: argo
+  annotations:
+    description: |
+      Polls GitHub branches that feed BuildStream pipelines. Dakota and Cosmic
+      share commit comparison, bounded queue admission, and success-only state
+      persistence while retaining their repository-specific build templates.
+  labels:
+    app.kubernetes.io/component: commit-poller
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  serviceAccountName: argo
+  podGC:
+    strategy: OnWorkflowCompletion
+  ttlStrategy:
+    secondsAfterSuccess: 3600
+    secondsAfterFailure: 86400
+  activeDeadlineSeconds: 86400
+  entrypoint: poll-dakota
+
+  arguments:
+    parameters:
+      - name: repo
+      - name: branch
+      - name: state-key
+      - name: registry
+        value: "192.168.1.102:30500"
+
+  templates:
+    - name: poll-dakota
+      dag:
+        tasks:
+          - name: check-sha
+            template: check-sha
+          - name: run-build
+            depends: "check-sha.Succeeded"
+            when: "{{tasks.check-sha.outputs.parameters.changed}} == true"
+            templateRef:
+              name: dakota-build-pipeline
+              template: build
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{workflow.parameters.branch}}"
+                - name: commit-sha
+                  value: "{{tasks.check-sha.outputs.parameters.sha}}"
+                - name: repo
+                  value: "https://github.com/{{workflow.parameters.repo}}.git"
+                - name: registry
+                  value: "{{workflow.parameters.registry}}"
+                - name: build-mode
+                  value: "re"
+          - name: update-sha
+            depends: "run-build.Succeeded"
+            template: update-sha
+            arguments:
+              parameters:
+                - name: sha
+                  value: "{{tasks.check-sha.outputs.parameters.sha}}"
+
+    - name: poll-cosmic
+      dag:
+        tasks:
+          - name: check-sha
+            template: check-sha
+          - name: run-build
+            depends: "check-sha.Succeeded"
+            when: "{{tasks.check-sha.outputs.parameters.changed}} == true"
+            templateRef:
+              name: cosmic-build-pipeline
+              template: build
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{workflow.parameters.branch}}"
+                - name: repo
+                  value: "https://github.com/{{workflow.parameters.repo}}.git"
+                - name: registry
+                  value: "{{workflow.parameters.registry}}"
+                - name: build-mode
+                  value: "re"
+          - name: update-sha
+            depends: "run-build.Succeeded"
+            template: update-sha
+            arguments:
+              parameters:
+                - name: sha
+                  value: "{{tasks.check-sha.outputs.parameters.sha}}"
+
+    - name: check-sha
+      outputs:
+        parameters:
+          - name: changed
+            valueFrom:
+              path: /tmp/changed
+          - name: sha
+            valueFrom:
+              path: /tmp/sha
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+        source: |
+          set -euo pipefail
+
+          REPO="{{workflow.parameters.repo}}"
+          BRANCH="{{workflow.parameters.branch}}"
+          KEY="{{workflow.parameters.state-key}}"
+
+          REMOTE=$(
+            curl -sf \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/commits?sha=${BRANCH}&per_page=1" \
+              | jq -r '.[0].sha'
+          )
+          if [[ ! "${REMOTE}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid commit SHA returned for ${REPO}:${BRANCH}" >&2
+            exit 1
+          fi
+          printf '%s\n' "${REMOTE}" > /tmp/sha
+
+          STORED=$(kubectl get configmap image-polling-digests \
+            -n argo -o jsonpath="{.data.${KEY}}" 2>/dev/null || true)
+          echo "Remote SHA: ${REMOTE}" >&2
+          echo "Stored SHA: ${STORED:-<none>}" >&2
+
+          if [[ "${REMOTE}" == "${STORED}" ]]; then
+            echo "false" > /tmp/changed
+            exit 0
+          fi
+
+          ACTIVE=$(
+            kubectl get workflows -n argo \
+              -l bluefin.io/bst-workload=true \
+              -o json \
+              | jq '[.items[] | select(.status.phase == "Running")] | length'
+          )
+          if (( ACTIVE > 2 )); then
+            echo "BST queue full (${ACTIVE} workflows including this poller); deferring ${REPO}:${BRANCH}" >&2
+            echo "false" > /tmp/changed
+            exit 0
+          fi
+
+          echo "Commit changed and BST queue has capacity (${ACTIVE}/2 admitted)" >&2
+          echo "true" > /tmp/changed
+
+    - name: update-sha
+      inputs:
+        parameters:
+          - name: sha
+      script:
+        image: cgr.dev/chainguard/kubectl:latest-dev
+        command: [bash]
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        source: |
+          set -euo pipefail
+          KEY="{{workflow.parameters.state-key}}"
+          SHA="{{inputs.parameters.sha}}"
+          kubectl patch configmap image-polling-digests \
+            -n argo --type merge \
+            -p "{\"data\":{\"${KEY}\":\"${SHA}\"}}"

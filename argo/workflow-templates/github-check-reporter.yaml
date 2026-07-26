@@ -5,7 +5,7 @@ metadata:
   namespace: argo
   annotations:
     description: |
-      Sends Dakota lab workflow lifecycle updates to the repository_dispatch
+      Sends Bluefin, Bluefin LTS, and Dakota workflow lifecycle updates to the repository_dispatch
       bridge that creates one detailed MergeRaptor-owned GitHub Check Run. The
       reporter includes workflow nodes, pod placement, timings, and failure
       messages, but never copies raw pod logs into GitHub.
@@ -18,7 +18,7 @@ spec:
   arguments:
     parameters:
       - name: repository
-        value: projectbluefin/dakota
+        value: projectbluefin/bluefin
       - name: sha
         value: ""
       - name: pr-number
@@ -32,7 +32,7 @@ spec:
       - name: workflow-url
         value: ""
       - name: title
-        value: Dakota lab validation
+        value: Lab validation
       - name: summary
         value: No lab summary was provided.
       - name: text
@@ -112,12 +112,15 @@ spec:
         source: |
           set -euo pipefail
 
-          if [[ "${REPOSITORY}" != "projectbluefin/dakota" ]]; then
-            echo "Refusing to dispatch a lab check for ${REPOSITORY}" >&2
-            exit 1
-          fi
+          case "${REPOSITORY}" in
+            projectbluefin/bluefin|projectbluefin/bluefin-lts|projectbluefin/dakota) ;;
+            *)
+              echo "Refusing to dispatch a lab check for ${REPOSITORY}" >&2
+              exit 1
+              ;;
+          esac
           if [[ ! "${SHA}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Invalid Dakota commit SHA: ${SHA}" >&2
+            echo "Invalid commit SHA: ${SHA}" >&2
             exit 1
           fi
           case "${CHECK_STATE}" in
@@ -287,28 +290,30 @@ spec:
             -o json > /tmp/check/pods.json
 
           FINAL_STATUS="{{inputs.parameters.final-status}}"
+          PRODUCT="{{inputs.parameters.repository}}"
+          PRODUCT="${PRODUCT##*/}"
           WORKFLOW_MESSAGE=$(jq -r '.status.message // empty' /tmp/check/workflow.json)
           case "${FINAL_STATUS}" in
             Succeeded)
               CONCLUSION=success
-              TITLE="Dakota lab validation passed"
+              TITLE="${PRODUCT} lab validation passed"
               ;;
             Failed|Error)
               if [[ "${WORKFLOW_MESSAGE}" == *DeadlineExceeded* ]]; then
                 CONCLUSION=timed_out
-                TITLE="Dakota lab validation timed out"
+                TITLE="${PRODUCT} lab validation timed out"
               else
                 CONCLUSION=failure
-                TITLE="Dakota lab validation failed"
+                TITLE="${PRODUCT} lab validation failed"
               fi
               ;;
             Stopped|Terminated)
               CONCLUSION=cancelled
-              TITLE="Dakota lab validation cancelled"
+              TITLE="${PRODUCT} lab validation cancelled"
               ;;
             *)
               CONCLUSION=neutral
-              TITLE="Dakota lab validation finished: ${FINAL_STATUS}"
+              TITLE="${PRODUCT} lab validation finished: ${FINAL_STATUS}"
               ;;
           esac
           printf '%s' "${CONCLUSION}" > /tmp/check/conclusion
@@ -339,7 +344,7 @@ spec:
           }
 
           {
-            echo "## Dakota lab validation"
+            echo "## ${PRODUCT} lab validation"
             echo
             echo "| Field | Value |"
             echo "|---|---|"

@@ -223,17 +223,17 @@ run-kernel-args:
 
 # ── Dakota BST builds ────────────────────────────────────────────────────────
 
-# Show the MergeRaptor-owned Dakota lab Check Run for a PR head commit.
-# Usage: just lab-check-status <pr_number>
-lab-check-status pr_number:
+# Show the MergeRaptor-owned lab Check Run for a PR head commit.
+# Usage: just lab-check-status <repo> <pr_number>
+lab-check-status repo pr_number:
     #!/usr/bin/env bash
     set -euo pipefail
-    REPO="projectbluefin/dakota"
+    REPO="projectbluefin/{{ repo }}"
     SHA=$(gh pr view {{ pr_number }} --repo "${REPO}" --json headRefOid --jq .headRefOid)
     gh api --method GET "repos/${REPO}/commits/${SHA}/check-runs" \
         -f per_page=100 \
         --jq '.check_runs[]
-          | select(.name == "testing-lab / dakota" and .app.slug == "mergeraptor")
+          | select(.name == "testing-lab / {{ repo }}" and .app.slug == "mergeraptor")
           | {
               id,
               status,
