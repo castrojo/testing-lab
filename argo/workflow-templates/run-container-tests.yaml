@@ -20,6 +20,14 @@ spec:
     nodeSelector:
       node-role.kubernetes.io/control-plane: "true"
     activeDeadlineSeconds: 3600
+    # Cross-workflow backpressure: this template is referenced by every
+    # container-only QA pipeline, so a template-level semaphore caps total
+    # concurrent runs on ghost without touching VM scheduling policy.
+    synchronization:
+      semaphores:
+      - configMapKeyRef:
+          name: workflow-semaphores
+          key: ghost-container-qa
     inputs:
       parameters:
       - name: image

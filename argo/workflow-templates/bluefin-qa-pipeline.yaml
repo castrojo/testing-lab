@@ -15,7 +15,10 @@ metadata:
 spec:
   serviceAccountName: argo
   parallelism: 2
-  activeDeadlineSeconds: 3600
+  # Generous ceiling because the run-container-tests template now queues behind a
+  # cross-workflow semaphore; the workflow-level deadline must outlive queue wait
+  # plus the 1h per-suite test pod deadline.
+  activeDeadlineSeconds: 14400
   entrypoint: pipeline
   arguments:
     parameters:
