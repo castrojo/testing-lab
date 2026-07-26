@@ -50,18 +50,27 @@ spec:
           enabled: false
         clusterName: ghost
         consoleProject: kubestellar
+        kubeconfig:
+          existingSecret: kubestellar-console-kubeconfig
+          existingSecretKey: kubeconfig
         enabledDashboards: "dashboard,clusters,cluster-admin,deploy,compute,workloads,deployments,pods,services,nodes,events,gitops,helm,operators,security,storage,network"
         extraEnv:
+          - name: XDG_CACHE_HOME
+            value: "/tmp/cache"
+          - name: KUBECTL_CACHE_DIR
+            value: "/tmp/kube-cache"
+          - name: HELM_CACHE_HOME
+            value: "/tmp/helm-cache"
+          - name: DEV_MODE
+            value: "true"
+          - name: ALLOW_DEV_MODE_IN_CLUSTERS
+            value: "true"
           - name: ENABLE_DEMO_DASHBOARDS
             value: "false"
           - name: SHOW_DEMO_TO_LOCAL_CTA
             value: "false"
           - name: DISABLE_DYNAMIC_CARDS
             value: "true"
-          - name: NO_LOCAL_AGENT
-            value: "true"
-          - name: ALLOW_DEV_MODE_IN_CLUSTERS
-            value: "false"
         auth:
           allowedGitHubLogins: castrojo
           adminGitHubLogins: castrojo
