@@ -149,6 +149,7 @@ correctly answers no. The Console reaches wds1 as a registered cluster.
 | Hardware inventory has no PCI, storage, CPU, or kernel features | the cluster lacks Node Feature Discovery labels; keep the pinned `node-feature-discovery` ArgoCD Application healthy and require ready workers plus `feature.node.kubernetes.io/*` labels in acceptance |
 | ArgoCD reports a duplicate-env ComparisonError | `NO_LOCAL_AGENT` was added to `extraEnv`; remove it because chart 0.3.34 emits it |
 | PVC migration hook is ImagePullBackOff on `bitnami/kubectl:latest` | retain the narrowly scoped `kubestellar-console-pvc-migration-image` admission policy; chart 0.3.34 hardcodes the image and offers no values override |
+| `kubestellar-console-pvc-migration-image` stays OutOfSync after a successful sync | keep the API-server defaults (`matchPolicy`, empty selectors, and resource-rule `scope`) explicit in Git so ArgoCD compares the stable stored form |
 | Console continuously syncs and reruns the PVC migration hook | retain the scoped JWT Secret ignore and `RespectIgnoreDifferences=true`; ArgoCD cannot use the chart's live `lookup`, so its random fallback otherwise changes every render |
 | `/api/health` returns "Missing authorization" | expected — auth is enforced; sign in or use a token |
 | Anonymous full access | dev-mode without OAuth config — acceptable ONLY via port-forward, never exposed |
