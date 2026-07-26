@@ -1,0 +1,56 @@
+# Console 0.3.34 hardcodes Docker Hub's bitnami/kubectl:latest in its
+# pre-upgrade PVC migration hook. Replace only that exact upstream image with
+# the pinned, shell-enabled FSDK cluster-ops image before the Job is admitted.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: kubestellar-console-pvc-migration-image
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
+  labels:
+    app.kubernetes.io/part-of: lab
+spec:
+  failurePolicy: Fail
+  reinvocationPolicy: Never
+  matchConstraints:
+    resourceRules:
+      - apiGroups:
+          - batch
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+        resources:
+          - jobs
+  matchConditions:
+    - name: console-migration-job
+      expression: >-
+        request.namespace == "kubestellar-console" &&
+        object.metadata.name == "kubestellar-console-pvc-migration"
+    - name: expected-upstream-container
+      expression: >-
+        object.spec.template.spec.containers.size() == 1 &&
+        object.spec.template.spec.containers[0].name == "migrate-pvcs" &&
+        object.spec.template.spec.containers[0].image == "bitnami/kubectl:latest"
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          [
+            JSONPatch{
+              op: "replace",
+              path: "/spec/template/spec/containers/0/image",
+              value: "ghcr.io/projectbluefin/lab-runner@sha256:fe097bb3b85a126b9a16093fbc498b4b6fb7b24e0f74162ad3d91a402dcfa940"
+            }
+          ]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: kubestellar-console-pvc-migration-image
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
+  labels:
+    app.kubernetes.io/part-of: lab
+spec:
+  policyName: kubestellar-console-pvc-migration-image
