@@ -61,7 +61,9 @@ Grafana, Prometheus Operator, or another cluster dashboard.
   `argo-workflow-controller`, `zot`, `buildbarn`, and the existing
   `kubestellar-*` controller jobs.
 - Zot metrics require `extensions.metrics` in both `zot-cache-config` and
-  `zot-local-config`; both expose `/metrics` on their existing HTTP port.
+  `zot-local-config`; both expose `/metrics` on their existing HTTP port. Bump
+  each workload's `lab.projectbluefin.io/config-version` annotation when either
+  ConfigMap changes because Zot reads the subPath-mounted config only at startup.
 - Argo custom build metrics use only constant `pipeline` and bounded `status`
   labels. Never label metrics with workflow name, UID, commit SHA, image digest,
   ref, or element.
