@@ -59,10 +59,7 @@ Lab-specific values (do not regress these):
   which local-path cannot provision. DB protection belongs to the
   storage/backup ADR (Velero, user-data-only).
 - `service.type: ClusterIP`, `ingress.enabled: false`.
-- `clusterName: ghost`, `consoleProject: kubestellar`, and
-  `kubeconfig.content` — the chart renders a Secret containing a credential-free
-  token-file kubeconfig for the MCP bridge. The config references the projected
-  ServiceAccount token and CA; no credential is committed to Git.
+- `clusterName: ghost` and `consoleProject: kubestellar`.
 - `enabledDashboards: "dashboard,clusters,cluster-admin,deploy,compute,workloads,deployments,pods,services,nodes,events,gitops,helm,operators,security,storage,network"` — restricts the sidebar to supported built-ins useful for local cluster administration. Do not enable demo or local-agent-only surfaces such as `arcade` or `quantum`.
 - `selfUpgrade.enabled: false` and `rbac.resourceQuotasReadOnly: true` — keep
   declarative upgrades and quota changes in Git instead of creating Console
@@ -144,6 +141,7 @@ correctly answers no. The Console reaches wds1 as a registered cluster.
 | Pod Pending, backups PVC Pending | backup re-enabled: its PVC is RWX-hardcoded; keep `backup.enabled: false` |
 | New pod stuck ContainerCreating on upgrade | strategy reverted to RollingUpdate with RWO PVC; keep Recreate |
 | Console shows sample data instead of ghost | remove chart `kubeconfig` values and verify `/health` reports `in_cluster: true`; clear the browser's stale `kc-demo-mode`/auth state once after rollout |
+| Browser reloads `/login` while APIs return `token signature is invalid` | the chart-generated JWT changed while the browser retained stale auth. Clear local-storage keys `token`, `auth_token`, `kc_token`, `kc-auth-token`, `kc-has-session`, and `kc-demo-mode`, plus the `kc_auth` and `kc_ux_ctx` cookies for the Console origin. The v0.3.34 logout request cannot recover because stale auth fails before its CSRF-protected cookie cleanup runs. |
 | ArgoCD reports a duplicate-env ComparisonError | `NO_LOCAL_AGENT` was added to `extraEnv`; remove it because chart 0.3.34 emits it |
 | PVC migration hook is ImagePullBackOff on `bitnami/kubectl:latest` | retain the narrowly scoped `kubestellar-console-pvc-migration-image` admission policy; chart 0.3.34 hardcodes the image and offers no values override |
 | Console continuously syncs and reruns the PVC migration hook | retain the scoped JWT Secret ignore and `RespectIgnoreDifferences=true`; ArgoCD cannot use the chart's live `lookup`, so its random fallback otherwise changes every render |
@@ -172,6 +170,7 @@ correctly answers no. The Console reaches wds1 as a registered cluster.
 - [ ] Demo and dynamic-card environment flags remain disabled
 - [ ] Required CRDs have only `get`, `list`, and `watch` access
 - [ ] No unsupported card JSON/ConfigMap manifests remain
+- [ ] Browser requests do not loop on `401 token signature is invalid`
 - [ ] `just lint` and `git diff --check` pass
 
 ## Sources
