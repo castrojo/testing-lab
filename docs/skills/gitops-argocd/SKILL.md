@@ -127,13 +127,16 @@ names to track resources. Always use a fixed `name:`.
 
 **Exception — intentional runtime-state ConfigMap contract:** If the Git manifest must define an explicit set of runtime keys (for example, to document a lifecycle-state contract with known empty marker keys), scope an `ignoreDifferences` rule to that one ConfigMap and ignore `/data`, then enable `RespectIgnoreDifferences=true` on the Application. This keeps the key contract in git without ArgoCD patching live runtime values back to placeholders.
 
-**Singleton local-path PVC rollout:** When a GitOps-managed singleton Deployment
-moves from `emptyDir` to a `local-path` `ReadWriteOnce` PVC, set its strategy to
-`Recreate` and explicitly set `rollingUpdate: null`; Server-Side Apply otherwise
-retains the old rolling-update field and Kubernetes rejects the strategy change.
-Leave placement to `WaitForFirstConsumer` and the scheduler; do not add a
-hostname selector. Size application retention below PVC capacity so WAL,
-compaction, or other temporary files cannot fill the volume.
+**Singleton local-path PVC rollout:** When an existing Server-Side Apply managed
+Deployment moves from `emptyDir` to a `local-path` `ReadWriteOnce` PVC, keep
+`RollingUpdate` but set `maxSurge: 0` and `maxUnavailable: 1`. Changing the live
+strategy to `Recreate` in one SSA operation retains the old `rollingUpdate`
+field until validation and Kubernetes rejects the update. Zero surge deletes
+the old singleton before creating its replacement, avoiding RWO contention
+without a two-stage migration. Leave placement to `WaitForFirstConsumer` and
+the scheduler; do not add a hostname selector. Size application retention below
+PVC capacity so WAL, compaction, or other temporary files cannot fill the
+volume.
 
 **Subdirectories and namespaces:** `testing-lab-infra` runs with
 `directory.recurse: true` (live-patched 2026-07-25; the Application object is
