@@ -309,6 +309,20 @@ Manual run:
 just run-dakota-publish
 ```
 
+### `zot-candidate-lifecycle`
+
+Reusable single-lane foundation for immutable local Zot candidates. Call the
+`candidate-preflight` template before pushing `candidate-<commit-sha>`; it
+rejects reused tags and fails under Zot storage pressure. After that lane's QA
+passes, call `promote-candidate` with the candidate digest. It pulls the
+manifest back by digest, promotes the same digest to `:testing`, verifies the
+target, and attaches the versioned ORAS promotion evidence contract.
+
+The optional `zot-writer-auth` docker config keeps the template compatible with
+today's anonymous-write registry and becomes required only at the documented
+authentication activation gate. See
+[Zot candidate promotion](../ops/zot-candidate-promotion.md).
+
 ---
 
 ## Catalog installs

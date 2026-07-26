@@ -1,0 +1,308 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: zot-candidate-lifecycle
+  namespace: argo
+  annotations:
+    description: |
+      Reusable single-lane Zot candidate checks and digest-preserving promotion.
+      Candidate tags are immutable commit-derived names. Promotion verifies the
+      pulled-back manifest digest, updates :testing by digest, and attaches OCI
+      promotion evidence. zot-writer-auth is optional until Zot auth activation.
+    bluefin.io/zot-writer-auth-secret-type: kubernetes.io/dockerconfigjson
+    bluefin.io/promotion-evidence-artifact-type: application/vnd.projectbluefin.lab.promotion-evidence.v1+json
+  labels:
+    app.kubernetes.io/component: image-promotion
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  serviceAccountName: argo
+  activeDeadlineSeconds: 3600
+  entrypoint: promote
+  podGC:
+    strategy: OnWorkflowCompletion
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 604800
+  arguments:
+    parameters:
+      - name: lane
+        value: ""
+      - name: repository
+        value: ""
+      - name: candidate-tag
+        value: ""
+      - name: expected-digest
+        value: ""
+
+  templates:
+    - name: promote
+      dag:
+        tasks:
+          - name: promote-candidate
+            template: promote-candidate
+            arguments:
+              parameters:
+                - name: lane
+                  value: "{{workflow.parameters.lane}}"
+                - name: repository
+                  value: "{{workflow.parameters.repository}}"
+                - name: candidate-tag
+                  value: "{{workflow.parameters.candidate-tag}}"
+                - name: expected-digest
+                  value: "{{workflow.parameters.expected-digest}}"
+
+    - name: candidate-preflight
+      inputs:
+        parameters:
+          - name: lane
+          - name: repository
+          - name: candidate-tag
+          - name: min-free-bytes
+            value: "21474836480"
+          - name: min-free-percent
+            value: "10"
+      volumes:
+        - name: registry-data
+          hostPath:
+            path: /var/mnt/ghost-data/zot-local
+            type: Directory
+        - name: work
+          emptyDir: {}
+      nodeSelector:
+        kubernetes.io/hostname: ghost
+      script:
+        image: ghcr.io/oras-project/oras:v1.2.3@sha256:63266a046d1cf5ebebb1461733ed7548148f122e0d422096e177cfa70b521cb1
+        command: ["/bin/sh"]
+        volumeMounts:
+          - name: registry-data
+            mountPath: /registry-data
+            readOnly: true
+          - name: work
+            mountPath: /work
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi
+        env:
+          - name: LANE
+            value: "{{inputs.parameters.lane}}"
+          - name: REPOSITORY
+            value: "{{inputs.parameters.repository}}"
+          - name: CANDIDATE_TAG
+            value: "{{inputs.parameters.candidate-tag}}"
+          - name: MIN_FREE_BYTES
+            value: "{{inputs.parameters.min-free-bytes}}"
+          - name: MIN_FREE_PERCENT
+            value: "{{inputs.parameters.min-free-percent}}"
+          - name: REGISTRY
+            value: "192.168.1.102:30500"
+        source: |
+          set -euo pipefail
+
+          printf '%s' "${LANE}" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' ||
+            { echo "ERROR: invalid lane '${LANE}'" >&2; exit 1; }
+          printf '%s' "${REPOSITORY}" | grep -Eq '^[a-z0-9]+([._/-][a-z0-9]+)*$' ||
+            { echo "ERROR: invalid repository '${REPOSITORY}'" >&2; exit 1; }
+          printf '%s' "${CANDIDATE_TAG}" | grep -Eq '^candidate-([0-9a-f]{40}|[0-9a-f]{64})$' ||
+            { echo "ERROR: candidate tag must be candidate-<40-or-64-lowercase-hex>" >&2; exit 1; }
+          printf '%s' "${MIN_FREE_BYTES}" | grep -Eq '^[0-9]+$' ||
+            { echo "ERROR: minimum free bytes must be an integer" >&2; exit 1; }
+          printf '%s' "${MIN_FREE_PERCENT}" | grep -Eq '^[0-9]+$' ||
+            { echo "ERROR: minimum free percent must be an integer" >&2; exit 1; }
+
+          set -- $(df -Pk /registry-data | awk 'NR == 2 {gsub("%", "", $5); print $2, $4, $5}')
+          CAPACITY_KIB="${1:-}"
+          AVAILABLE_KIB="${2:-}"
+          USED_PERCENT="${3:-}"
+          printf '%s %s %s' "${CAPACITY_KIB}" "${AVAILABLE_KIB}" "${USED_PERCENT}" |
+            grep -Eq '^[0-9]+ [0-9]+ [0-9]+$' ||
+            { echo "ERROR: unable to read Zot filesystem capacity" >&2; exit 1; }
+          AVAILABLE_BYTES=$((AVAILABLE_KIB * 1024))
+          FREE_PERCENT=$((100 - USED_PERCENT))
+          if [ "${AVAILABLE_BYTES}" -lt "${MIN_FREE_BYTES}" ] ||
+             [ "${FREE_PERCENT}" -lt "${MIN_FREE_PERCENT}" ]; then
+            echo "ERROR: Zot storage pressure: available=${AVAILABLE_BYTES}B free=${FREE_PERCENT}%" >&2
+            exit 1
+          fi
+
+          REF="${REGISTRY}/${REPOSITORY}:${CANDIDATE_TAG}"
+          if /bin/oras manifest fetch --plain-http --descriptor "${REF}" >/dev/null 2>/work/inspect.err; then
+            echo "ERROR: immutable candidate already exists: ${REF}" >&2
+            exit 1
+          fi
+          if ! grep -Eqi 'manifest unknown|name unknown|not found|404' /work/inspect.err; then
+            echo "ERROR: candidate existence check failed:" >&2
+            cat /work/inspect.err >&2
+            exit 1
+          fi
+
+          echo "Candidate slot available for lane=${LANE}; Zot free=${FREE_PERCENT}% (${AVAILABLE_BYTES}B)" >&2
+
+    - name: promote-candidate
+      activeDeadlineSeconds: 1800
+      retryStrategy:
+        limit: "2"
+        retryPolicy: Always
+        backoff:
+          duration: "15s"
+          factor: "2"
+          maxDuration: "1m"
+      inputs:
+        parameters:
+          - name: lane
+          - name: repository
+          - name: candidate-tag
+          - name: expected-digest
+      outputs:
+        parameters:
+          - name: promoted-digest
+            valueFrom:
+              path: /work/promoted-digest
+      volumes:
+        - name: zot-auth
+          secret:
+            secretName: zot-writer-auth
+            optional: true
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+        - name: work
+          emptyDir: {}
+      script:
+        image: ghcr.io/oras-project/oras:v1.2.3@sha256:63266a046d1cf5ebebb1461733ed7548148f122e0d422096e177cfa70b521cb1
+        command: ["/bin/sh"]
+        volumeMounts:
+          - name: zot-auth
+            mountPath: /auth
+            readOnly: true
+          - name: work
+            mountPath: /work
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+        env:
+          - name: LANE
+            value: "{{inputs.parameters.lane}}"
+          - name: REPOSITORY
+            value: "{{inputs.parameters.repository}}"
+          - name: CANDIDATE_TAG
+            value: "{{inputs.parameters.candidate-tag}}"
+          - name: EXPECTED_DIGEST
+            value: "{{inputs.parameters.expected-digest}}"
+          - name: WORKFLOW_NAME
+            value: "{{workflow.name}}"
+          - name: REGISTRY
+            value: "192.168.1.102:30500"
+          - name: EVIDENCE_TYPE
+            value: "application/vnd.projectbluefin.lab.promotion-evidence.v1+json"
+        source: |
+          set -euo pipefail
+
+          printf '%s' "${LANE}" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' ||
+            { echo "ERROR: invalid lane '${LANE}'" >&2; exit 1; }
+          printf '%s' "${REPOSITORY}" | grep -Eq '^[a-z0-9]+([._/-][a-z0-9]+)*$' ||
+            { echo "ERROR: invalid repository '${REPOSITORY}'" >&2; exit 1; }
+          printf '%s' "${CANDIDATE_TAG}" | grep -Eq '^candidate-([0-9a-f]{40}|[0-9a-f]{64})$' ||
+            { echo "ERROR: invalid candidate tag '${CANDIDATE_TAG}'" >&2; exit 1; }
+          printf '%s' "${EXPECTED_DIGEST}" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
+            { echo "ERROR: invalid expected digest '${EXPECTED_DIGEST}'" >&2; exit 1; }
+          printf '%s' "${WORKFLOW_NAME}" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' ||
+            { echo "ERROR: invalid workflow name '${WORKFLOW_NAME}'" >&2; exit 1; }
+
+          AUTH_ARGS=""
+          COPY_AUTH_ARGS=""
+          if [ -s /auth/config.json ]; then
+            AUTH_ARGS="--registry-config /auth/config.json"
+            COPY_AUTH_ARGS="--from-registry-config /auth/config.json --to-registry-config /auth/config.json"
+          fi
+
+          CANDIDATE_REF="${REGISTRY}/${REPOSITORY}:${CANDIDATE_TAG}"
+          SUBJECT="${REGISTRY}/${REPOSITORY}@${EXPECTED_DIGEST}"
+          TESTING_REF="${REGISTRY}/${REPOSITORY}:testing"
+          REVISION="${CANDIDATE_TAG#candidate-}"
+
+          /bin/oras manifest fetch \
+            --plain-http \
+            ${AUTH_ARGS} \
+            --descriptor \
+            "${CANDIDATE_REF}" > /work/candidate-descriptor.json
+          RESOLVED_DIGEST=$(sed -n 's/.*"digest":"\([^"]*\)".*/\1/p' /work/candidate-descriptor.json)
+          if [ "${RESOLVED_DIGEST}" != "${EXPECTED_DIGEST}" ]; then
+            echo "ERROR: candidate digest mismatch: expected=${EXPECTED_DIGEST} resolved=${RESOLVED_DIGEST}" >&2
+            exit 1
+          fi
+
+          /bin/oras manifest fetch \
+            --plain-http \
+            ${AUTH_ARGS} \
+            "${SUBJECT}" > /work/pullback-manifest.json
+          PULLBACK_DIGEST="sha256:$(sha256sum /work/pullback-manifest.json | awk '{print $1}')"
+          if [ "${PULLBACK_DIGEST}" != "${EXPECTED_DIGEST}" ]; then
+            echo "ERROR: pull-back digest mismatch: expected=${EXPECTED_DIGEST} pulled=${PULLBACK_DIGEST}" >&2
+            exit 1
+          fi
+
+          /bin/oras cp \
+            --from-plain-http \
+            --to-plain-http \
+            ${COPY_AUTH_ARGS} \
+            --no-tty \
+            "${SUBJECT}" \
+            "${TESTING_REF}"
+
+          /bin/oras manifest fetch \
+            --plain-http \
+            ${AUTH_ARGS} \
+            --descriptor \
+            "${TESTING_REF}" > /work/testing-descriptor.json
+          TESTING_DIGEST=$(sed -n 's/.*"digest":"\([^"]*\)".*/\1/p' /work/testing-descriptor.json)
+          if [ "${TESTING_DIGEST}" != "${EXPECTED_DIGEST}" ]; then
+            echo "ERROR: promotion digest mismatch: expected=${EXPECTED_DIGEST} testing=${TESTING_DIGEST}" >&2
+            exit 1
+          fi
+
+          VERIFIED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          printf '%s\n' \
+            '{' \
+            '  "schemaVersion": 1,' \
+            "  \"lane\": \"${LANE}\"," \
+            "  \"repository\": \"${REPOSITORY}\"," \
+            "  \"candidateTag\": \"${CANDIDATE_TAG}\"," \
+            "  \"subjectDigest\": \"${EXPECTED_DIGEST}\"," \
+            "  \"sourceRevision\": \"${REVISION}\"," \
+            '  "targetTag": "testing",' \
+            "  \"targetDigest\": \"${TESTING_DIGEST}\"," \
+            "  \"pullBackDigest\": \"${PULLBACK_DIGEST}\"," \
+            "  \"workflow\": \"${WORKFLOW_NAME}\"," \
+            "  \"verifiedAt\": \"${VERIFIED_AT}\"" \
+            '}' > /work/promotion-evidence.json
+
+          cd /work
+          /bin/oras attach \
+            --plain-http \
+            ${AUTH_ARGS} \
+            --artifact-type "${EVIDENCE_TYPE}" \
+            --annotation "org.opencontainers.image.revision=${REVISION}" \
+            --annotation "io.projectbluefin.lab.lane=${LANE}" \
+            "${SUBJECT}" \
+            "promotion-evidence.json:application/json" > oras-attach.json
+
+          /bin/oras discover \
+            --plain-http \
+            ${AUTH_ARGS} \
+            --format json \
+            "${SUBJECT}" > oras-discover.json
+          if ! grep -Fq "${EVIDENCE_TYPE}" oras-discover.json; then
+            echo "ERROR: promotion evidence referrer was not discoverable" >&2
+            exit 1
+          fi
+
+          printf '%s' "${TESTING_DIGEST}" > /work/promoted-digest
+          echo "Promoted lane=${LANE} ${CANDIDATE_REF}@${EXPECTED_DIGEST} to ${TESTING_REF}" >&2
