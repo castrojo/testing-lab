@@ -1,0 +1,488 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: github-check-reporter
+  namespace: argo
+  annotations:
+    description: |
+      Sends Bluefin, Bluefin LTS, and Dakota workflow lifecycle updates to the repository_dispatch
+      bridge that creates one detailed MergeRaptor-owned GitHub Check Run. The
+      reporter includes workflow nodes, pod placement, timings, and failure
+      messages, but never copies raw pod logs into GitHub.
+  labels:
+    app.kubernetes.io/component: github-check-reporter
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  serviceAccountName: argo
+  entrypoint: send
+  arguments:
+    parameters:
+      - name: repository
+        value: projectbluefin/bluefin
+      - name: sha
+        value: ""
+      - name: pr-number
+        value: ""
+      - name: state
+        value: queued
+      - name: conclusion
+        value: ""
+      - name: workflow-name
+        value: ""
+      - name: workflow-url
+        value: ""
+      - name: title
+        value: Lab validation
+      - name: summary
+        value: No lab summary was provided.
+      - name: text
+        value: ""
+      - name: started-at
+        value: ""
+      - name: completed-at
+        value: ""
+  templates:
+    - name: send
+      inputs:
+        parameters:
+          - name: repository
+            value: "{{workflow.parameters.repository}}"
+          - name: sha
+            value: "{{workflow.parameters.sha}}"
+          - name: pr-number
+            value: "{{workflow.parameters.pr-number}}"
+          - name: state
+            value: "{{workflow.parameters.state}}"
+          - name: conclusion
+            value: "{{workflow.parameters.conclusion}}"
+          - name: workflow-name
+            value: "{{workflow.parameters.workflow-name}}"
+          - name: workflow-url
+            value: "{{workflow.parameters.workflow-url}}"
+          - name: title
+            value: "{{workflow.parameters.title}}"
+          - name: summary
+            value: "{{workflow.parameters.summary}}"
+          - name: text
+            value: "{{workflow.parameters.text}}"
+          - name: started-at
+            value: "{{workflow.parameters.started-at}}"
+          - name: completed-at
+            value: "{{workflow.parameters.completed-at}}"
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: REPOSITORY
+            value: "{{inputs.parameters.repository}}"
+          - name: SHA
+            value: "{{inputs.parameters.sha}}"
+          - name: PR_NUMBER
+            value: "{{inputs.parameters.pr-number}}"
+          - name: CHECK_STATE
+            value: "{{inputs.parameters.state}}"
+          - name: CONCLUSION
+            value: "{{inputs.parameters.conclusion}}"
+          - name: WORKFLOW_NAME
+            value: "{{inputs.parameters.workflow-name}}"
+          - name: WORKFLOW_URL
+            value: "{{inputs.parameters.workflow-url}}"
+          - name: CHECK_TITLE
+            value: "{{inputs.parameters.title}}"
+          - name: CHECK_SUMMARY
+            value: "{{inputs.parameters.summary}}"
+          - name: CHECK_TEXT
+            value: "{{inputs.parameters.text}}"
+          - name: STARTED_AT
+            value: "{{inputs.parameters.started-at}}"
+          - name: COMPLETED_AT
+            value: "{{inputs.parameters.completed-at}}"
+        source: |
+          set -euo pipefail
+
+          case "${REPOSITORY}" in
+            projectbluefin/bluefin|projectbluefin/bluefin-lts|projectbluefin/dakota) ;;
+            *)
+              echo "Refusing to dispatch a lab check for ${REPOSITORY}" >&2
+              exit 1
+              ;;
+          esac
+          if [[ ! "${SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid commit SHA: ${SHA}" >&2
+            exit 1
+          fi
+          case "${CHECK_STATE}" in
+            queued|in_progress|completed) ;;
+            *)
+              echo "Invalid check state: ${CHECK_STATE}" >&2
+              exit 1
+              ;;
+          esac
+
+          # repository_dispatch accepts a bounded client_payload. Keep the
+          # lifecycle fields nested so the payload remains stable as detail grows.
+          PAYLOAD=$(
+            jq -n \
+              --arg repository "${REPOSITORY}" \
+              --arg sha "${SHA}" \
+              --arg pr_number "${PR_NUMBER}" \
+              --arg state "${CHECK_STATE}" \
+              --arg conclusion "${CONCLUSION}" \
+              --arg external_id "${WORKFLOW_NAME}" \
+              --arg details_url "${WORKFLOW_URL}" \
+              --arg title "${CHECK_TITLE}" \
+              --arg summary "${CHECK_SUMMARY:0:32000}" \
+              --arg text "${CHECK_TEXT:0:24000}" \
+              --arg started_at "${STARTED_AT}" \
+              --arg completed_at "${COMPLETED_AT}" \
+              '{
+                event_type: "lab-check",
+                client_payload: {
+                  repository: $repository,
+                  sha: $sha,
+                  check: {
+                    pr_number: $pr_number,
+                    state: $state,
+                    conclusion: $conclusion,
+                    external_id: $external_id,
+                    details_url: $details_url,
+                    title: $title,
+                    summary: $summary,
+                    text: $text,
+                    started_at: $started_at,
+                    completed_at: $completed_at
+                  }
+                }
+              }'
+          )
+
+          HTTP_CODE=$(
+            curl -sS \
+              -o /tmp/github-response \
+              -w '%{http_code}' \
+              -X POST \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPOSITORY}/dispatches" \
+              --data-binary "${PAYLOAD}"
+          )
+          if [[ "${HTTP_CODE}" != "204" ]]; then
+            echo "GitHub repository_dispatch failed with HTTP ${HTTP_CODE}" >&2
+            cat /tmp/github-response >&2
+            exit 1
+          fi
+
+          echo "Dispatched ${CHECK_STATE} MergeRaptor check update for ${SHA}"
+
+    - name: final
+      inputs:
+        parameters:
+          - name: repository
+          - name: sha
+          - name: pr-number
+          - name: final-status
+          - name: workflow-url
+      steps:
+        - - name: collect
+            template: collect
+            arguments:
+              parameters:
+                - name: repository
+                  value: "{{inputs.parameters.repository}}"
+                - name: sha
+                  value: "{{inputs.parameters.sha}}"
+                - name: pr-number
+                  value: "{{inputs.parameters.pr-number}}"
+                - name: final-status
+                  value: "{{inputs.parameters.final-status}}"
+                - name: workflow-url
+                  value: "{{inputs.parameters.workflow-url}}"
+        - - name: dispatch
+            template: send
+            arguments:
+              parameters:
+                - name: repository
+                  value: "{{inputs.parameters.repository}}"
+                - name: sha
+                  value: "{{inputs.parameters.sha}}"
+                - name: pr-number
+                  value: "{{inputs.parameters.pr-number}}"
+                - name: state
+                  value: completed
+                - name: conclusion
+                  value: "{{steps.collect.outputs.parameters.conclusion}}"
+                - name: workflow-name
+                  value: "{{workflow.name}}"
+                - name: workflow-url
+                  value: "{{inputs.parameters.workflow-url}}"
+                - name: title
+                  value: "{{steps.collect.outputs.parameters.title}}"
+                - name: summary
+                  value: "{{steps.collect.outputs.parameters.summary}}"
+                - name: text
+                  value: "{{steps.collect.outputs.parameters.text}}"
+                - name: started-at
+                  value: "{{steps.collect.outputs.parameters.started-at}}"
+                - name: completed-at
+                  value: "{{steps.collect.outputs.parameters.completed-at}}"
+
+    - name: collect
+      inputs:
+        parameters:
+          - name: repository
+          - name: sha
+          - name: pr-number
+          - name: final-status
+          - name: workflow-url
+      outputs:
+        parameters:
+          - name: conclusion
+            valueFrom:
+              path: /tmp/check/conclusion
+          - name: title
+            valueFrom:
+              path: /tmp/check/title
+          - name: summary
+            valueFrom:
+              path: /tmp/check/summary.md
+          - name: text
+            valueFrom:
+              path: /tmp/check/details.md
+          - name: started-at
+            valueFrom:
+              path: /tmp/check/started-at
+          - name: completed-at
+            valueFrom:
+              path: /tmp/check/completed-at
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        source: |
+          set -euo pipefail
+
+          mkdir -p /tmp/check
+          kubectl get workflow "{{workflow.name}}" \
+            -n "{{workflow.namespace}}" \
+            -o json > /tmp/check/workflow.json
+          kubectl get pods \
+            -n "{{workflow.namespace}}" \
+            -l "workflows.argoproj.io/workflow={{workflow.name}}" \
+            -o json > /tmp/check/pods.json
+
+          FINAL_STATUS="{{inputs.parameters.final-status}}"
+          PRODUCT="{{inputs.parameters.repository}}"
+          PRODUCT="${PRODUCT##*/}"
+          WORKFLOW_MESSAGE=$(jq -r '.status.message // empty' /tmp/check/workflow.json)
+          case "${FINAL_STATUS}" in
+            Succeeded)
+              CONCLUSION=success
+              TITLE="${PRODUCT} lab validation passed"
+              ;;
+            Failed|Error)
+              if [[ "${WORKFLOW_MESSAGE}" == *DeadlineExceeded* ]]; then
+                CONCLUSION=timed_out
+                TITLE="${PRODUCT} lab validation timed out"
+              else
+                CONCLUSION=failure
+                TITLE="${PRODUCT} lab validation failed"
+              fi
+              ;;
+            Stopped|Terminated)
+              CONCLUSION=cancelled
+              TITLE="${PRODUCT} lab validation cancelled"
+              ;;
+            *)
+              CONCLUSION=neutral
+              TITLE="${PRODUCT} lab validation finished: ${FINAL_STATUS}"
+              ;;
+          esac
+          printf '%s' "${CONCLUSION}" > /tmp/check/conclusion
+          printf '%s' "${TITLE}" > /tmp/check/title
+
+          STARTED_AT=$(jq -r '.status.startedAt // .metadata.creationTimestamp' /tmp/check/workflow.json)
+          COMPLETED_AT=$(jq -r '.status.finishedAt // empty' /tmp/check/workflow.json)
+          [[ -n "${COMPLETED_AT}" ]] || COMPLETED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          printf '%s' "${STARTED_AT}" > /tmp/check/started-at
+          printf '%s' "${COMPLETED_AT}" > /tmp/check/completed-at
+
+          to_epoch() {
+            date -u -d "$1" +%s 2>/dev/null || printf '0'
+          }
+          START_EPOCH=$(to_epoch "${STARTED_AT}")
+          END_EPOCH=$(to_epoch "${COMPLETED_AT}")
+          if (( START_EPOCH > 0 && END_EPOCH >= START_EPOCH )); then
+            DURATION_SECONDS=$((END_EPOCH - START_EPOCH))
+          else
+            DURATION_SECONDS=0
+          fi
+
+          escape_markdown() {
+            printf '%s' "$1" \
+              | tr '\n\r\t' '   ' \
+              | sed 's/|/\\|/g' \
+              | cut -c1-500
+          }
+
+          {
+            echo "## ${PRODUCT} lab validation"
+            echo
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Result | \`${FINAL_STATUS}\` |"
+            echo "| Pull request | #{{inputs.parameters.pr-number}} |"
+            echo "| Commit | \`{{inputs.parameters.sha}}\` |"
+            echo "| Workflow | [\`{{workflow.name}}\`]({{inputs.parameters.workflow-url}}) |"
+            echo "| Started | \`${STARTED_AT}\` |"
+            echo "| Finished | \`${COMPLETED_AT}\` |"
+            echo "| Duration | ${DURATION_SECONDS}s |"
+            echo
+            echo "### Requested inputs"
+            echo
+            echo "| Parameter | Value |"
+            echo "|---|---|"
+            jq -r '
+              .spec.arguments.parameters[]?
+              | [.name, (.value // "")]
+              | @tsv
+            ' /tmp/check/workflow.json |
+              while IFS=$'\t' read -r name value; do
+                printf '| `%s` | `%s` |\n' \
+                  "$(escape_markdown "${name}")" \
+                  "$(escape_markdown "${value}")"
+              done
+
+            echo
+            echo "### Phase summary"
+            echo
+            echo "| Phase | Nodes |"
+            echo "|---|---:|"
+            jq -r '
+              [.status.nodes[]? | .phase // "Unknown"]
+              | group_by(.)
+              | map([.[0], length] | @tsv)
+              | .[]
+            ' /tmp/check/workflow.json |
+              while IFS=$'\t' read -r phase count; do
+                printf '| `%s` | %s |\n' "${phase}" "${count}"
+              done
+
+            echo
+            echo "### Pod placement"
+            echo
+            echo "| Pod | Node | Phase | Restarts | Started |"
+            echo "|---|---|---|---:|---|"
+            jq -r '
+              .items
+              | sort_by(.status.startTime // "")
+              | .[]
+              | [
+                  .metadata.name,
+                  (.spec.nodeName // "Pending"),
+                  (.status.phase // "Unknown"),
+                  ([.status.containerStatuses[]?.restartCount] | add // 0),
+                  (.status.startTime // "")
+                ]
+              | @tsv
+            ' /tmp/check/pods.json |
+              while IFS=$'\t' read -r pod node phase restarts started; do
+                printf '| `%s` | `%s` | `%s` | %s | `%s` |\n' \
+                  "$(escape_markdown "${pod}")" \
+                  "$(escape_markdown "${node}")" \
+                  "${phase}" \
+                  "${restarts}" \
+                  "${started}"
+              done
+
+            echo
+            echo "### Workflow nodes"
+            echo
+            echo "| Step | Template | Type | Phase | Duration | Message |"
+            echo "|---|---|---|---|---:|---|"
+            jq -r '
+              [.status.nodes[]?
+                | select(.type == "Pod" or .type == "DAG" or .type == "Steps" or .type == "Retry")
+              ]
+              | sort_by(.startedAt // "", .displayName // "")
+              | .[]
+              | [
+                  (.displayName // .name // ""),
+                  (.templateName // ""),
+                  (.type // ""),
+                  (.phase // "Unknown"),
+                  (.startedAt // ""),
+                  (.finishedAt // ""),
+                  (.message // "")
+                ]
+              | @tsv
+            ' /tmp/check/workflow.json |
+              while IFS=$'\t' read -r step template type phase started finished message; do
+                node_start=$(to_epoch "${started}")
+                node_end=$(to_epoch "${finished}")
+                if (( node_start > 0 && node_end >= node_start )); then
+                  node_duration=$((node_end - node_start))
+                else
+                  node_duration=0
+                fi
+                printf '| `%s` | `%s` | `%s` | `%s` | %ss | %s |\n' \
+                  "$(escape_markdown "${step}")" \
+                  "$(escape_markdown "${template}")" \
+                  "${type}" \
+                  "${phase}" \
+                  "${node_duration}" \
+                  "$(escape_markdown "${message}")"
+              done
+          } > /tmp/check/summary.md
+
+          {
+            echo "## Failure diagnostics"
+            echo
+            failures=$(
+              jq -r '
+                [.status.nodes[]?
+                  | select(.phase == "Failed" or .phase == "Error")
+                  | [
+                      (.displayName // .name // "unknown"),
+                      (.templateName // "unknown"),
+                      (.message // "No failure message was recorded.")
+                    ]
+                  | @tsv
+                ]
+                | .[]
+              ' /tmp/check/workflow.json
+            )
+            if [[ -z "${failures}" ]]; then
+              echo "No failed or errored workflow nodes were recorded."
+            else
+              while IFS=$'\t' read -r step template message; do
+                echo "### $(escape_markdown "${step}")"
+                echo
+                echo "- Template: \`$(escape_markdown "${template}")\`"
+                echo "- Message: $(escape_markdown "${message}")"
+                echo
+              done <<<"${failures}"
+            fi
+
+            echo "## Evidence boundary"
+            echo
+            echo "The check intentionally excludes raw pod logs because workflow logs may contain authenticated API output. Use the linked private Argo workflow for full retained logs."
+          } > /tmp/check/details.md

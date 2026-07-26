@@ -323,7 +323,8 @@ kubectl patch workflow <name> -n argo -p '{"spec":{"shutdown":"Stop"}}' --type=m
 ```
 
 **Dakota lanes and the mutex:** keep the lanes separate.
-- `dakota-commit-poller` → `dakota-build-pipeline` (BuildStream publish lane) is expected to run.
+- `dakota-commit-poller` → `bst-commit-poller` → `dakota-build-pipeline`
+  (BuildStream publish lane) is expected to run.
 - `image-poll-dakota` → `dakota-qa-pipeline` is the active container-only QA lane.
 If mutex contention appears, stop stale failed workflows holding `ghost-heavy-compute`; do not
 blanket-stop all Dakota build-publish runs or suspend the active QA poller.
@@ -343,6 +344,51 @@ obvious to downstream lab jobs.
 
 If the template is retagged, update the dashboard fallback writable-repos list in
 `src/pages/index.astro` and `src/pages/userspace.astro` to match the new repository names.
+
+### 20aa. Report factory PR workflows through one GitHub Check Run
+
+Bluefin, Bluefin LTS, and Dakota PR validation each use one native Check Run
+named `testing-lab / <repository>`, owned by the existing MergeRaptor GitHub
+App. Do not post PR comments or a parallel commit status for the same result.
+
+The auth boundary is deliberate:
+
+1. The lab uses its existing GitHub credential only to send a
+   `repository_dispatch` event to the target repository.
+2. The target repository's `lab-check.yml` mints a short-lived MergeRaptor
+   installation token from the existing GitHub Actions org secrets.
+3. MergeRaptor creates or updates the Check Run for the exact PR head SHA.
+
+Never copy the MergeRaptor private key into Kubernetes. Keep the dispatch
+payload nested and bounded. Include workflow parameters, phase counts,
+pod-to-node placement, node timings, and failure messages. Do not copy raw pod
+logs into GitHub because retained workflow logs may contain authenticated API
+output; link the private Argo workflow instead.
+
+The PR poller must create the Argo workflow before dispatching the queued check.
+If the queued dispatch fails, delete that new workflow so the next five-minute
+poll retries the entire operation, then return success from that PR handler so
+one GitHub API failure does not abort processing the remaining PRs in the poll
+cycle. The generated workflow sends an `in_progress` update at admission and a
+`completed` update from `onExit`.
+
+### 20ab. Bound BuildStream admission before the semaphore queue
+
+The `bst-build` semaphore limits execution to one pipeline, but a semaphore by
+itself permits an unbounded list of waiting workflows. Automated callers must
+also count active workflows labeled `bluefin.io/bst-workload=true` and defer
+when two are already admitted: one may execute while one waits.
+
+The generic PR poller runs at minute `0/5`; Dakota and Cosmic source pollers run
+at minute `2/5` and `4/5`. This staggering makes the count-and-submit guard
+deterministic for automatic traffic. Source pollers must persist a new commit
+SHA only after the referenced build succeeds, so deferred or failed work is
+retried.
+
+MergeRaptor requires `checks: write`. GitHub's Checks endpoints require GitHub
+App authentication; classic PATs and OAuth apps cannot update checks.
+
+> Source: `/websites/github_en_rest` — Check runs and repository dispatch.
 
 ### 20b. Dakota verification: use containerized QA when VM path is blocked
 
@@ -611,4 +657,3 @@ When designing or updating BuildStream compilation pipelines (e.g. `dakota-build
 - **Preferred Node Affinities**: Avoid hard node pinnings (like `nodeSelector: kubernetes.io/hostname: exo-0`) on build templates. Instead, utilize a `preferredDuringSchedulingIgnoredDuringExecution` preferred node affinity targeting the primary build node (e.g., `exo-0` with weight 100) to keep cache locality warm under normal conditions, while enabling the Kubernetes scheduler to gracefully schedule build pods onto other available nodes (such as `exo-1`) when the primary is overloaded or undergoing maintenance. This fully aligns with scheduler-driven placement policies.
 
 ```
-

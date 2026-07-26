@@ -148,7 +148,7 @@ lab/
 │   │   ├── teardown-vm.yaml          delete explicit VM-backed test guests
 │   │   ├── collect-vm-logs.yaml          gather VM journal logs post-test
 │   │   ├── dakota-build-pipeline.yaml   Dakota BST build pipeline (default variant only; NVIDIA disabled)
-│   │   ├── dakota-commit-poller.yaml    Poll dakota:testing commits and trigger BST builds
+│   │   ├── bst-commit-poller.yaml       Shared Dakota/Cosmic commit polling and BST admission
 │   │   ├── dakota-qa-pipeline.yaml      container-only Dakota suite fan-out
 │   │   ├── knuckle-qa-pipeline.yaml     Knuckle installer QA pipeline
 │   │   ├── image-poller.yaml            Digest poller: compare → run-container-tests → publish → persist

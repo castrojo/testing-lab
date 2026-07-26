@@ -1,5 +1,5 @@
-# CronWorkflow: polls projectbluefin org every 5min for PRs labeled test-in-lab.
-# Dispatches matching WorkflowTemplate per repo. Uses GitHub commit status as idempotency lock.
+# CronWorkflow: polls configured projectbluefin repositories every five minutes.
+# Dispatches at most one workflow per PR head SHA through the matching template.
 # Requires: github-token secret in argo namespace (already present).
 apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow

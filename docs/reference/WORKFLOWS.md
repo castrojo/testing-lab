@@ -214,6 +214,41 @@ just run-dakota-validate              # bst show only, ~5 min
 just run-dakota-build                 # default + nvidia variants
 ```
 
+### Factory PR feedback
+
+The active `pr-label-poller` checks every open Bluefin, Bluefin LTS, and Dakota
+PR every five minutes. Bluefin and Bluefin LTS run smoke QA against their
+current `:testing` images; Dakota creates a SHA-pinned BuildStream build and
+container-QA workflow. Feedback is reported through one repository-specific
+Check Run; no PR comment is created.
+
+The check lifecycle is:
+
+```text
+poller creates Argo workflow
+  -> queued Check Run
+  -> workflow admission
+  -> in-progress Check Run
+  -> optional Dakota BuildStream build
+  -> container QA
+  -> onExit collector
+  -> completed Check Run
+```
+
+The final check contains the requested parameters, phase counts, every
+significant workflow node, pod/node placement, timestamps, durations, restart
+counts, and Argo failure messages. Raw pod logs stay in the private Argo UI to
+avoid copying authenticated output into GitHub.
+
+```bash
+just lab-check-status <bluefin|bluefin-lts|dakota> <pr-number>
+```
+
+The Check Run is created by the org-wide MergeRaptor GitHub App. Its private key
+remains in GitHub Actions; Kubernetes sends only `repository_dispatch` payloads.
+Each repository's `lab-check.yml` must exist on its default branch. The app
+installation must grant `checks: write`.
+
 ---
 
 ## Catalog installs

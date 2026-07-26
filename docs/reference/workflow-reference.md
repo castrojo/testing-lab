@@ -68,7 +68,8 @@ bridge that submits Argo Workflows from ephemeral ARC runners, see
   remote-execution configuration before it invokes BuildStream.
 - **Priority:** `priorityClassName: bst-build` keeps the coordinator ahead of
   short-lived lab test workloads.
-- **Who triggers it automatically:** `dakota-commit-poller` (see
+- **Who triggers it automatically:** the `dakota-commit-poller` CronWorkflow
+  through the shared `bst-commit-poller` template (see
   [Cache Warming](#cache-warming-pollers)). The poller resolves the current
   GitHub SHA for `dakota:testing` and passes that exact commit into the local
   BuildStream run, so the lab build checks out the same source revision that
@@ -169,7 +170,8 @@ must fail for repair; it must not use an Ethernet, local, or cache-only fallback
 
 | CronWorkflow | Interval | Triggers | Keeps warm |
 | --- | --- | --- | --- |
-| `dakota-commit-poller` | 5 min | `dakota-build-pipeline` when `dakota:testing` gets a new commit digest | the shared Buildbarn cache/execution path for the Dakota BuildStream layer |
+| `dakota-commit-poller` | every 5 min at minute +2 | shared `bst-commit-poller` → `dakota-build-pipeline` when `dakota:testing` changes | Dakota BuildStream cache/execution path |
+| `cosmic-commit-poller` | every 5 min at minute +4 | shared `bst-commit-poller` → `cosmic-build-pipeline` when `cosmic-build-meta:main` changes | Cosmic BuildStream cache/execution path |
 | `image-poll-bluefin-{testing,stable}` / `image-poll-lts-{testing,stable}` | 10 min | `image-poller` when the respective GHCR tag digest changes | Bluefin/LTS container-only QA freshness plus result publication |
 | `image-poll-snosi-latest` | 30 min past every 3 hours | `bluefin-qa-pipeline` when `ghcr.io/frostyard/snow:latest` changes | Snosi GNOME desktop image coverage |
 | `flatcar-kernel-poller` | 10 min | `flatcar-kernel-build` when kernel.org's latest stable version changes | Flatcar kernel build cache |
@@ -186,17 +188,16 @@ other BST lane.
 
 **`nightly-dakota` does not warm anything** — it's wired to `dakota-qa-pipeline`
 (test runner against pre-built images), not `dakota-build-pipeline` (the actual
-compile step). The real dakota cache-warming trigger is `dakota-commit-poller`. It must not be
+compile step). The real Dakota cache-warming trigger is `dakota-commit-poller`. It must not be
 interpreted as proof of a green distributed build: the poller succeeds only when
 the remote BuildStream workflow, image export, registry push, and configured
 validation path succeed.
 
-All bluefin/lts image pollers plus `dakota-commit-poller`/
-`flatcar-kernel-poller`/`flatcar-kernel-gate` were briefly suspended (2026-06-28
-through 2026-07-02) while a real bug was fixed in the poller arguments. Fixed
-in commit `be045b12` with a regression test (`tests/unit/test_workflow_defaults.py`),
-then re-enabled after confirming the digest-comparison path and downstream
-container-only QA held under repeated runs.
+The Dakota and Cosmic commit CronWorkflows share one implementation. It compares
+the source SHA, defers when two BST workflows are already admitted, invokes the
+repository-specific build template, and writes the SHA only after that build
+succeeds. The schedules are staggered behind the PR poller to avoid simultaneous
+admission bursts.
 
 **Current contract:** `image-poller` must not update `image-polling-digests`
 until `run-pipeline.Succeeded`. If the digest is written before QA passes, the
