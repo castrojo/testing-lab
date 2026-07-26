@@ -16,6 +16,7 @@ spec:
   serviceAccountName: argo
   activeDeadlineSeconds: 14400
   entrypoint: publish-all
+  onExit: publish-run-history
   podGC:
     strategy: OnWorkflowCompletion
   ttlStrategy:
@@ -177,6 +178,107 @@ spec:
           fi
 
           echo "Published ${DESTINATION_REF}@${DESTINATION_DIGEST}" >&2
+
+    - name: publish-run-history
+      volumes:
+        - name: ghcr-auth
+          secret:
+            secretName: ghcr-publish-auth
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+        - name: history-work
+          emptyDir: {}
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        volumeMounts:
+          - name: ghcr-auth
+            mountPath: /auth
+            readOnly: true
+          - name: history-work
+            mountPath: /workspace
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: WORKFLOW_NAME
+            value: "{{workflow.name}}"
+          - name: WORKFLOW_STATUS
+            value: "{{workflow.status}}"
+          - name: STARTED_AT
+            value: "{{workflow.creationTimestamp.RFC3339}}"
+        source: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "ERROR: Dakota publish history persistence failed (exit ${rc})" >&2; exit "${rc}"' ERR
+
+          AUTH_FILE=/auth/config.json
+          DESTINATION_REF=ghcr.io/projectbluefin/dakota:testing
+          FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          RUN_URL="http://192.168.1.102:2746/workflows/argo/${WORKFLOW_NAME}"
+          RECORD=/workspace/run.json
+
+          if [ "${WORKFLOW_STATUS}" = Succeeded ]; then
+            ORAS_VERSION=1.2.3
+            mkdir -p /workspace/oras-bin
+            curl -sSfL \
+              "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" \
+              | tar xz -C /workspace/oras-bin oras
+            DIGEST=$(/workspace/oras-bin/oras manifest fetch \
+              --descriptor \
+              --registry-config "${AUTH_FILE}" \
+              "${DESTINATION_REF}" | jq -r '.digest')
+            jq -n \
+              --arg workflow_name "${WORKFLOW_NAME}" \
+              --arg started_at "${STARTED_AT}" \
+              --arg finished_at "${FINISHED_AT}" \
+              --arg run_url "${RUN_URL}" \
+              --arg digest "${DIGEST}" \
+              '{
+                kind: "publish",
+                workflow_name: $workflow_name,
+                status: "passed",
+                started_at: $started_at,
+                finished_at: $finished_at,
+                run_url: $run_url,
+                digest: $digest
+              }' > "${RECORD}"
+          else
+            jq -n \
+              --arg workflow_name "${WORKFLOW_NAME}" \
+              --arg started_at "${STARTED_AT}" \
+              --arg finished_at "${FINISHED_AT}" \
+              --arg run_url "${RUN_URL}" \
+              '{
+                kind: "publish",
+                workflow_name: $workflow_name,
+                status: "failed",
+                started_at: $started_at,
+                finished_at: $finished_at,
+                run_url: $run_url,
+                failure_class: "publish",
+                failure_stage: "publish-pipeline"
+              }' > "${RECORD}"
+          fi
+
+          curl -sSfL \
+            https://raw.githubusercontent.com/projectbluefin/lab/main/scripts/publish_dakota_run.py \
+            -o /workspace/publish_dakota_run.py
+          python3 /workspace/publish_dakota_run.py publish "${RECORD}" --work-dir /workspace
+
+          trap - ERR
+          echo "Dakota publish history persisted for ${WORKFLOW_NAME}" >&2
 
     - name: verify-lane-results
       inputs:

@@ -303,6 +303,14 @@ recursively when present. No referrers, an unsupported discovery API, or a
 missing ORAS binary is logged explicitly and does not invalidate the image
 copy; a failed copy of discovered referrers fails that lane.
 
+The root `onExit` handler writes one compact `kind=publish` record through
+`scripts/publish_dakota_run.py`. A passed record carries the verified primary
+`dakota:testing` digest; because the workflow succeeds only when both Dakota
+lanes succeed, that record represents the aggregate publication run. Failed
+runs persist a normalized `publish` failure without raw logs. History
+persistence is mandatory: a fetch, validation, commit, or push failure remains
+visible as a failed exit-handler node and is never swallowed.
+
 Manual run:
 
 ```bash

@@ -266,6 +266,19 @@ oras cp --recursive --from-plain-http \
   "${SOURCE}@${DIGEST}" "${DESTINATION}:testing"
 ```
 
+For durable run history, attach a root `onExit` template and pass
+`{{workflow.status}}`, `{{workflow.name}}`, and
+`{{workflow.creationTimestamp.RFC3339}}` through environment variables. Build a
+compact record with `jq`, then invoke the validated publisher CLI. Do not append
+`|| true`: persistence is part of the workflow contract, so an exit-handler
+failure must remain visible and make an otherwise successful run fail. Never
+put the GitHub token in a clone URL or command argument; expose it only as
+`GITHUB_TOKEN` from a Secret and let the CLI's `GIT_ASKPASS` path consume it.
+
+> Source: Context7 `/argoproj/argo-workflows` exit-handler and global-variable
+> documentation. Exit handlers always run and receive the terminal workflow
+> status; `workflow.creationTimestamp.RFC3339` is available in the exit handler.
+
 ### 18. `when` condition trap — never reference a Skipped task's outputs
 
 **Verified against Context7 `/argoproj/argo-workflows` enhanced-depends-logic docs:**
