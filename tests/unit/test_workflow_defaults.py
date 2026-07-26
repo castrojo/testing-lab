@@ -55,11 +55,8 @@ def test_dakota_requires_distributed_capacity_matched_execution():
 
 
 def test_bst_pipelines_require_fresh_usb4_backed_remote_execution():
-    # Cosmic and bluefin-server remain strictly distributed and must gate on a
-    # fresh USB4 link observation. Dakota is the user-facing production lane:
-    # it publishes through the proven local path while the distributed
-    # template is retained for recovery, so it is exempt from the strict gate.
     for filename in (
+        "dakota-build-pipeline.yaml",
         "cosmic-build-pipeline.yaml",
         "bluefin-server-build-pipeline.yaml",
     ):
@@ -76,17 +73,15 @@ def test_bst_pipelines_require_fresh_usb4_backed_remote_execution():
         assert "name: bst-build-local" not in pipeline
 
 
-def test_dakota_production_lane_publishes_through_local_path():
+def test_dakota_production_lane_has_no_local_fallback():
     pipeline = (ROOT / "argo/workflow-templates/dakota-build-pipeline.yaml").read_text(
         encoding="utf-8"
     )
 
-    # The production DAG routes through the distributed remote-execution builder;
-    # local publisher remains available for recovery.
     assert "template: run-bst-step" in pipeline
-    assert "name: bst-build-local" in pipeline
     assert "name: bst-build-re" in pipeline
-    assert "DAKOTA PUBLISHED" in pipeline
+    assert "name: bst-build-local" not in pipeline
+    assert "template: bst-build-local" not in pipeline
 
 
 def test_usb4_monitor_publishes_a_fresh_observation_on_every_probe():
@@ -194,4 +189,12 @@ def test_dakota_build_pipeline_includes_non_blocking_nvidia_variant():
     assert "name: build-bluefin-nvidia" in dakota
     assert "oci/bluefin-nvidia.bst" in dakota
     assert "tag\n                  value: \"dakota-nvidia\"" in dakota
-    assert "continueOn:" in dakota
+    default_task = dakota.split("- name: build-bluefin", 1)[1].split(
+        "- name: build-bluefin-nvidia", 1
+    )[0]
+    assert "template: run-bst-step-nonblocking" in dakota
+    nonblocking = dakota.split("- name: run-bst-step-nonblocking", 1)[1].split(
+        "- name: bst-build-re", 1
+    )[0]
+    assert "continueOn:" in nonblocking
+    assert "continueOn:" not in default_task
