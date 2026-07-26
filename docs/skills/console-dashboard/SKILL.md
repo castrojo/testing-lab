@@ -67,7 +67,10 @@ Lab-specific values (do not regress these):
 - `selfUpgrade.enabled: false` and `rbac.resourceQuotasReadOnly: true` — keep
   declarative upgrades and quota changes in Git instead of creating Console
   mutations that ArgoCD immediately reverts.
-- `extraEnv`: `ENABLE_DEMO_DASHBOARDS: "false"`, `SHOW_DEMO_TO_LOCAL_CTA: "false"`, `DISABLE_DYNAMIC_CARDS: "true"` — disables demo fallback data and dynamic cards. Chart 0.3.34 already emits `NO_LOCAL_AGENT`; adding it here creates a duplicate environment variable and an ArgoCD ComparisonError.
+- Do not configure `kubeconfig.content` for the single-cluster install. Chart
+  0.3.34 sets `KUBECONFIG` when it is present, which makes `/health` report
+  `in_cluster: false` and routes cards to local-agent/demo fallbacks instead of
+  the pod ServiceAccount-backed API.
 
 ## Exposure and auth policy (locked, ADR-0003)
 
@@ -140,7 +143,7 @@ correctly answers no. The Console reaches wds1 as a registered cluster.
 |---|---|
 | Pod Pending, backups PVC Pending | backup re-enabled: its PVC is RWX-hardcoded; keep `backup.enabled: false` |
 | New pod stuck ContainerCreating on upgrade | strategy reverted to RollingUpdate with RWO PVC; keep Recreate |
-| MCP bridge initialization times out | rendered kubeconfig Secret is absent or not mounted; verify `/app/.kube/config` uses the projected ServiceAccount token and CA paths |
+| Console shows sample data instead of ghost | remove chart `kubeconfig` values and verify `/health` reports `in_cluster: true`; clear the browser's stale `kc-demo-mode`/auth state once after rollout |
 | ArgoCD reports a duplicate-env ComparisonError | `NO_LOCAL_AGENT` was added to `extraEnv`; remove it because chart 0.3.34 emits it |
 | PVC migration hook is ImagePullBackOff on `bitnami/kubectl:latest` | retain the narrowly scoped `kubestellar-console-pvc-migration-image` admission policy; chart 0.3.34 hardcodes the image and offers no values override |
 | Console continuously syncs and reruns the PVC migration hook | retain the scoped JWT Secret ignore and `RespectIgnoreDifferences=true`; ArgoCD cannot use the chart's live `lookup`, so its random fallback otherwise changes every render |

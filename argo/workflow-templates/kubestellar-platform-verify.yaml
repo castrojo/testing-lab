@@ -145,34 +145,21 @@ spec:
             exit 1
           fi
 
-          secret_volume=$(jq -r '
-            first(.spec.template.spec.volumes[]? |
-              select(.secret.secretName == "kubestellar-console-kubeconfig") |
-              .name) // empty
-          ' <<<"$deployment")
-          [ -n "$secret_volume" ] || {
-            echo "FAIL: Console Deployment does not mount the kubeconfig Secret" >&2
-            exit 1
-          }
-          mount_path=$(jq -r --arg volume "$secret_volume" '
-            first(.spec.template.spec.containers[]?.volumeMounts[]? |
-              select(.name == $volume) | .mountPath) // empty
-          ' <<<"$deployment")
           kubeconfig_path=$(jq -r '
             first(.spec.template.spec.containers[]?.env[]? |
               select(.name == "KUBECONFIG") | .value) // empty
           ' <<<"$deployment")
-          [ -n "$mount_path" ] &&
-            [[ "$kubeconfig_path" == "$mount_path/"* ]] || {
-              echo "FAIL: Console KUBECONFIG does not point into its Secret mount" >&2
-              exit 1
-            }
+          [ -z "$kubeconfig_path" ] || {
+            echo "FAIL: Console KUBECONFIG disables in-cluster data mode" >&2
+            exit 1
+          }
 
           health=$(kubectl get --raw \
             '/api/v1/namespaces/kubestellar-console/services/http:kubestellar-console:8080/proxy/health')
           jq -e '
             .status == "ok" and
             .project == "kubestellar" and
+            .in_cluster == true and
             .no_local_agent == true and
             (.enabled_dashboards | index("cluster-admin")) != null and
             (.enabled_dashboards | index("deploy")) != null and
@@ -191,17 +178,11 @@ spec:
             -o jsonpath='{.status.startTime}')
           console_logs=$(kubectl logs -n kubestellar-console "$console_pod" \
             --since-time="$pod_started")
-          bridge_state=$(grep -E \
-            'MCP bridge (started successfully|not available)' \
-            <<<"$console_logs" | tail -1 || true)
-          if [[ "$bridge_state" != *'MCP bridge started successfully'* ]] ||
-             grep -q 'bridge ListClusters failed.*ops client not available' \
-               <<<"$console_logs"; then
-            echo "FAIL: Console MCP bridge is unavailable" >&2
-            printf '%s\n' "$bridge_state" >&2
+          if ! grep -q 'Using in-cluster config' <<<"$console_logs"; then
+            echo "FAIL: Console did not initialize its in-cluster Kubernetes client" >&2
             exit 1
           fi
-          echo "OK ArgoCD ownership, Console health, dashboards, and MCP wiring"
+          echo "OK ArgoCD ownership, Console health, dashboards, and live cluster wiring"
 
     - name: verify-query-surfaces
       serviceAccountName: kubestellar-observability
