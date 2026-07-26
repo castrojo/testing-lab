@@ -344,6 +344,38 @@ obvious to downstream lab jobs.
 If the template is retagged, update the dashboard fallback writable-repos list in
 `src/pages/index.astro` and `src/pages/userspace.astro` to match the new repository names.
 
+### 20aa. Report Dakota PR workflows through one GitHub Check Run
+
+Dakota PR validation uses one native Check Run named
+`testing-lab / dakota`, owned by the existing MergeRaptor GitHub App. Do not
+post PR comments or a parallel commit status for the same result.
+
+The auth boundary is deliberate:
+
+1. The lab uses its existing GitHub credential only to send a
+   `repository_dispatch` event to `projectbluefin/dakota`.
+2. Dakota's `lab-check.yml` mints a short-lived MergeRaptor installation token
+   from the existing GitHub Actions org secrets.
+3. MergeRaptor creates or updates the Check Run for the exact PR head SHA.
+
+Never copy the MergeRaptor private key into Kubernetes. Keep the dispatch
+payload nested and bounded. Include workflow parameters, phase counts,
+pod-to-node placement, node timings, and failure messages. Do not copy raw pod
+logs into GitHub because retained workflow logs may contain authenticated API
+output; link the private Argo workflow instead.
+
+The PR poller must create the Argo workflow before dispatching the queued check.
+If the queued dispatch fails, delete that new workflow so the next five-minute
+poll retries the entire operation, then return success from that PR handler so
+one GitHub API failure does not abort processing the remaining PRs in the poll
+cycle. The generated Dakota workflow sends an `in_progress` update at admission
+and a `completed` update from `onExit`.
+
+MergeRaptor requires `checks: write`. GitHub's Checks endpoints require GitHub
+App authentication; classic PATs and OAuth apps cannot update checks.
+
+> Source: `/websites/github_en_rest` — Check runs and repository dispatch.
+
 ### 20b. Dakota verification: use containerized QA when VM path is blocked
 
 Dakota images are built from a composefs-oci backend that declares `bootloader = "systemd"` but
@@ -611,4 +643,3 @@ When designing or updating BuildStream compilation pipelines (e.g. `dakota-build
 - **Preferred Node Affinities**: Avoid hard node pinnings (like `nodeSelector: kubernetes.io/hostname: exo-0`) on build templates. Instead, utilize a `preferredDuringSchedulingIgnoredDuringExecution` preferred node affinity targeting the primary build node (e.g., `exo-0` with weight 100) to keep cache locality warm under normal conditions, while enabling the Kubernetes scheduler to gracefully schedule build pods onto other available nodes (such as `exo-1`) when the primary is overloaded or undergoing maintenance. This fully aligns with scheduler-driven placement policies.
 
 ```
-

@@ -223,30 +223,27 @@ run-kernel-args:
 
 # ── Dakota BST builds ────────────────────────────────────────────────────────
 
-# Report lab build result as a GitHub commit status (updates in-place, no comment spam).
-# Posting to the same context always overwrites the previous result — one indicator, ever.
-# Also syncs lab:pass / lab:fail labels on the PR.
-# Usage: just lab-report <pr_number> <pass|fail> <argo_workflow_name>
-lab-report pr_number status workflow:
+# Show the MergeRaptor-owned Dakota lab Check Run for a PR head commit.
+# Usage: just lab-check-status <pr_number>
+lab-check-status pr_number:
     #!/usr/bin/env bash
     set -euo pipefail
     REPO="projectbluefin/dakota"
     SHA=$(gh pr view {{ pr_number }} --repo "${REPO}" --json headRefOid --jq .headRefOid)
-    if [ "{{ status }}" = "pass" ]; then
-        STATE=success; LABEL="lab:pass"; REMOVE="lab:fail"
-        DESC="BST build passed ({{ workflow }})"
-    else
-        STATE=failure; LABEL="lab:fail"; REMOVE="lab:pass"
-        DESC="BST build failed ({{ workflow }})"
-    fi
-    gh api "repos/${REPO}/statuses/${SHA}" \
-        --method POST \
-        --field state="${STATE}" \
-        --field description="${DESC}" \
-        --field context="testing-lab / bst-build" \
-        --field target_url="http://192.168.1.102:2746/workflows/argo/{{ workflow }}"
-    gh pr edit {{ pr_number }} --repo "${REPO}" \
-        --add-label "${LABEL}" --remove-label "${REMOVE}" 2>/dev/null || true
+    gh api --method GET "repos/${REPO}/commits/${SHA}/check-runs" \
+        -f per_page=100 \
+        --jq '.check_runs[]
+          | select(.name == "testing-lab / dakota" and .app.slug == "mergeraptor")
+          | {
+              id,
+              status,
+              conclusion,
+              started_at,
+              completed_at,
+              details_url,
+              title: .output.title,
+              summary: .output.summary
+            }'
 
 # Run Dakota BST pipeline (default bluefin variant only; NVIDIA disabled)
 # Usage: just run-bst-build

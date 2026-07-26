@@ -9,6 +9,7 @@ metadata:
   context7-sources:
     - /argoproj/argo-workflows
     - /kubernetes/website
+    - /websites/github_en_rest
 ---
 
 # Argo Workflows — lab Skill
