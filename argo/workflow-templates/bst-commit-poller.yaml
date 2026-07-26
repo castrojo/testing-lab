@@ -26,6 +26,8 @@ spec:
       - name: repo
       - name: branch
       - name: state-key
+      - name: force
+        value: "false"
       - name: registry
         value: "192.168.1.102:30500"
 
@@ -60,6 +62,8 @@ spec:
               parameters:
                 - name: sha
                   value: "{{tasks.check-sha.outputs.parameters.sha}}"
+                - name: expected-sha
+                  value: "{{tasks.check-sha.outputs.parameters.stored-sha}}"
 
     - name: poll-cosmic
       dag:
@@ -89,6 +93,8 @@ spec:
               parameters:
                 - name: sha
                   value: "{{tasks.check-sha.outputs.parameters.sha}}"
+                - name: expected-sha
+                  value: "{{tasks.check-sha.outputs.parameters.stored-sha}}"
 
     - name: check-sha
       outputs:
@@ -99,6 +105,9 @@ spec:
           - name: sha
             valueFrom:
               path: /tmp/sha
+          - name: stored-sha
+            valueFrom:
+              path: /tmp/stored-sha
       script:
         image: ghcr.io/projectbluefin/lab-runner:latest
         command: [bash]
@@ -121,6 +130,12 @@ spec:
           REPO="{{workflow.parameters.repo}}"
           BRANCH="{{workflow.parameters.branch}}"
           KEY="{{workflow.parameters.state-key}}"
+          FORCE="{{workflow.parameters.force}}"
+
+          if [[ "${FORCE}" != "true" && "${FORCE}" != "false" ]]; then
+            echo "force must be true or false" >&2
+            exit 1
+          fi
 
           REMOTE=$(
             curl -sf \
@@ -137,10 +152,11 @@ spec:
 
           STORED=$(kubectl get configmap image-polling-digests \
             -n argo -o jsonpath="{.data.${KEY}}" 2>/dev/null || true)
+          printf '%s' "${STORED}" > /tmp/stored-sha
           echo "Remote SHA: ${REMOTE}" >&2
           echo "Stored SHA: ${STORED:-<none>}" >&2
 
-          if [[ "${REMOTE}" == "${STORED}" ]]; then
+          if [[ "${FORCE}" == "false" && "${REMOTE}" == "${STORED}" ]]; then
             echo "false" > /tmp/changed
             exit 0
           fi
@@ -157,13 +173,18 @@ spec:
             exit 0
           fi
 
-          echo "Commit changed and BST queue has capacity (${ACTIVE}/2 admitted)" >&2
+          if [[ "${FORCE}" == "true" ]]; then
+            echo "Forced rebuild requested; BST queue has capacity (${ACTIVE}/2 admitted)" >&2
+          else
+            echo "Commit changed and BST queue has capacity (${ACTIVE}/2 admitted)" >&2
+          fi
           echo "true" > /tmp/changed
 
     - name: update-sha
       inputs:
         parameters:
           - name: sha
+          - name: expected-sha
       script:
         image: cgr.dev/chainguard/kubectl:latest-dev
         command: [bash]
@@ -178,6 +199,18 @@ spec:
           set -euo pipefail
           KEY="{{workflow.parameters.state-key}}"
           SHA="{{inputs.parameters.sha}}"
+          EXPECTED="{{inputs.parameters.expected-sha}}"
+          STORED=$(kubectl get configmap image-polling-digests \
+            -n argo -o jsonpath="{.data.${KEY}}" 2>/dev/null || true)
+
+          if [[ "${STORED}" != "${EXPECTED}" ]]; then
+            echo "State changed since admission (expected '${EXPECTED}', found '${STORED}'); skipping stale write." >&2
+            exit 0
+          fi
+
+          echo "Persisting successful SHA for ${KEY}: ${SHA}" >&2
           kubectl patch configmap image-polling-digests \
             -n argo --type merge \
-            -p "{\"data\":{\"${KEY}\":\"${SHA}\"}}"
+            -p "{\"data\":{\"${KEY}\":\"${SHA}\"}}" 2>/dev/null \
+            || kubectl create configmap image-polling-digests \
+                 -n argo --from-literal="${KEY}=${SHA}"
