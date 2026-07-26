@@ -21,8 +21,8 @@ def test_prometheus_uses_bounded_local_path_storage_and_retention():
     assert pvc["spec"]["accessModes"] == ["ReadWriteOnce"]
     assert pvc["spec"]["resources"]["requests"]["storage"] == "50Gi"
     assert deployment["spec"]["strategy"] == {
-        "type": "Recreate",
-        "rollingUpdate": None,
+        "type": "RollingUpdate",
+        "rollingUpdate": {"maxSurge": 0, "maxUnavailable": 1},
     }
     assert "--storage.tsdb.retention.time=30d" in container["args"]
     assert "--storage.tsdb.retention.size=45GB" in container["args"]

@@ -53,8 +53,9 @@ metadata:
 service. Keep it as a single `ClusterIP` deployment: do not add an ingress,
 Grafana, Prometheus Operator, or another cluster dashboard.
 
-- Storage is a `local-path` RWO PVC. The Deployment uses `Recreate` so two pods
-  never contend for the node-local volume.
+- Storage is a `local-path` RWO PVC. The Deployment uses zero-surge rolling
+  updates (`maxSurge: 0`, `maxUnavailable: 1`) so two pods never contend for
+  the node-local volume.
 - The PVC is 50Gi; Prometheus keeps at most 30 days or 45GB, whichever limit is
   reached first. The remaining space is headroom for WAL and compaction.
 - Required scrape jobs are `kubernetes-nodes`, `kubernetes-cadvisor`,
