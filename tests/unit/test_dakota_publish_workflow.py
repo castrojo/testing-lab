@@ -45,6 +45,7 @@ def test_publish_lane_preserves_and_verifies_digest_without_logging_credentials(
     assert lane["retryStrategy"]["limit"] == "2"
     assert lane["retryStrategy"]["retryPolicy"] == "Always"
     assert lane["retryStrategy"]["backoff"]["maxDuration"] == "2m"
+    assert lane["script"]["image"].startswith("quay.io/skopeo/stable@sha256:")
     assert secret["secretName"] == "ghcr-publish-auth"
     assert secret["items"][0]["key"] == ".dockerconfigjson"
     assert (
@@ -66,9 +67,11 @@ def test_publish_lane_handles_oci_referrers_explicitly():
     assert "oras discover" in source
     assert "oras cp" in source
     assert "--recursive" in source
+    assert "ORAS_VERSION=1.2.3" in source
+    assert "oras_${ORAS_VERSION}_linux_amd64.tar.gz" in source
     assert "OCI referrers: none present" in source
     assert "OCI referrers: discovery unavailable" in source
-    assert "OCI referrers: ORAS unavailable" in source
+    assert "OCI referrers: ORAS bootstrap unavailable" in source
 
 
 def test_nightly_publish_schedule_and_manual_entrypoint():
