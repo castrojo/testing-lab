@@ -421,8 +421,21 @@ def main():
         return summary
 
     # --- Open bugs ---
-    with open('/tmp/bugs-raw.json') as f:
-        raw = json.load(f)
+    raw = []
+    if Path('/tmp/bugs-raw.json').exists():
+        try:
+            with open('/tmp/bugs-raw.json') as f:
+                raw = json.load(f)
+        except Exception as e:
+            print(f"Warning loading /tmp/bugs-raw.json: {e}")
+    else:
+        # Fallback to gh CLI if available
+        try:
+            gh_out = run_cmd("gh issue list --repo projectbluefin/lab --state open --json number,title,url,createdAt --limit 50")
+            if gh_out:
+                raw = json.loads(gh_out)
+        except Exception:
+            pass
 
     existing = {b['number']: b for b in stats.get('open_bugs', [])}
     bugs = []

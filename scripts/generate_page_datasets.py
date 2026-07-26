@@ -1455,8 +1455,8 @@ def main() -> int:
     warn_if_surface_drifted_from_testsuite(root)
     
     # Run GitOps dashboard collector scripts (same dir, so importable directly)
-    import refresh_gitops_stats, collect_app_resources, check_gitops_policy
-    for collector in (refresh_gitops_stats, collect_app_resources, check_gitops_policy):
+    import refresh_gitops_stats, collect_app_resources, check_gitops_policy, refresh_factory_stats
+    for collector in (refresh_gitops_stats, collect_app_resources, check_gitops_policy, refresh_factory_stats):
         try:
             collector.main()
         except Exception as exc:  # match old subprocess check=False behavior
