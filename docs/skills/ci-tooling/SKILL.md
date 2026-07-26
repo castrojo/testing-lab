@@ -8,6 +8,7 @@ metadata:
   context7-sources:
     - /websites/github_en_actions
     - /websites/github_en_rest
+    - /websites/git-scm
     - /tailscale/tailscale
 ---
 
@@ -55,8 +56,9 @@ metadata:
 21. **Use a dedicated CI-only Tailscale tailnet to bridge GitHub-hosted runners into the homelab only for best-effort seeding jobs**, never for required product gates. The production tailnet must remain separate. Pin `tailscale/github-action` to a SHA, use an OAuth client scoped to `auth_keys` write and a dedicated tag (e.g. `tag:ci-cache-seeder`), and start the runner with `--accept-routes=false --ssh=false`. Tag the runner hostname deterministically so Ghost can push to it via MagicDNS. Authenticate each seed request with a short-lived signed JWT and verify it on Ghost together with the Tailscale peer tag via `tailscale whois`. Keep the upstream cache signing key on the runner only; Ghost pushes artifacts to the runner's local cache unsigned, and the runner alone signs and pushes to the upstream cache. Wrap every seeding step and the whole job in `continue-on-error: true`, set explicit `timeout-minutes`, and run teardown with `if: always()` so any Tailscale, network, or cache failure leaves the parent workflow green.
 22. **Use ARC container mode (`type: kubernetes`) to keep the runner controller small while heavy work runs in separate cluster pods.** Each workflow job must declare a `container:` image. Offload CPU/memory-intensive work (BST builds, large container builds) to existing Argo WorkflowTemplates via `argo submit --from workflowtemplate/<name> --wait` rather than running it directly in the small step container. Grant the runner service account only the RBAC it needs to create and watch workflows in the target namespace.
 23. **Route maintainers to `/docs/ops/maintainer-onboarding.md` for runner access.** The org `ghost-runners` scale set is bound to `https://github.com/projectbluefin` and cannot serve personal repos. A maintainer who wants `ghost-runners` on a personal repo must install the `bluefin-ghost-arc` GitHub App on their personal account and create a second scale set (`ghost-runners-personal`) with a different `githubConfigUrl` and installation secret.
-24. **Accumulate run-level history as git-tracked rolling NDJSON** when a page needs trends over time. Store the file under `docs/data/history/<name>.ndjson`, one JSON object per line. Append only terminal runs, deduplicate by `(plane, run_id)`, prune lines older than the maintainer-chosen retention window, and keep the schema stable (include null placeholders for fields that sources do not yet export).
+24. **Accumulate run-level history as git-tracked rolling NDJSON** when a page needs trends over time. Store the file under `docs/data/history/<name>.ndjson`, one JSON object per line. Append only terminal runs, deduplicate by the producer's stable run identity (`workflow_name` for Argo; `(plane, run_id)` for generic collectors), prune lines older than the maintainer-chosen retention window, and keep the schema stable (include null placeholders for fields that sources do not yet export).
 25. **Required pull-request checks must also trigger on merge groups.** Add `merge_group: {types: [checks_requested]}` beside `pull_request` for every workflow named in a branch ruleset's `required_status_checks`; a `pull_request` trigger alone leaves queued entries waiting forever because merge-queue refs do not emit ordinary pull-request events. Source: `/websites/github_en_actions`.
+26. **Git-mutating workflow publishers must keep tokens out of URLs and argv.** Use a credential-free HTTPS remote plus `GIT_ASKPASS`/`GIT_TERMINAL_PROMPT=0`, with the token supplied only through the process environment. If an append-only history push loses a race, fetch/reset a disposable clone to the latest remote branch and replay the validated append before retrying; never force-push or resolve the NDJSON conflict with `-X ours`, because either can discard a concurrent record. Source: `/websites/git-scm`.
 
 ## Common Rationalizations
 
@@ -94,6 +96,7 @@ metadata:
 - A maintainer tries to use `runs-on: ghost-runners` from a personal repo instead of creating a separate `ghost-runners-personal` scale set with a personal GitHub App installation.
 - A personal-repo scale set reuses the org's `githubConfigUrl: https://github.com/projectbluefin` or the org's installation secret.
 - A ruleset requires a check whose workflow has no `merge_group` trigger; queued PRs remain in `AWAITING_CHECKS` with no merge-group workflow run.
+- A workflow embeds a token in its clone URL/command arguments, force-pushes generated history, or uses `-X ours` on append-only NDJSON.
 
 ## Verification
 
@@ -128,3 +131,4 @@ metadata:
 - [ ] A personal-repo scale set uses a different `githubConfigUrl` and a different GitHub App installation secret from the org scale set.
 - [ ] Every required status check has a workflow trigger for `merge_group` with `types: [checks_requested]`.
 - [ ] `/docs/ops/maintainer-onboarding.md` is referenced from any skill or ops doc that discusses ARC runner access.
+- [ ] Git publishers use credential-free remotes plus non-interactive credential helpers, and replay append-only updates from the latest remote state after a push race.

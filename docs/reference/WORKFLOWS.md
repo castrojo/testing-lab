@@ -214,6 +214,40 @@ just run-dakota-validate              # bst show only, ~5 min
 just run-dakota-build                 # default + nvidia variants
 ```
 
+### Dakota durable build/publish records
+
+`scripts/publish_dakota_run.py` is the workflow-independent producer for
+`docs/data/history/build-runs.ndjson`. Future build and publish onExit templates
+write one compact JSON object and call:
+
+```bash
+python3 scripts/publish_dakota_run.py publish /workspace/run.json
+```
+
+The token is read only from `GITHUB_TOKEN`; never pass it as a command argument
+or place it in a clone URL. The publisher clones with a credential-free GitHub
+URL, authenticates through `GIT_ASKPASS`, retries non-fast-forward pushes from
+the latest `main`, and deletes its working clone. It persists no raw output.
+
+Required input fields are `kind` (`build` or `publish`), `workflow_name`,
+terminal `status`, `started_at`, `finished_at`, and a credential-free
+`run_url`. Successful publish records also require `digest`. Optional
+`commit_sha`, `failure_stage`, short `failure_hint`, `failure_class`, `attempt`,
+and numeric `metrics` are validated; `failure_hint` is used only to derive a
+normalized failure class and is discarded.
+
+Local contract checks and trailing-window comparisons use:
+
+```bash
+just validate-dakota-history
+just report-dakota-history 20
+```
+
+Reports compare the latest window with the immediately preceding window for
+duration p50/p95, failure rate, and same-commit status disagreement. Workflow
+wiring remains owned by the build and publish templates; this script does not
+change their DAGs.
+
 ### Factory PR feedback
 
 The active `pr-label-poller` checks every open Bluefin, Bluefin LTS, and Dakota

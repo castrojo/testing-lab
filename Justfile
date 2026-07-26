@@ -290,6 +290,15 @@ run-dakota-publish:
     argo submit --from workflowtemplate/dakota-publish-pipeline \
       -n {{ argo_ns }} --watch
 
+# Validate canonical Dakota build/publish history records.
+validate-dakota-history:
+    python3 scripts/publish_dakota_run.py validate-history
+
+# Compare the latest Dakota build/publish runs with the preceding window.
+# Usage: just report-dakota-history 20
+report-dakota-history window="20":
+    python3 scripts/publish_dakota_run.py report --window {{ window }}
+
 # Run the in-cluster BuildStream build pipeline for bluefin-server
 # Usage: just run-bluefin-server-build
 run-bluefin-server-build ref="main" repo="https://github.com/projectbluefin/server.git":
