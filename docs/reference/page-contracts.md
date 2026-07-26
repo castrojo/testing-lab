@@ -279,30 +279,41 @@ Dedup key: `(variant, branch, suite, workflow_name)`.
 
 ### `docs/data/history/build-runs.ndjson`
 
-One line per terminal build run.
+One line per terminal build or publish run.
 
 Producer: `scripts/collect_factory_builds.py` for `plane=publish` (GitHub Actions
 runs of `projectbluefin/{bluefin,bluefin-lts,dakota}`) and
 `scripts/collect_lab_builds.py` for `plane=lab` (Argo pipeline build runs).
+Dakota Argo onExit integrations use `scripts/publish_dakota_run.py`; the script
+is independently usable before those workflow templates are wired.
 
 Consumer: `/builds` page, index build-duration sparklines, release-verdict build
 input.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
+| `schema_version` | string | `1.0` for canonical Dakota records |
 | `recorded_at` | ISO8601 | When the history line was recorded |
 | `plane` | `"publish"` or `"lab"` | `publish` for upstream GHA builds; `lab` for Argo pipeline runs |
+| `record_type` | `"build"` or `"publish"` | Dakota operation recorded by the workflow |
 | `repo` | string | Source repository (`projectbluefin/bluefin`, ...) |
 | `lane` | string | Lane id (`bluefin-testing`, ...) |
 | `run_id` | string | Unique run identifier from the producing system |
+| `workflow_name` | string | Argo workflow name; canonical Dakota deduplication key |
 | `status` | `"passed"` or `"failed"` | Terminal build status |
 | `started_at` | ISO8601 | Build start time |
 | `finished_at` | ISO8601 | Build end time |
 | `duration_min` | number | Duration in minutes |
 | `run_url` | string | Canonical run URL |
 | `failure_stage` | string or null | Failed stage name when `status` is `failed` |
+| `failure_class` | string or null | Normalized failure class; never a raw log excerpt |
+| `commit_sha` | string or null | Dakota source commit for retry/flakiness comparisons |
+| `digest` | string or null | Published or built OCI digest when known |
+| `metrics` | object | Bounded numeric metrics only; strings/logs/secrets are rejected |
+| `attempt` | integer | Workflow attempt number, starting at 1 |
 
-Dedup key: `(plane, run_id)`.
+Dedup key: `workflow_name` for schema `1.0` Dakota records; `(plane, run_id)` for
+other collectors.
 
 ### `docs/data/history/cve-summary.ndjson`
 
