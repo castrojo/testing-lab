@@ -9,7 +9,8 @@ metadata:
       the NVIDIA variant in parallel using the shared Buildbarn frontend.
       BuildStream driver pods use node-local persistent cache directories on ghost/exo-0.
       Triggered by push to dakota:testing via the dakota-commit-poller CronWorkflow.
-      On success, exports to local Zot (:30500) as dakota:testing and dakota-nvidia:testing.
+      On success, exports to local Zot (:30500) as dakota:<image-tag> and
+      dakota-nvidia:<image-tag> (default "testing").
       NVIDIA builds run with continueOn (non-blocking) as the lab does not have GPU
       hardware to test NVIDIA runtime execution.
       Uses bst-build PriorityClass.
@@ -33,6 +34,8 @@ spec:
         value: "testing"
       - name: commit-sha
         value: ""
+      - name: image-tag
+        value: "testing"
       - name: registry
         value: "192.168.1.102:30500"
       - name: build-mode
@@ -56,6 +59,8 @@ spec:
             value: "{{workflow.parameters.ref}}"
           - name: commit-sha
             value: "{{workflow.parameters.commit-sha}}"
+          - name: image-tag
+            value: "{{workflow.parameters.image-tag}}"
           - name: repo
             value: "{{workflow.parameters.repo}}"
           - name: registry
@@ -87,6 +92,8 @@ spec:
                   value: "{{inputs.parameters.ref}}"
                 - name: commit-sha
                   value: "{{inputs.parameters.commit-sha}}"
+                - name: image-tag
+                  value: "{{inputs.parameters.image-tag}}"
                 - name: repo
                   value: "{{inputs.parameters.repo}}"
                 - name: registry
@@ -108,6 +115,8 @@ spec:
                   value: "{{inputs.parameters.ref}}"
                 - name: commit-sha
                   value: "{{inputs.parameters.commit-sha}}"
+                - name: image-tag
+                  value: "{{inputs.parameters.image-tag}}"
                 - name: repo
                   value: "{{inputs.parameters.repo}}"
                 - name: registry
@@ -149,6 +158,7 @@ spec:
           - name: tag
           - name: ref
           - name: commit-sha
+          - name: image-tag
           - name: repo
           - name: registry
           - name: mode
@@ -170,6 +180,8 @@ spec:
                   value: "{{inputs.parameters.ref}}"
                 - name: commit-sha
                   value: "{{inputs.parameters.commit-sha}}"
+                - name: image-tag
+                  value: "{{inputs.parameters.image-tag}}"
                 - name: repo
                   value: "{{inputs.parameters.repo}}"
                 - name: registry
@@ -187,6 +199,8 @@ spec:
                   value: "{{inputs.parameters.ref}}"
                 - name: commit-sha
                   value: "{{inputs.parameters.commit-sha}}"
+                - name: image-tag
+                  value: "{{inputs.parameters.image-tag}}"
                 - name: repo
                   value: "{{inputs.parameters.repo}}"
                 - name: registry
@@ -211,6 +225,7 @@ spec:
         parameters:
           - name: ref
           - name: commit-sha
+          - name: image-tag
           - name: repo
           - name: registry
       volumes:
@@ -249,6 +264,7 @@ spec:
           set -euo pipefail
           ELEMENT=oci/bluefin.bst
           REGISTRY="{{inputs.parameters.registry}}"
+          IMAGE_TAG="{{inputs.parameters.image-tag}}"
           rm -rf /src
           git clone --depth=1 "{{inputs.parameters.repo}}" /src
           cd /src
@@ -286,13 +302,13 @@ spec:
           rm -rf "${EXPORT_DIR}" && mkdir -p "${EXPORT_DIR}"
           bst --config /tmp/buildstream-local.conf --no-interactive artifact checkout "${ELEMENT}" --directory "${EXPORT_DIR}"
           if command -v skopeo >/dev/null 2>&1; then
-            skopeo copy --dest-tls-verify=false "oci:${EXPORT_DIR}" "docker://${REGISTRY}/dakota:testing"
+            skopeo copy --dest-tls-verify=false "oci:${EXPORT_DIR}" "docker://${REGISTRY}/dakota:${IMAGE_TAG}"
           else
             IMAGE_ID=$(podman pull "oci:${EXPORT_DIR}" | tail -1)
-            podman tag "${IMAGE_ID}" "${REGISTRY}/dakota:testing"
-            podman push "${REGISTRY}/dakota:testing" --tls-verify=false
+            podman tag "${IMAGE_ID}" "${REGISTRY}/dakota:${IMAGE_TAG}"
+            podman push "${REGISTRY}/dakota:${IMAGE_TAG}" --tls-verify=false
           fi
-          echo "=== DAKOTA PUBLISHED: ${REGISTRY}/dakota:testing ==="
+          echo "=== DAKOTA PUBLISHED: ${REGISTRY}/dakota:${IMAGE_TAG} ==="
 
     - name: bst-build-re
       affinity:
@@ -325,6 +341,7 @@ spec:
           - name: tag
           - name: ref
           - name: commit-sha
+          - name: image-tag
           - name: repo
           - name: registry
           - name: mode
@@ -390,6 +407,7 @@ spec:
           BST_CONF=/tmp/buildstream-cluster.conf
           ELEMENT="{{inputs.parameters.element}}"
           TAG="{{inputs.parameters.tag}}"
+          IMAGE_TAG="{{inputs.parameters.image-tag}}"
           REF="{{inputs.parameters.ref}}"
           REPO="{{inputs.parameters.repo}}"
           mkdir -p "${XDG_CACHE_HOME}"
@@ -525,11 +543,11 @@ spec:
 
           echo "=== Pushing to local Zot ==="
           if command -v skopeo >/dev/null 2>&1; then
-            skopeo copy --dest-tls-verify=false "oci:${EXPORT_DIR}" "docker://{{inputs.parameters.registry}}/${TAG}:testing"
+            skopeo copy --dest-tls-verify=false "oci:${EXPORT_DIR}" "docker://{{inputs.parameters.registry}}/${TAG}:${IMAGE_TAG}"
           else
             IMAGE_ID=$(podman pull "oci:${EXPORT_DIR}" | tail -1)
-            podman push "${IMAGE_ID}" "docker://{{inputs.parameters.registry}}/${TAG}:testing" --tls-verify=false
+            podman push "${IMAGE_ID}" "docker://{{inputs.parameters.registry}}/${TAG}:${IMAGE_TAG}" --tls-verify=false
             podman rmi "${IMAGE_ID}" 2>/dev/null || true
           fi
 
-          echo "=== Build complete: {{inputs.parameters.registry}}/${TAG}:testing ==="
+          echo "=== Build complete: {{inputs.parameters.registry}}/${TAG}:${IMAGE_TAG} ==="
