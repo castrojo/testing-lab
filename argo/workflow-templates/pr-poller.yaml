@@ -111,12 +111,8 @@ spec:
 
            # Route to matching WorkflowTemplate + derive per-repo params
            case "$REPO" in
-            */dakota)       TMPL="dakota-qa-pipeline"
-                            EXTRA_PARAMS="
-               - name: testsuite-branch
-                 value: ${TESTSUITE_BRANCH}
-               - name: testsuite-repo
-                 value: ${TESTSUITE_REPO}" ;;
+            */dakota)       TMPL="dakota-build-qa"
+                            EXTRA_PARAMS="" ;;
             */knuckle)      TMPL="knuckle-qa-pipeline"
                             EXTRA_PARAMS="" ;;
             */bazzite)      TMPL="bluefin-qa-pipeline"
@@ -186,7 +182,70 @@ spec:
                  value: ${TESTSUITE_REPO}" ;;
            esac
 
-           kubectl create -f - <<EOF
+           if [[ "$TMPL" == "dakota-build-qa" ]]; then
+             kubectl create -f - <<EOF
+          apiVersion: argoproj.io/v1alpha1
+          kind: Workflow
+          metadata:
+           generateName: "${REPO_SLUG}-${PR_NUM}-${TITLE_SLUG}-"
+           namespace: argo
+           labels:
+             bluefin.io/trigger: pr-auto
+             bluefin.io/pr-number: "${PR_NUM}"
+             bluefin.io/pr-sha: "${SHA12}"
+          spec:
+           serviceAccountName: argo
+           activeDeadlineSeconds: 90000
+           entrypoint: pr-pipeline
+           arguments:
+             parameters:
+               - name: image
+                 value: "192.168.1.102:30500/dakota"
+               - name: image-tag
+                 value: "${SHA}"
+               - name: suites
+                 value: "smoke,common,developer,software,system"
+               - name: variant
+                 value: "dakota"
+               - name: branch
+                 value: "${BRANCH}"
+               - name: testsuite-branch
+                 value: "${TESTSUITE_BRANCH}"
+               - name: testsuite-repo
+                 value: "${TESTSUITE_REPO}"
+           templates:
+             - name: pr-pipeline
+               dag:
+                 tasks:
+                   - name: build
+                     templateRef:
+                       name: dakota-build-pipeline
+                       template: build
+                     arguments:
+                       parameters:
+                         - name: ref
+                           value: "testing"
+                         - name: commit-sha
+                           value: "${SHA}"
+                         - name: repo
+                           value: "https://github.com/${REPO}.git"
+                         - name: registry
+                           value: "192.168.1.102:30500"
+                         - name: image-tag
+                           value: "${SHA}"
+                         - name: build-mode
+                           value: "re"
+                         - name: lock-key
+                           value: "bst-build"
+                   - name: qa
+                     depends: "build.Succeeded"
+                     templateRef:
+                       name: dakota-qa-pipeline
+                       template: pipeline
+          EOF
+             echo "PR #${PR_NUM} ${REPO}: dispatched dakota build+qa pipeline for ${SHA12}" >&2
+           else
+             kubectl create -f - <<EOF
           apiVersion: argoproj.io/v1alpha1
           kind: Workflow
           metadata:
@@ -210,7 +269,8 @@ spec:
                - name: pr-number
                  value: "${PR_NUM}"${EXTRA_PARAMS}
           EOF
-           echo "PR #${PR_NUM} ${REPO}: dispatched ${TMPL}" >&2
+             echo "PR #${PR_NUM} ${REPO}: dispatched ${TMPL}" >&2
+           fi
            (( DISPATCHED++ )) || true
           }
 

@@ -51,8 +51,11 @@ bridge that submits Argo Workflows from ephemeral ARC runners, see
 
 ### dakota-build-pipeline
 - **Purpose:** The actual BuildStream compile step for Dakota — builds
-  `oci/bluefin.bst` and pushes the default image to the local Zot registry. NVIDIA
-  variants are intentionally disabled for clean distributed builds.
+  `oci/bluefin.bst` and pushes the image to the local Zot registry under the tag
+  given by `image-tag` (default `testing`). NVIDIA variants are built
+  non-blocking and pushed with the same tag.
+- **Parameters:** `repo`, `ref`, `commit-sha`, `image-tag` (default `testing`),
+  `registry`, `build-mode`, `lock-key`.
 - **Distribution:** `build-mode=re` is mandatory. A fresh USB4 `up` observation
   and a Ready BuildBarn worker are required on both `ghost` and `exo-0` before
   admission. Cache-only, Ethernet-backed, automatic fallback, runner-local
@@ -70,6 +73,9 @@ bridge that submits Argo Workflows from ephemeral ARC runners, see
   GitHub SHA for `dakota:testing` and passes that exact commit into the local
   BuildStream run, so the lab build checks out the same source revision that
   GitHub is building instead of drifting to a later branch tip.
+- **PR path:** `pr-poller` dispatches a combined build+QA workflow for Dakota PRs
+  that builds the exact PR head SHA and tags the resulting image with that SHA
+  before running the container QA suites against it.
 
 **Distributed-gate rule:** A Dakota PR build is valid only when a fresh
 `build-mode=re` run completes for the exact PR head SHA and its pushed registry

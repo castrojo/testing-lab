@@ -130,6 +130,15 @@ spec:
         IMG_SLUG="${VARIANT}-${IMAGE_TAG}"
 
         # Resolve the digest of the target OCI image for digest-pinned QA evidence.
+        # Local Zot and other insecure registries need explicit TLS verification off.
+        SKOPEO_TLS_ARGS=()
+        PODMAN_PULL_TLS_ARGS=()
+        case "${IMAGE%%/*}" in
+          192.168.1.102:*|localhost:*|127.0.0.1:*)
+            SKOPEO_TLS_ARGS=(--tls-verify=false)
+            PODMAN_PULL_TLS_ARGS=(--tls-verify=false)
+            ;;
+        esac
         if ! command -v skopeo >/dev/null 2>&1; then
           echo "skopeo not found; installing for digest resolution..." >&2
           dnf install -y skopeo >/dev/null 2>&1 || true
@@ -140,7 +149,7 @@ spec:
           if [[ -n "${GITHUB_TOKEN:-}" ]]; then
             SKOPEO_ARGS+=(--creds "_token:${GITHUB_TOKEN}")
           fi
-          DIGEST=$(skopeo inspect "${SKOPEO_ARGS[@]}" --no-tags --format '{{.Digest}}' "docker://${IMAGE}" 2>/dev/null || true)
+          DIGEST=$(skopeo inspect "${SKOPEO_TLS_ARGS[@]}" "${SKOPEO_ARGS[@]}" --no-tags --format '{{.Digest}}' "docker://${IMAGE}" 2>/dev/null || true)
         fi
         if [[ -z "${DIGEST:-}" ]]; then
           echo "Warning: could not resolve digest for ${IMAGE}; result will still be published but may fall back to tag-based matching." >&2
@@ -163,6 +172,9 @@ spec:
           exit 1
         }
         mkdir -p /tmp/results
+        if [[ "${#PODMAN_PULL_TLS_ARGS[@]}" -gt 0 ]]; then
+          podman pull "${PODMAN_PULL_TLS_ARGS[@]}" "${IMAGE}" >/dev/null
+        fi
         podman run --detach --systemd=always --network host --privileged \
           --cgroupns=host \
           --security-opt seccomp=unconfined \
