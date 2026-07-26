@@ -77,8 +77,6 @@ spec:
               parameters:
                 - name: build-mode
                   value: "{{inputs.parameters.build-mode}}"
-          # ponytail: use the proven local publish path for the user-facing Dakota lane;
-          # distributed RE remains available below for recovery experiments, but must not block releases.
           - name: build-bluefin
             template: run-bst-step
             depends: detect-build-mode
@@ -103,7 +101,7 @@ spec:
                 - name: lock-key
                   value: "{{inputs.parameters.lock-key}}"
           - name: build-bluefin-nvidia
-            template: run-bst-step
+            template: run-bst-step-nonblocking
             depends: detect-build-mode
             arguments:
               parameters:
@@ -148,7 +146,38 @@ spec:
             memory: 128Mi
         source: |
           set -euo pipefail
-          # The production Dakota lane uses the distributed BuildStream remote-execution builder.
+          REQUESTED="{{inputs.parameters.build-mode}}"
+          if [[ "${REQUESTED}" != "re" ]]; then
+            echo "Dakota build-mode '${REQUESTED}' is forbidden; only distributed mode ('re') is permitted" >&2
+            exit 1
+          fi
+
+          MAX_AGE_SECONDS=60
+          NOW="$(date -u +%s)"
+          for NODE in ghost exo-0; do
+            LINK="$(kubectl get node "${NODE}" -o jsonpath='{.metadata.annotations.lab\.projectbluefin\.io/usb4-link}')"
+            OBSERVED_AT="$(kubectl get node "${NODE}" -o jsonpath='{.metadata.annotations.lab\.projectbluefin\.io/usb4-link-observed-at}')"
+            READY="$(kubectl get node "${NODE}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')"
+
+            if [[ "${LINK}" != "up" || ! "${OBSERVED_AT}" =~ ^[0-9]+$ || "${READY}" != "True" ]]; then
+              echo "USB4 BuildBarn gate rejected ${NODE}: link=${LINK:-missing} observed-at=${OBSERVED_AT:-missing} ready=${READY:-unknown}" >&2
+              exit 1
+            fi
+            if (( NOW - OBSERVED_AT > MAX_AGE_SECONDS )); then
+              echo "USB4 BuildBarn gate rejected ${NODE}: observation is stale ($((NOW - OBSERVED_AT))s old)" >&2
+              exit 1
+            fi
+          done
+
+          WORKERS="$(kubectl get pods -n buildbarn -l app=worker -o jsonpath='{range .items[*]}{.spec.nodeName}{"|"}{.status.phase}{"|"}{.status.containerStatuses[*].ready}{"\n"}{end}')"
+          for NODE in ghost exo-0; do
+            if ! grep -Eq "^${NODE}\|Running\|true true$" <<<"${WORKERS}"; then
+              echo "USB4 BuildBarn gate rejected: no Ready worker on ${NODE}" >&2
+              exit 1
+            fi
+          done
+
+          echo "USB4-backed BuildBarn remote execution admitted"
           printf '%s' re > /tmp/mode
 
     - name: run-bst-step
@@ -168,6 +197,43 @@ spec:
           - name: bst-re
             template: bst-build-re
             when: "'{{inputs.parameters.mode}}' == 're'"
+            arguments:
+              parameters:
+                - name: element
+                  value: "{{inputs.parameters.element}}"
+                - name: tag
+                  value: "{{inputs.parameters.tag}}"
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: commit-sha
+                  value: "{{inputs.parameters.commit-sha}}"
+                - name: image-tag
+                  value: "{{inputs.parameters.image-tag}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: mode
+                  value: "{{inputs.parameters.mode}}"
+                - name: lock-key
+                  value: "{{inputs.parameters.lock-key}}"
+
+    - name: run-bst-step-nonblocking
+      inputs:
+        parameters:
+          - name: element
+          - name: tag
+          - name: ref
+          - name: commit-sha
+          - name: image-tag
+          - name: repo
+          - name: registry
+          - name: mode
+          - name: lock-key
+      dag:
+        tasks:
+          - name: run-bst-step
+            template: run-bst-step
             continueOn:
               failed: true
             arguments:
@@ -190,125 +256,6 @@ spec:
                   value: "{{inputs.parameters.mode}}"
                 - name: lock-key
                   value: "{{inputs.parameters.lock-key}}"
-          - name: bst-local
-            template: bst-build-local
-            when: "'{{inputs.parameters.mode}}' == 'local'"
-            arguments:
-              parameters:
-                - name: ref
-                  value: "{{inputs.parameters.ref}}"
-                - name: commit-sha
-                  value: "{{inputs.parameters.commit-sha}}"
-                - name: image-tag
-                  value: "{{inputs.parameters.image-tag}}"
-                - name: repo
-                  value: "{{inputs.parameters.repo}}"
-                - name: registry
-                  value: "{{inputs.parameters.registry}}"
-
-
-    # Proven local publish path. The distributed path above is retained for recovery,
-    # but it has repeatedly failed after admission with BuildStream exit 255.
-    - name: bst-build-local
-      affinity:
-        nodeAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              preference:
-                matchExpressions:
-                  - key: kubernetes.io/hostname
-                    operator: In
-                    values:
-                      - exo-0
-      activeDeadlineSeconds: 43200
-      inputs:
-        parameters:
-          - name: ref
-          - name: commit-sha
-          - name: image-tag
-          - name: repo
-          - name: registry
-      volumes:
-        - name: fuse
-          hostPath:
-            path: /dev/fuse
-        - name: cache
-          hostPath:
-            path: /var/lib/dakota/buildstream-cache
-            type: DirectoryOrCreate
-      script:
-        image: "{{inputs.parameters.registry}}/bst2:64eb0b4930d57a92710822898fb73af6cc1ae35d"
-        command: [bash]
-        securityContext:
-          privileged: true
-          seLinuxOptions:
-            type: spc_t
-        env:
-          - name: XDG_CACHE_HOME
-            value: /root/.cache/dakota-local
-        resources:
-          requests:
-            cpu: "16"
-            memory: 16Gi
-            ephemeral-storage: 10Gi
-          limits:
-            cpu: "32"
-            memory: 32Gi
-            ephemeral-storage: 50Gi
-        volumeMounts:
-          - name: fuse
-            mountPath: /dev/fuse
-          - name: cache
-            mountPath: /root/.cache
-        source: |
-          set -euo pipefail
-          ELEMENT=oci/bluefin.bst
-          REGISTRY="{{inputs.parameters.registry}}"
-          IMAGE_TAG="{{inputs.parameters.image-tag}}"
-          rm -rf /src
-          git clone --depth=1 "{{inputs.parameters.repo}}" /src
-          cd /src
-          git fetch --depth=1 origin "{{inputs.parameters.commit-sha}}"
-          git checkout --detach "{{inputs.parameters.commit-sha}}"
-          sed -i 's#https://gitlab.gnome.org/GNOME/gnome-build-meta.git#https://github.com/GNOME/gnome-build-meta.git#g' elements/gnome-build-meta.bst
-          PROJECT_NAME=$(awk -F': *' '/^name:/{print $2; exit}' project.conf | tr -d '\r')
-          cat > /tmp/buildstream-local.conf <<EOF
-          scheduler:
-            network-retries: 8
-            fetchers: 8
-            builders: 4
-            pushers: 2
-          build:
-            max-jobs: 16
-          projects:
-            ${PROJECT_NAME}:
-              artifacts:
-                override-project-caches: true
-                servers:
-                - url: https://gbm.gnome.org:11003
-                  push: false
-                - url: https://cache.freedesktop-sdk.io:11001
-                  push: false
-              source-caches:
-                override-project-caches: true
-                servers:
-                - url: https://gbm.gnome.org:11003
-                  push: false
-                - url: https://cache.freedesktop-sdk.io:11001
-                  push: false
-          EOF
-          bst --config /tmp/buildstream-local.conf --no-interactive --max-jobs 16 --fetchers 8 build "${ELEMENT}"
-          EXPORT_DIR=/tmp/export-bluefin
-          rm -rf "${EXPORT_DIR}" && mkdir -p "${EXPORT_DIR}"
-          bst --config /tmp/buildstream-local.conf --no-interactive artifact checkout "${ELEMENT}" --directory "${EXPORT_DIR}"
-          if command -v skopeo >/dev/null 2>&1; then
-            skopeo copy --dest-tls-verify=false "oci:${EXPORT_DIR}" "docker://${REGISTRY}/dakota:${IMAGE_TAG}"
-          else
-            IMAGE_ID=$(podman pull "oci:${EXPORT_DIR}" | tail -1)
-            podman tag "${IMAGE_ID}" "${REGISTRY}/dakota:${IMAGE_TAG}"
-            podman push "${REGISTRY}/dakota:${IMAGE_TAG}" --tls-verify=false
-          fi
-          echo "=== DAKOTA PUBLISHED: ${REGISTRY}/dakota:${IMAGE_TAG} ==="
 
     - name: bst-build-re
       affinity:
@@ -518,12 +465,7 @@ spec:
           fi
           echo "=== Verified BuildStream remote execution configuration ==="
 
-          echo "=== Preloading locally published bootc artifact ==="
-          # The local builder and this driver share XDG_CACHE_HOME and the
-          # BuildStream project rewrite, so the published bootc artifact uses
-          # the same cache identity and is available without a RE rebuild.
-          echo "=== Verified published bootc digest: a22be5c2 ==="
-          echo "=== Building ${ELEMENT} with bootc preloaded ==="
+          echo "=== Building ${ELEMENT} through BuildBarn remote execution ==="
           bst --config "${BST_CONF}" \
               --no-interactive \
               --max-jobs 24 \
