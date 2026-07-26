@@ -16,6 +16,8 @@
 #                        total requested memory below the 95% pressure threshold.
 #                        VMs are still scheduled natively and must not use this
 #                        semaphore (see docs/skills/argo-workflows/patterns.md).
+#   dakota-publish      — Serializes Zot-to-GHCR Dakota publication workflows
+#                        while both image lanes run independently inside one slot.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -27,3 +29,4 @@ data:
   bst-build: "1"
   migration-containerdisk-build: "1"
   ghost-container-qa: "8"
+  dakota-publish: "1"

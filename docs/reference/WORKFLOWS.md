@@ -249,6 +249,32 @@ remains in GitHub Actions; Kubernetes sends only `repository_dispatch` payloads.
 Each repository's `lab-check.yml` must exist on its default branch. The app
 installation must grant `checks: write`.
 
+### `dakota-publish-pipeline`
+
+Publishes `192.168.1.102:30500/dakota:testing` and
+`192.168.1.102:30500/dakota-nvidia:testing` to the matching
+`ghcr.io/projectbluefin/*:testing` tags. Each lane resolves and copies the Zot
+image by digest, then fails unless GHCR reports the same digest. The lanes run
+independently; a final result task reports both statuses and fails the workflow
+if either lane fails.
+
+The workflow requires a Secret named `ghcr-publish-auth` in namespace `argo`.
+It is an operator-managed `kubernetes.io/dockerconfigjson` Secret with the
+standard `.dockerconfigjson` key and GHCR package write access. The Secret is
+not stored in git. Scripts consume the mounted auth file directly and never
+enable shell tracing.
+
+ORAS discovery is attempted for each source digest. Referrers are copied
+recursively when present. No referrers, an unsupported discovery API, or a
+missing ORAS binary is logged explicitly and does not invalidate the image
+copy; a failed copy of discovered referrers fails that lane.
+
+Manual run:
+
+```bash
+just run-dakota-publish
+```
+
 ---
 
 ## Catalog installs
@@ -292,6 +318,7 @@ Lives in `manifests/`, applied via the `testing-lab-infra` ArgoCD app:
 |---|---|---|---|
 | `nightly-smoke` | 02:00 UTC | `bluefin-qa-pipeline` (latest) | Catch upstream regressions |
 | `nightly-smoke-lts` | 02:30 UTC | `bluefin-qa-pipeline` (lts)    | Same, for LTS branch; first fire builds the missing golden disk |
+| `nightly-dakota-publish` | 21:00 UTC | `dakota-publish-pipeline` | Copy both Dakota testing lanes from Zot to GHCR by digest |
 | `orphan-vm-cleanup` | every 2h | inline | GC stale per-run hostDisks in bluefin, flatcar, and knuckle namespaces |
 
 ---

@@ -285,6 +285,11 @@ run-dakota-container-qa image-tag="testing" variant="dakota":
       -p variant={{ variant }} \
       -n {{ argo_ns }} --watch
 
+# Publish dakota:testing and dakota-nvidia:testing from Zot to GHCR.
+run-dakota-publish:
+    argo submit --from workflowtemplate/dakota-publish-pipeline \
+      -n {{ argo_ns }} --watch
+
 # Run the in-cluster BuildStream build pipeline for bluefin-server
 # Usage: just run-bluefin-server-build
 run-bluefin-server-build ref="main" repo="https://github.com/projectbluefin/server.git":

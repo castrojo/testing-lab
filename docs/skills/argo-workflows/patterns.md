@@ -223,6 +223,44 @@ Verified against Context7 `/argoproj/argo-workflows` CronWorkflow spec docs.
 
 CronWorkflows also cannot be invoked via `workflowTemplateRef` — if you need a CronWorkflow to be submittable manually, extract its logic into a WorkflowTemplate and have the CronWorkflow reference it with `workflowTemplateRef`.
 
+### 17a. Authenticated digest-preserving registry publication
+
+For a scheduled Zot-to-GHCR publisher, keep the reusable logic in a
+WorkflowTemplate and point the CronWorkflow at it. Mount an operator-managed
+`kubernetes.io/dockerconfigjson` Secret as an auth file; do not expose registry
+credentials through parameters, command arguments, stdout, or shell tracing.
+
+Resolve the source tag to a digest, copy `source@digest`, and inspect the
+destination tag with the same auth file. A lane succeeds only when the
+destination digest exactly matches the source digest. Put a semaphore on the
+entrypoint DAG so separate publication workflows serialize while independent
+image lanes within one workflow can still run in parallel.
+
+Use terminal-status dependencies for the result task:
+
+```yaml
+depends: >-
+  (lane-a.Succeeded || lane-a.Failed || lane-a.Errored) &&
+  (lane-b.Succeeded || lane-b.Failed || lane-b.Errored)
+```
+
+Pass each `{{tasks.<lane>.status}}` to the result task and fail it unless every
+lane succeeded. Bound each lane with `retryStrategy.limit` and backoff.
+
+After the image copy, use `oras discover` against the source digest. If
+referrers exist, recursively copy them with the destination registry auth file.
+Log explicit `none present` or `discovery unavailable` states as non-fatal;
+failure to copy referrers that were discovered is a lane failure. Verify the
+destination digest after this optional evidence step.
+
+```bash
+# Source: Context7 /oras-project/oras
+oras discover --plain-http --format json --depth 1 "${SOURCE}@${DIGEST}"
+oras cp --recursive --from-plain-http \
+  --to-registry-config /auth/config.json --no-tty \
+  "${SOURCE}@${DIGEST}" "${DESTINATION}:testing"
+```
+
 ### 18. `when` condition trap — never reference a Skipped task's outputs
 
 **Verified against Context7 `/argoproj/argo-workflows` enhanced-depends-logic docs:**
