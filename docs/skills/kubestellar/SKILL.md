@@ -73,6 +73,12 @@ Hence: `kubeflex-operator.installPostgreSQL: false` in the core app and a
 separate `kubestellar-postgres` Application whose Helm release name MUST be
 `postgres` (the operator waits for pod `postgres-postgresql-0`).
 
+**Critical gotcha — PostCreateHook drift**: KubeFlex expands
+`PostCreateHook.spec.templates` after creation. The core Application must ignore
+that controller-owned field and set `RespectIgnoreDifferences=true`; otherwise
+the core remains OutOfSync and the app-of-apps sync wave never advances to
+Console.
+
 Verify:
 
 ```bash
@@ -162,6 +168,7 @@ instance.
 | Symptom | Cause / fix |
 |---|---|
 | App sync stuck "waiting for healthy state of kubeflex-controller-manager" | postgres deadlock — see install section; check `kubestellar-postgres` app is Synced/Healthy |
+| Parent app stuck "waiting for healthy state of Application/kubestellar" | KubeFlex mutated `PostCreateHook.spec.templates`; retain the scoped ignore and `RespectIgnoreDifferences=true` in the core Application |
 | `clusteradm get token` forbidden | workflow ran as `argo` SA; needs `serviceAccountName: kubestellar-bootstrap` |
 | Workflow pod rejected "failed quota: argo-quota" | missing resources requests/limits on the template |
 | Downsynced namespace exists but is empty | objectSelectors don't match the inner objects' labels |
