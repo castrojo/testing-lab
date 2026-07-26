@@ -70,8 +70,9 @@ def test_container_runner_uses_a_nested_systemd_target_with_bounded_resources():
     assert "podman run --detach --systemd=always" in content
     assert "--network host" in content
     assert "--volume /etc/resolv.conf:/etc/resolv.conf:ro" in content
-    assert '"${IMAGE}" /sbin/init' in content
-    assert "systemctl is-active dbus systemd-logind" in content
+    assert '"${TARGET_IMAGE}" /sbin/init' in content
+    assert "systemctl is-active dbus" in content
+    assert "systemctl is-active systemd-logind" in content
     assert "useradd -m -u 1000" in content
     assert "bluefin-test ALL=(ALL) NOPASSWD: ALL" in content
     assert "AutomaticLogin=bluefin-test" in content
@@ -83,6 +84,59 @@ def test_container_runner_uses_a_nested_systemd_target_with_bounded_resources():
     assert "--shm-size" not in content
     assert "provision-containerdisk-vm" not in content
     assert "bootc install to-disk" not in content
+
+
+def test_container_runner_exposes_optional_image_digest_parameter():
+    content = (ROOT / "argo/workflow-templates/run-container-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "- name: image-digest" in content
+    assert 'value: ""' in content
+    assert "- name: IMAGE_DIGEST" in content
+    assert 'value: "{{inputs.parameters.image-digest}}"' in content
+
+
+def test_container_runner_uses_digest_pinned_reference_when_digest_provided():
+    content = (ROOT / "argo/workflow-templates/run-container-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'TARGET_IMAGE="${IMAGE_REPO}@${IMAGE_DIGEST}"' in content
+    assert 'DIGEST="${IMAGE_DIGEST}"' in content
+    assert 'podman pull "${PODMAN_PULL_TLS_ARGS[@]}" "${TARGET_IMAGE}"' in content
+    assert 'podman run' in content and '"${TARGET_IMAGE}" /sbin/init' in content
+
+
+def test_container_runner_skips_remote_digest_resolution_when_digest_provided():
+    content = (ROOT / "argo/workflow-templates/run-container-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    block = content.split("# Resolve the digest remotely", 1)[1]
+    assert 'if [[ -z "${IMAGE_DIGEST:-}" ]]; then' in block
+    assert "skopeo inspect" in block
+
+
+def test_container_runner_readiness_probe_is_informative():
+    content = (ROOT / "argo/workflow-templates/run-container-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "systemd readiness probe" in content
+    assert "state=${state:-unknown}" in content
+    assert "dbus=${dbus_active:-unknown}" in content
+    assert "logind=${logind_active:-unknown}" in content
+    assert "seat0=${can_graphical:-unknown}" in content
+
+
+def test_container_runner_creates_runtime_directories_before_gdm():
+    content = (ROOT / "argo/workflow-templates/run-container-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "mkdir -p /run/dbus /run/systemd/seats /run/systemd/users /run/gdm /var/log/gdm" in content
+    assert "chmod 755 /run/gdm" in content
 
 
 def test_native_systemd_runner_uses_a_scheduler_managed_target_pod():
@@ -245,6 +299,27 @@ def test_cosmic_qa_uses_a_published_bootc_image():
     )
 
     assert 'value: "cosmic-pr-33"' in cosmic
+
+
+def test_dakota_qa_pipeline_exposes_and_forwards_image_digest():
+    dakota = (ROOT / "argo/workflow-templates/dakota-qa-pipeline.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "- name: image-digest" in dakota
+    assert 'value: "{{workflow.parameters.image-digest}}"' in dakota
+    assert "name: run-container-tests" in dakota
+
+
+def test_pr_poller_carries_image_digest_into_dakota_qa_workflow():
+    poller = (ROOT / "argo/workflow-templates/pr-poller.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    dakota_block = poller.split("name: qa-dakota", 1)[1].split("name: qa-bluefin", 1)[0]
+    assert "- name: image-digest" in dakota_block
+    assert 'value: "{{workflow.parameters.image-digest}}"' in dakota_block
+    assert "dakota-qa-pipeline" in dakota_block
 
 
 def test_caller_contract_requires_forked_testsuite_repo_and_branch():

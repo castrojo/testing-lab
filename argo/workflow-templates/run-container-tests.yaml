@@ -34,6 +34,8 @@ spec:
         value: "ghcr.io/projectbluefin/bluefin"
       - name: image-tag
         value: "testing"
+      - name: image-digest
+        value: ""
       - name: suite
         value: "smoke"
       - name: variant
@@ -96,16 +98,18 @@ spec:
           memory: 8Gi
           ephemeral-storage: 24Gi
       env:
-      - name: IMAGE
-        value: "{{inputs.parameters.image}}:{{inputs.parameters.image-tag}}"
+      - name: IMAGE_REPO
+        value: "{{inputs.parameters.image}}"
+      - name: IMAGE_TAG
+        value: "{{inputs.parameters.image-tag}}"
+      - name: IMAGE_DIGEST
+        value: "{{inputs.parameters.image-digest}}"
       - name: SUITE
         value: "{{inputs.parameters.suite}}"
       - name: VARIANT
         value: "{{inputs.parameters.variant}}"
       - name: BEHAVE_TAGS
         value: "{{inputs.parameters.behave-tags}}"
-      - name: IMAGE_TAG
-        value: "{{inputs.parameters.image-tag}}"
       - name: GITHUB_TOKEN
         valueFrom:
           secretKeyRef:
@@ -129,7 +133,18 @@ spec:
         # Build slug used to identify QA evidence in the lab repo.
         IMG_SLUG="${VARIANT}-${IMAGE_TAG}"
 
-        # Resolve the digest of the target OCI image for digest-pinned QA evidence.
+        # Compute the image reference to pull and run. When an explicit digest is
+        # supplied we use it directly and skip remote resolution so the exact
+        # pinned reference is preserved end-to-end.
+        IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
+        if [[ -n "${IMAGE_DIGEST:-}" ]]; then
+          TARGET_IMAGE="${IMAGE_REPO}@${IMAGE_DIGEST}"
+          DIGEST="${IMAGE_DIGEST}"
+          echo "Using provided digest ${DIGEST}; target image is ${TARGET_IMAGE}" >&2
+        else
+          TARGET_IMAGE="${IMAGE}"
+        fi
+
         # Local Zot and other insecure registries need explicit TLS verification off.
         SKOPEO_TLS_ARGS=()
         PODMAN_PULL_TLS_ARGS=()
@@ -139,22 +154,26 @@ spec:
             PODMAN_PULL_TLS_ARGS=(--tls-verify=false)
             ;;
         esac
-        if ! command -v skopeo >/dev/null 2>&1; then
-          echo "skopeo not found; installing for digest resolution..." >&2
-          dnf install -y skopeo >/dev/null 2>&1 || true
-        fi
-        DIGEST=""
-        if command -v skopeo >/dev/null 2>&1; then
-          SKOPEO_ARGS=()
-          if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-            SKOPEO_ARGS+=(--creds "_token:${GITHUB_TOKEN}")
+
+        # Resolve the digest remotely only when the caller did not supply one.
+        if [[ -z "${IMAGE_DIGEST:-}" ]]; then
+          if ! command -v skopeo >/dev/null 2>&1; then
+            echo "skopeo not found; installing for digest resolution..." >&2
+            dnf install -y skopeo >/dev/null 2>&1 || true
           fi
-          DIGEST=$(skopeo inspect "${SKOPEO_TLS_ARGS[@]}" "${SKOPEO_ARGS[@]}" --no-tags --format '{{.Digest}}' "docker://${IMAGE}" 2>/dev/null || true)
-        fi
-        if [[ -z "${DIGEST:-}" ]]; then
-          echo "Warning: could not resolve digest for ${IMAGE}; result will still be published but may fall back to tag-based matching." >&2
-        else
-          echo "Resolved digest ${DIGEST} for ${IMAGE}" >&2
+          DIGEST=""
+          if command -v skopeo >/dev/null 2>&1; then
+            SKOPEO_ARGS=()
+            if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+              SKOPEO_ARGS+=(--creds "_token:${GITHUB_TOKEN}")
+            fi
+            DIGEST=$(skopeo inspect "${SKOPEO_TLS_ARGS[@]}" "${SKOPEO_ARGS[@]}" --no-tags --format '{{.Digest}}' "docker://${IMAGE}" 2>/dev/null || true)
+          fi
+          if [[ -z "${DIGEST:-}" ]]; then
+            echo "Warning: could not resolve digest for ${IMAGE}; result will still be published but may fall back to tag-based matching." >&2
+          else
+            echo "Resolved digest ${DIGEST} for ${IMAGE}" >&2
+          fi
         fi
         TARGET_NAME="bluefin-qa-target"
         STORAGE_CONF=/tmp/storage.conf
@@ -173,7 +192,7 @@ spec:
         }
         mkdir -p /tmp/results
         if [[ "${#PODMAN_PULL_TLS_ARGS[@]}" -gt 0 ]]; then
-          podman pull "${PODMAN_PULL_TLS_ARGS[@]}" "${IMAGE}" >/dev/null
+          podman pull "${PODMAN_PULL_TLS_ARGS[@]}" "${TARGET_IMAGE}" >/dev/null
         fi
         podman run --detach --systemd=always --network host --privileged \
           --cgroupns=host \
@@ -185,14 +204,19 @@ spec:
           --volume /workspace:/workspace:ro \
           --volume /tmp/results:/tmp/results \
           --volume /etc/resolv.conf:/etc/resolv.conf:ro \
-          "${IMAGE}" /sbin/init >/dev/null
+          "${TARGET_IMAGE}" /sbin/init >/dev/null
 
         ready=false
-        for _ in $(seq 1 60); do
+        for i in $(seq 1 60); do
           state=$(podman exec "${TARGET_NAME}" systemctl is-system-running 2>/dev/null || true)
+          dbus_active=$(podman exec "${TARGET_NAME}" systemctl is-active dbus 2>/dev/null || true)
+          logind_active=$(podman exec "${TARGET_NAME}" systemctl is-active systemd-logind 2>/dev/null || true)
+          can_graphical=$(podman exec "${TARGET_NAME}" loginctl show-seat seat0 --property=CanGraphical 2>/dev/null || true)
+          echo "systemd readiness probe ${i}: state=${state:-unknown} dbus=${dbus_active:-unknown} logind=${logind_active:-unknown} seat0=${can_graphical:-unknown}"
           if [[ "${state}" == "running" || "${state}" == "degraded" ]] \
-            && podman exec "${TARGET_NAME}" systemctl is-active dbus systemd-logind >/dev/null \
-            && podman exec "${TARGET_NAME}" loginctl show-seat seat0 --property=CanGraphical 2>/dev/null | grep -q yes; then
+            && [[ "${dbus_active}" == "active" ]] \
+            && [[ "${logind_active}" == "active" ]] \
+            && [[ "${can_graphical}" == "CanGraphical=yes" ]]; then
             ready=true
             break
           fi
@@ -207,6 +231,12 @@ spec:
         echo "Installing test-only Python dependencies in nested target..." >&2
         podman exec "${TARGET_NAME}" bash -c '
           set -euo pipefail
+
+          # Ensure runtime directories GDM and logind need are present before any
+          # display manager startup. The container /run is a fresh tmpfs, so
+          # recreate the expected layout explicitly.
+          mkdir -p /run/dbus /run/systemd/seats /run/systemd/users /run/gdm /var/log/gdm
+          chmod 755 /run/gdm
 
           # Stop GDM and clear any display state left over from the degraded boot.
           systemctl stop gdm || true

@@ -46,6 +46,21 @@ setup-argocd:
     kubectl apply -f argocd/application.yaml -n argocd
     @echo "✓ ArgoCD Application deployed — syncs argo/workflow-templates from main automatically"
 
+# Recreate the ARC GitHub App secret in the arc-runners namespace (idempotent).
+# Interactive by default; pass vars for non-interactive recovery after ARC reinstall.
+# Usage: just setup-arc-github-secret
+# Usage: just setup-arc-github-secret pem=/path/to/key.pem app_id=123 installation_id=456
+setup-arc-github-secret pem="" app_id="" installation_id="" namespace="arc-runners" app_slug="bluefin-ghost-arc":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    [[ -n "{{ pem }}" ]]           && args+=(--pem-path "{{ pem }}")
+    [[ -n "{{ app_id }}" ]]        && args+=(--app-id "{{ app_id }}")
+    [[ -n "{{ installation_id }}" ]] && args+=(--installation-id "{{ installation_id }}")
+    [[ "{{ namespace }}" != "arc-runners" ]] && args+=(--namespace "{{ namespace }}")
+    [[ "{{ app_slug }}" != "bluefin-ghost-arc" ]] && args+=(--app-slug "{{ app_slug }}")
+    exec bash scripts/setup-arc-github-secret.sh "${args[@]}"
+
 # ── Template management (GitOps — prefer git push over manual sync) ──────────
 
 # Force ArgoCD to sync now instead of waiting for the next poll interval

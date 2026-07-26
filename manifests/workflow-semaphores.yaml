@@ -14,6 +14,8 @@
 #                        container QA runner (run-container-tests). Each pod
 #                        requests 4Gi on ghost; cap concurrent runs to keep
 #                        total requested memory below the 95% pressure threshold.
+#                        Lowered from 8 to 6 to relieve memory pressure on ghost
+#                        while preserving enough parallelism for the suite fan-out.
 #                        VMs are still scheduled natively and must not use this
 #                        semaphore (see docs/skills/argo-workflows/patterns.md).
 #   dakota-publish      — Serializes Zot-to-GHCR Dakota publication workflows
@@ -28,5 +30,5 @@ metadata:
 data:
   bst-build: "1"
   migration-containerdisk-build: "1"
-  ghost-container-qa: "8"
+  ghost-container-qa: "6"
   dakota-publish: "1"
