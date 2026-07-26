@@ -12,15 +12,30 @@ metadata:
     app.kubernetes.io/component: iso-qa
     app.kubernetes.io/part-of: bluefin-test-suite
 spec:
+  serviceAccountName: argo
   entrypoint: validate
   activeDeadlineSeconds: 7200
   arguments:
     parameters:
     - name: iso-url
       value: ""
+    - name: iso-sha256
+      value: ""
     - name: iso-ref
       value: "main"
+    - name: source-repo
+      value: ""
+    - name: source-sha
+      value: ""
+    - name: candidate-id
+      value: ""
     - name: variant
+      value: ""
+    - name: image-ref
+      value: "ghcr.io/ublue-os/bluefin"
+    - name: image-tag
+      value: "stable"
+    - name: status-target-url
       value: ""
     - name: run-e2e
       value: "true"
@@ -29,8 +44,15 @@ spec:
     inputs:
       parameters:
       - name: iso-url
+      - name: iso-sha256
       - name: iso-ref
+      - name: source-repo
+      - name: source-sha
+      - name: candidate-id
       - name: variant
+      - name: image-ref
+      - name: image-tag
+      - name: status-target-url
       - name: run-e2e
     script:
       image: quay.io/fedora/fedora:latest
@@ -50,20 +72,72 @@ spec:
         mountPath: /work
       - name: kvm
         mountPath: /dev/kvm
+      env:
+      - name: GITHUB_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: github-token
+            key: token
+            optional: true
       source: |
         set -euo pipefail
 
         ISO_URL="{{inputs.parameters.iso-url}}"
+        ISO_SHA256="{{inputs.parameters.iso-sha256}}"
         ISO_REF="{{inputs.parameters.iso-ref}}"
+        SOURCE_REPO="{{inputs.parameters.source-repo}}"
+        SOURCE_SHA="{{inputs.parameters.source-sha}}"
+        CANDIDATE_ID="{{inputs.parameters.candidate-id}}"
         VARIANT="{{inputs.parameters.variant}}"
+        IMAGE_REF="{{inputs.parameters.image-ref}}"
+        IMAGE_TAG="{{inputs.parameters.image-tag}}"
+        STATUS_TARGET_URL="{{inputs.parameters.status-target-url}}"
         RUN_E2E="{{inputs.parameters.run-e2e}}"
         WORK=/work
         ISO_DIR="${WORK}/iso"
         OUTPUT="${WORK}/output"
 
         [[ -n "${ISO_URL}" ]] || { echo "iso-url is required" >&2; exit 1; }
+        [[ "${RUN_E2E}" == true || "${RUN_E2E}" == false ]] || {
+          echo "run-e2e must be true or false" >&2
+          exit 1
+        }
         dnf install -y --setopt=install_weak_deps=False \
-          curl ffmpeg git qemu-img qemu-system-x86-core xorriso
+          curl ffmpeg git jq qemu-img qemu-system-x86-core xorriso
+
+        publish_status() {
+          local state="$1" description payload
+          [[ -n "${GITHUB_TOKEN:-}" && -n "${SOURCE_REPO}" && -n "${SOURCE_SHA}" ]] ||
+            return 0
+          description="ISO candidate ${CANDIDATE_ID:-${VARIANT:-unknown}} lab E2E"
+          payload="$(jq -n \
+            --arg state "${state}" \
+            --arg context "projectbluefin/lab / ISO E2E" \
+            --arg description "${description:0:140}" \
+            --arg target_url "${STATUS_TARGET_URL}" \
+            '{state: $state, context: $context, description: $description}
+             + if $target_url == "" then {} else {target_url: $target_url} end')" || {
+            echo "warning: could not build GitHub status payload" >&2
+            return 0
+          }
+          curl --silent --show-error --fail-with-body \
+            --request POST \
+            --url "https://api.github.com/repos/${SOURCE_REPO}/statuses/${SOURCE_SHA}" \
+            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --data "${payload}" >/dev/null ||
+            echo "warning: GitHub status callback failed" >&2
+        }
+
+        finish() {
+          local rc=$? state=failure
+          [[ "${rc}" -eq 0 ]] && state=success
+          publish_status "${state}"
+          exit "${rc}"
+        }
+        trap finish EXIT
+        publish_status pending
 
         mkdir -p "${ISO_DIR}" "${OUTPUT}"
         git -C "${ISO_DIR}" init
@@ -74,8 +148,17 @@ spec:
         curl --fail --location --retry 3 --retry-all-errors \
           --output "${WORK}/source.iso" "${ISO_URL}"
         test -s "${WORK}/source.iso"
-        sha256sum "${WORK}/source.iso"
-        printf 'variant=%s\niso-ref=%s\n' "${VARIANT}" "${ISO_REF}"
+        if [[ -n "${ISO_SHA256}" ]]; then
+          [[ "${ISO_SHA256}" =~ ^[[:xdigit:]]{64}$ ]] || {
+            echo "iso-sha256 must be a 64-character hexadecimal digest" >&2
+            exit 1
+          }
+          printf '%s  %s\n' "${ISO_SHA256}" "${WORK}/source.iso" | sha256sum -c -
+        else
+          sha256sum "${WORK}/source.iso"
+        fi
+        printf 'candidate=%s\nvariant=%s\niso-ref=%s\n' \
+          "${CANDIDATE_ID}" "${VARIANT}" "${ISO_REF}"
 
         if [[ -e /dev/kvm ]]; then
           export QEMU_ACCEL=kvm:tcg
@@ -83,6 +166,7 @@ spec:
           echo 'WARNING: /dev/kvm unavailable; falling back to TCG' >&2
           export QEMU_ACCEL=tcg
         fi
+        export IMAGE_REF IMAGE_TAG
 
         if [[ "${RUN_E2E}" == true ]]; then
           bash "${ISO_DIR}/tests/iso/suite.sh" "${WORK}/source.iso" "${OUTPUT}"

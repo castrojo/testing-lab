@@ -1,0 +1,49 @@
+name: ISO E2E lab dispatch
+
+on:
+  repository_dispatch:
+    types: [iso-e2e-validation]
+
+permissions:
+  contents: read
+
+jobs:
+  submit-lab-iso-e2e:
+    name: Submit ISO E2E to Argo
+    runs-on: ghost-runners
+    timeout-minutes: 125
+    container:
+      image: ghcr.io/projectbluefin/arc-runner:latest
+    steps:
+      - name: Submit and wait
+        env:
+          ISO_URL: ${{ github.event.client_payload.iso_url }}
+          ISO_SHA256: ${{ github.event.client_payload.iso_sha256 }}
+          SOURCE_REPO: ${{ github.event.client_payload.source_repo || 'projectbluefin/iso' }}
+          SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+          CANDIDATE_ID: ${{ github.event.client_payload.candidate_id }}
+          IMAGE_REF: ${{ github.event.client_payload.image_ref || 'ghcr.io/ublue-os/bluefin' }}
+          IMAGE_TAG: ${{ github.event.client_payload.image_tag || 'stable' }}
+        run: |
+          set -euo pipefail
+          [[ "${ISO_URL}" == https://* ]]
+          [[ "${ISO_SHA256}" =~ ^[[:xdigit:]]{64}$ ]]
+          [[ "${SOURCE_REPO}" == projectbluefin/iso ]]
+          [[ "${SOURCE_SHA}" =~ ^[[:xdigit:]]{40}$ ]]
+          [[ "${CANDIDATE_ID}" =~ ^[[:alnum:]._-]+$ ]]
+          [[ "${IMAGE_REF}" == ghcr.io/ublue-os/bluefin ]]
+          [[ "${IMAGE_TAG}" =~ ^[[:alnum:]._-]+$ ]]
+
+          argo submit -n argo \
+            --from workflowtemplate/iso-e2e-pipeline \
+            -p iso-url="${ISO_URL}" \
+            -p iso-sha256="${ISO_SHA256}" \
+            -p iso-ref="${SOURCE_SHA}" \
+            -p source-repo="${SOURCE_REPO}" \
+            -p source-sha="${SOURCE_SHA}" \
+            -p candidate-id="${CANDIDATE_ID}" \
+            -p variant="${IMAGE_TAG}" \
+            -p image-ref="${IMAGE_REF}" \
+            -p image-tag="${IMAGE_TAG}" \
+            -p status-target-url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --wait --log
