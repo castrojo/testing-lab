@@ -15,6 +15,9 @@ spec:
   failurePolicy: Fail
   reinvocationPolicy: Never
   matchConstraints:
+    matchPolicy: Equivalent
+    namespaceSelector: {}
+    objectSelector: {}
     resourceRules:
       - apiGroups:
           - batch
@@ -24,6 +27,7 @@ spec:
           - CREATE
         resources:
           - jobs
+        scope: "*"
   matchConditions:
     - name: console-migration-job
       expression: >-
