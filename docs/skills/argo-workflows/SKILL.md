@@ -55,6 +55,10 @@ The workflow authoring guidance is split by topic:
 - `spec.schedule:` (singular) on a CronWorkflow — field does not exist in CRD schema; use `spec.schedules:` (array)
 - A pipeline with VMs and no `spec.activeDeadlineSeconds` — a stuck VM holds its semaphore slot forever
 - A pipeline with VMs that adds `spec.synchronization.semaphores` — semaphores are removed; k8s scheduler handles concurrency via virt-launcher memory requests
+- A template that consumes a scarce, node-pinned resource relying only on
+  workflow `parallelism` — that limit does not cover simultaneous workflows.
+  Put a template-level `synchronization.semaphores` reference on the shared
+  template and define its capacity in the GitOps-managed ConfigMap.
 - A `steps` or `dag` task calling a sub-template without `arguments:`
 - `{{steps.X.outputs...}}` or `{{tasks.X.outputs...}}` used as an input
   parameter *default inside a leaf template* — that scope only exists at
@@ -123,6 +127,9 @@ Before marking any WorkflowTemplate change done:
 - [ ] All sub-template calls include explicit `arguments:` blocks
 - [ ] Pipeline has `onExit: cleanup` handler
 - [ ] All pod-running templates have `resources:` requests and limits
+- [ ] Every node-pinned, high-memory shared template has a ConfigMap-backed
+      template-level semaphore sized to the node's allocatable capacity; VM
+      pipelines remain scheduler-managed
 - [ ] Change is committed and pushed — not manually applied to cluster
 - [ ] `description:` annotation present on the new/modified template
 - [ ] File name matches `metadata.name` (e.g. `provision-containerdisk-vm.yaml` for `name: provision-containerdisk-vm`)
