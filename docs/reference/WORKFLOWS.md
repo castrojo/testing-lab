@@ -62,6 +62,29 @@ argo submit --from workflowtemplate/knuckle-qa-pipeline \
   -p branch=main -p suite=smoke --wait
 ```
 
+### `iso-e2e-pipeline`
+
+Downloads a published ISO, optionally verifies its SHA256, checks out the
+canonical `projectbluefin/iso` harness, and runs smoke plus unattended installer
+E2E on a KVM-capable lab node. The `iso-e2e-validation` repository dispatch
+supplies immutable candidate metadata and publishes the
+`projectbluefin/lab / ISO E2E` commit status.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `iso-url` | *(required)* | HTTPS URL for the ISO candidate. |
+| `iso-sha256` | empty | Expected SHA256; required by repository dispatch. |
+| `iso-ref` | `main` | ISO harness branch, tag, or immutable commit. |
+| `image-ref` | `ghcr.io/ublue-os/bluefin` | Image installed by the unattended harness. |
+| `image-tag` | `stable` | Image tag installed by the unattended harness. |
+| `run-e2e` | `true` | Set `false` for smoke-only validation. |
+
+```
+argo submit --from workflowtemplate/iso-e2e-pipeline \
+  -p iso-url=https://example.invalid/candidate.iso \
+  -p iso-sha256=<sha256> -p iso-ref=<immutable-iso-sha> --wait
+```
+
 ### `bluefin-titan-smoke`
 
 Runs smoke tests against the **persistent** titan VMs (`titan-bluefin`,
