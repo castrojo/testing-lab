@@ -77,7 +77,7 @@ spec:
               - key: .dockerconfigjson
                 path: config.json
       script:
-        image: ghcr.io/projectbluefin/lab-runner:latest
+        image: quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615
         command: [bash]
         volumeMounts:
           - name: ghcr-auth
@@ -87,9 +87,11 @@ spec:
           requests:
             cpu: 100m
             memory: 256Mi
+            ephemeral-storage: 1Gi
           limits:
             cpu: "1"
             memory: 2Gi
+            ephemeral-storage: 4Gi
         env:
           - name: IMAGE
             value: "{{inputs.parameters.image}}"
@@ -124,17 +126,32 @@ spec:
             "docker://${DESTINATION_REF}"
 
           SOURCE_DIGEST_REF="${SOURCE_REGISTRY}/${IMAGE}@${SOURCE_DIGEST}"
+          if ! command -v oras >/dev/null 2>&1; then
+            ORAS_VERSION=1.2.3
+            ORAS_DIR=/tmp/oras-bin
+            mkdir -p "${ORAS_DIR}"
+            if curl -sSfL \
+              "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" \
+              | tar xz -C "${ORAS_DIR}" oras; then
+              export PATH="${ORAS_DIR}:${PATH}"
+            else
+              echo "OCI referrers: ORAS bootstrap unavailable; image publication continues" >&2
+            fi
+          fi
+
           if command -v oras >/dev/null 2>&1; then
             if DISCOVERY=$(oras discover \
               --plain-http \
               --format json \
               --depth 1 \
               "${SOURCE_DIGEST_REF}" 2>/dev/null); then
-              REFERRER_COUNT=$(printf '%s' "${DISCOVERY}" | jq '(.referrers // []) | length')
-              if [ "${REFERRER_COUNT}" -eq 0 ]; then
+              DISCOVERY_COMPACT=$(printf '%s' "${DISCOVERY}" | awk '{printf "%s",$0}')
+              if ! printf '%s' "${DISCOVERY_COMPACT}" | grep -q '"referrers"'; then
+                echo "OCI referrers: discovery output unavailable for ${SOURCE_DIGEST_REF}; image publication continues" >&2
+              elif printf '%s' "${DISCOVERY_COMPACT}" | grep -Eq '"referrers"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]'; then
                 echo "OCI referrers: none present for ${SOURCE_DIGEST_REF}; image publication continues" >&2
               else
-                echo "OCI referrers: found ${REFERRER_COUNT}; copying recursively" >&2
+                echo "OCI referrers: found; copying recursively" >&2
                 oras cp \
                   --recursive \
                   --from-plain-http \
@@ -173,9 +190,11 @@ spec:
           requests:
             cpu: 25m
             memory: 32Mi
+            ephemeral-storage: 16Mi
           limits:
             cpu: 100m
             memory: 128Mi
+            ephemeral-storage: 64Mi
         env:
           - name: DAKOTA_STATUS
             value: "{{inputs.parameters.dakota-status}}"

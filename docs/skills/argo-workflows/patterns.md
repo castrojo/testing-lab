@@ -253,6 +253,11 @@ Log explicit `none present` or `discovery unavailable` states as non-fatal;
 failure to copy referrers that were discovered is a lane failure. Verify the
 destination digest after this optional evidence step.
 
+Do not rely on `lab-runner:latest` for registry clients. Use the pinned Skopeo
+image and bootstrap a pinned ORAS release with its included `curl` and `tar`;
+if that unauthenticated bootstrap is unavailable, log the missing referrer
+capability explicitly and continue with digest verification.
+
 ```bash
 # Source: Context7 /oras-project/oras
 oras discover --plain-http --format json --depth 1 "${SOURCE}@${DIGEST}"
