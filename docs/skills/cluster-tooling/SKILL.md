@@ -47,6 +47,45 @@ metadata:
    PVC provisioning fails on an unconfigured node instead of falling back to
    that node's root disk.
 
+## Lightweight Prometheus backend
+
+`manifests/prometheus-lightweight.yaml` is the lab's backend-only metrics
+service. Keep it as a single `ClusterIP` deployment: do not add an ingress,
+Grafana, Prometheus Operator, or another cluster dashboard.
+
+- Storage is a `local-path` RWO PVC. The Deployment uses `Recreate` so two pods
+  never contend for the node-local volume.
+- The PVC is 50Gi; Prometheus keeps at most 30 days or 45GB, whichever limit is
+  reached first. The remaining space is headroom for WAL and compaction.
+- Required scrape jobs are `kubernetes-nodes`, `kubernetes-cadvisor`,
+  `argo-workflow-controller`, `zot`, `buildbarn`, and the existing
+  `kubestellar-*` controller jobs.
+- Zot metrics require `extensions.metrics` in both `zot-cache-config` and
+  `zot-local-config`; both expose `/metrics` on their existing HTTP port.
+- Argo custom build metrics use only constant `pipeline` and bounded `status`
+  labels. Never label metrics with workflow name, UID, commit SHA, image digest,
+  ref, or element.
+- `cosmic-build-pipeline`, `bluefin-server-build-pipeline`, and
+  `bst-qa-pipeline` emit completion and duration metrics. Dakota stays omitted
+  until its DAG refactor makes overall workflow status match the publish result;
+  its current non-blocking branches would record false successes.
+
+After changing scrape configuration, bump
+`lab.projectbluefin.io/config-version` on the Prometheus pod template because
+there is no config-reloader sidecar. Verify through the Kubernetes API:
+
+```bash
+kubectl get pvc -n kube-system prometheus-lightweight-data
+kubectl get pods -n kube-system -l app=prometheus-lightweight
+kubectl port-forward -n kube-system svc/prometheus 9090:9090
+curl -fsS 'http://127.0.0.1:9090/api/v1/targets?state=active' |
+  jq -r '.data.activeTargets[] | [.labels.job, .health, .lastError] | @tsv'
+```
+
+The custom series are exposed as
+`argo_workflows_lab_build_workflow_completed_total` and
+`argo_workflows_lab_build_workflow_duration_seconds`.
+
 ## Deep-dive topics
 
 - [BuildStream distributed builds and Buildbarn](buildstream.md)
@@ -118,6 +157,10 @@ Do not guess flags, chart schema, or MCP method names. The K8sGPT MCP server exp
 - [ ] The build progresses past source fetches into artifact pulls/builds.
 - [ ] Workflow reaches `Succeeded`, or if it fails, the failure is a real build
       error (not `pod deleted`).
+- [ ] Prometheus PVC is `Bound` on `local-path` and survives a rollout restart.
+- [ ] Required Prometheus targets report `health: up`; no target exposes a
+      user-facing dashboard.
+- [ ] Build workflow metric labels remain limited to `pipeline` and `status`.
 
 ## Key references
 
