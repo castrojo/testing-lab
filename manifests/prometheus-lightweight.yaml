@@ -67,8 +67,11 @@ data:
         kubernetes_sd_configs:
           - role: node
         relabel_configs:
-          - action: labelmap
-            regex: __meta_kubernetes_node_label_(.+)
+          # Keep one bounded identity label. Copying every node label onto every
+          # cAdvisor series multiplies NFD's 100+ hardware labels across tens of
+          # thousands of container series and exhausts Prometheus memory.
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: node
           - target_label: __address__
             replacement: kubernetes.default.svc:443
           - source_labels: [__meta_kubernetes_node_name]

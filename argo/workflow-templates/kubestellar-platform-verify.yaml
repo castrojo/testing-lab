@@ -115,6 +115,17 @@ spec:
             sleep 5
           done
 
+          cadvisor_nodes=$(prom_query \
+            'count(count by (node) (container_cpu_usage_seconds_total{job="kubernetes-cadvisor"}))')
+          expected_nodes=$(kubectl get nodes -o json | jq '.items | length')
+          actual_nodes=$(jq -r '.data.result[0].value[1] // "0"' \
+            <<<"$cadvisor_nodes")
+          if [ "$actual_nodes" -ne "$expected_nodes" ]; then
+            echo "FAIL: cAdvisor reports $actual_nodes node(s), expected $expected_nodes" >&2
+            exit 1
+          fi
+          echo "OK cAdvisor exposes one bounded node label for all $actual_nodes nodes"
+
           for app_name in node-feature-discovery kubestellar-applications kubestellar-postgres \
             kubestellar kubestellar-console; do
             application=$(kubectl get application -n argocd "$app_name" -o json)

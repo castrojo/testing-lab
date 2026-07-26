@@ -170,6 +170,7 @@ instance.
 | App sync stuck "waiting for healthy state of kubeflex-controller-manager" | postgres deadlock — see install section; check `kubestellar-postgres` app is Synced/Healthy |
 | Parent app stuck "waiting for healthy state of Application/kubestellar" | KubeFlex mutated `PostCreateHook.spec.templates`; retain the scoped ignore and `RespectIgnoreDifferences=true` in the core Application |
 | Prometheus cAdvisor targets stay `unknown` and the pod restarts | check for `OOMKilled`; WAL replay plus the controller and cAdvisor scrape set needs the committed 512 MiB request and 2 GiB limit, not the original demo sizing |
+| Prometheus reaches its memory limit after NFD labels appear | never `labelmap` all `__meta_kubernetes_node_label_*` values onto cAdvisor series; map only `__meta_kubernetes_node_name` to `node`, or NFD's 100+ labels multiply across every container metric |
 | `clusteradm get token` forbidden | workflow ran as `argo` SA; needs `serviceAccountName: kubestellar-bootstrap` |
 | Workflow pod rejected "failed quota: argo-quota" | missing resources requests/limits on the template |
 | Downsynced namespace exists but is empty | objectSelectors don't match the inner objects' labels |
