@@ -229,8 +229,6 @@ spec:
                            value: "${SHA}"
                          - name: repo
                            value: "https://github.com/${REPO}.git"
-                         - name: registry
-                           value: "192.168.1.102:30500"
                          - name: image-tag
                            value: "${SHA}"
                          - name: build-mode
@@ -242,6 +240,22 @@ spec:
                      templateRef:
                        name: dakota-qa-pipeline
                        template: pipeline
+                     arguments:
+                       parameters:
+                         - name: image
+                           value: "{{workflow.parameters.image}}"
+                         - name: image-tag
+                           value: "{{workflow.parameters.image-tag}}"
+                         - name: suites
+                           value: "{{workflow.parameters.suites}}"
+                         - name: variant
+                           value: "{{workflow.parameters.variant}}"
+                         - name: branch
+                           value: "{{workflow.parameters.branch}}"
+                         - name: testsuite-branch
+                           value: "{{workflow.parameters.testsuite-branch}}"
+                         - name: testsuite-repo
+                           value: "{{workflow.parameters.testsuite-repo}}"
           EOF
              echo "PR #${PR_NUM} ${REPO}: dispatched dakota build+qa pipeline for ${SHA12}" >&2
            else
