@@ -1,6 +1,8 @@
 # Console 0.3.34 hardcodes Docker Hub's bitnami/kubectl:latest in its
 # pre-upgrade PVC migration hook. Replace only that exact upstream image with
 # the pinned, shell-enabled FSDK cluster-ops image before the Job is admitted.
+# The upstream security context assumes Bitnami's uid 1001, so also select an
+# explicit non-root uid and writable HOME for the FSDK image.
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingAdmissionPolicy
 metadata:
@@ -41,6 +43,21 @@ spec:
               op: "replace",
               path: "/spec/template/spec/containers/0/image",
               value: "ghcr.io/projectbluefin/lab-runner@sha256:fe097bb3b85a126b9a16093fbc498b4b6fb7b24e0f74162ad3d91a402dcfa940"
+            },
+            JSONPatch{
+              op: "add",
+              path: "/spec/template/spec/containers/0/securityContext/runAsUser",
+              value: 65532
+            },
+            JSONPatch{
+              op: "add",
+              path: "/spec/template/spec/containers/0/env",
+              value: [
+                Object.spec.template.spec.containers.env{
+                  name: "HOME",
+                  value: "/tmp"
+                }
+              ]
             }
           ]
 ---
