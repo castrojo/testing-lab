@@ -115,7 +115,7 @@ spec:
             sleep 5
           done
 
-          for app_name in kubestellar-applications kubestellar-postgres \
+          for app_name in node-feature-discovery kubestellar-applications kubestellar-postgres \
             kubestellar kubestellar-console; do
             application=$(kubectl get application -n argocd "$app_name" -o json)
             if ! jq -e '
@@ -182,6 +182,45 @@ spec:
             echo "FAIL: Console did not initialize its in-cluster Kubernetes client" >&2
             exit 1
           fi
+
+          console_role=$(kubectl get clusterrole \
+            kubestellar-console-lab-surfaces -o json)
+          if ! jq -e '
+            any(.rules[];
+              (.apiGroups | index("metrics.k8s.io")) != null and
+              (.resources | index("nodes")) != null and
+              (.resources | index("pods")) != null and
+              (.verbs | index("list")) != null)
+          ' <<<"$console_role" >/dev/null; then
+            echo "FAIL: Console cannot read metrics.k8s.io node and pod usage" >&2
+            exit 1
+          fi
+
+          resource_metrics=$(kubectl get --raw \
+            '/apis/metrics.k8s.io/v1beta1/nodes')
+          jq -e '
+            (.items | length) > 0 and
+            all(.items[];
+              .usage.cpu != null and .usage.cpu != "0" and
+              .usage.memory != null and .usage.memory != "0")
+          ' <<<"$resource_metrics" >/dev/null
+
+          nfd_workers=$(kubectl get daemonset -n node-feature-discovery \
+            -l role=worker -o json)
+          jq -e '
+            (.items | length) == 1 and
+            .items[0].status.desiredNumberScheduled > 0 and
+            .items[0].status.numberReady == .items[0].status.desiredNumberScheduled
+          ' <<<"$nfd_workers" >/dev/null
+
+          nodes=$(kubectl get nodes -o json)
+          jq -e '
+            (.items | length) > 0 and
+            all(.items[];
+              [.metadata.labels | keys[] |
+                select(startswith("feature.node.kubernetes.io/"))] |
+              length > 0)
+          ' <<<"$nodes" >/dev/null
           echo "OK ArgoCD ownership, Console health, dashboards, and live cluster wiring"
 
     - name: verify-query-surfaces
