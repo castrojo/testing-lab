@@ -134,6 +134,15 @@ this cluster today. `manifests/local-path-config.yaml` explicitly maps `ghost`
 and `exo-0` to their own data mounts and has no default mapping. Never
 provision workload storage on a root filesystem.
 
+### Metrics storage
+
+The backend-only `prometheus-lightweight` Deployment stores up to 30 days or
+45GB of time series on a 50Gi `local-path` PVC. The size gap reserves space for
+WAL and compaction. It scrapes node and cAdvisor metrics, the Argo workflow
+controller, both Zot registries, BuildBarn, and KubeStellar controllers.
+Prometheus has ClusterIP access only; KubeStellar Console remains the private
+operator UI, and Grafana is intentionally absent.
+
 ---
 
 ## Compute Model

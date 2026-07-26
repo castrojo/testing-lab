@@ -42,6 +42,27 @@ spec:
         value: "re"
 
   entrypoint: build
+  metrics:
+    prometheus:
+      - name: lab_build_workflow_completed_total
+        help: Completed lab build workflows by pipeline and status.
+        labels:
+          - key: pipeline
+            value: cosmic
+          - key: status
+            value: "{{workflow.status}}"
+        counter:
+          value: "1"
+      - name: lab_build_workflow_duration_seconds
+        help: Lab build workflow duration in seconds by pipeline and status.
+        labels:
+          - key: pipeline
+            value: cosmic
+          - key: status
+            value: "{{workflow.status}}"
+        histogram:
+          buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+          value: "{{workflow.duration}}"
 
   templates:
 

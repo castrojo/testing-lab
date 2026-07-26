@@ -101,6 +101,11 @@ The workflow authoring guidance is split by topic:
 - **Queue Starvation / `activeDeadlineSeconds` Trap**: Leaving a workflow's `activeDeadlineSeconds` at default (or unspecified) when it queues under a template-level semaphore or resource limit. The workflow-level deadline starts ticking upon *submission/creation*, not *execution/scheduling*. If a workflow queues for longer than the global default deadline (e.g., 2h), it gets instantly canceled with `DeadlineExceeded` as soon as it begins running. Always set a generous workflow-level deadline (e.g., 4h/14400s) on queueable templates and dynamic API submission specs.
 - **Secret leakage via shell tracing**: Never use `set -x`/`set -eux` in a script that invokes authenticated APIs or expands secret-bearing variables. Argo retains command output in workflow logs. Disable tracing for the whole script or bracket only non-secret diagnostics with explicit `set +x`/`set -x` boundaries, then inspect logs for credentials before publishing evidence.
 - **PR approval gate bypass**: Routine labels such as `automerge` or `chore/deps` are not maintainer approval. PR-batch templates must stop before build/QA when `pr/needs-review` remains or live GitHub review data lacks a verified maintainer approval.
+- **Custom metric cardinality**: Never label workflow metrics with workflow
+  names, UIDs, commit SHAs, refs, image digests, or build elements. Use only
+  constant pipeline identifiers and bounded states. Workflow-level completion
+  metrics are safe only when the workflow status truthfully represents the
+  publish result; non-blocking or transitional DAG branches must be fixed first.
 
 ## Verification
 
@@ -129,3 +134,5 @@ Before marking any WorkflowTemplate change done:
 - [ ] Poller state writers depend on the downstream task's `.Succeeded` result and reject stale writes when the stored value changed after admission
 - [ ] After removing `suspend: true` from a CronWorkflow and syncing, live `spec.suspend` confirmed via `kubectl get -o jsonpath` — not assumed from ArgoCD's `Synced` status alone
 - [ ] After any disk wipe/registry migration/Zot cleanup, every affected containerDisk tag manually force-rebuilt rather than assuming a digest-comparison poller will self-heal
+- [ ] Custom metrics share identical help text and histogram buckets across
+      templates, and labels are limited to low-cardinality constants/states

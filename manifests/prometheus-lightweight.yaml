@@ -57,6 +57,25 @@ data:
       evaluation_interval: 15s
 
     scrape_configs:
+      - job_name: 'kubernetes-nodes'
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        authorization:
+          credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: node
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics
+
       - job_name: 'kubernetes-cadvisor'
         scheme: https
         tls_config:
@@ -100,6 +119,44 @@ data:
             target_label: __address__
           - source_labels: [__meta_kubernetes_pod_label_app]
             target_label: app
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node
+
+      - job_name: 'argo-workflow-controller'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: ['argo']
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: workflow-controller
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            action: keep
+            regex: metrics
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node
+
+      - job_name: 'zot'
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: ['local-registry']
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: registry|zot-cache
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: service
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
           - source_labels: [__meta_kubernetes_pod_node_name]
             target_label: node
 
@@ -218,6 +275,21 @@ data:
           - source_labels: [__meta_kubernetes_pod_name]
             target_label: instance
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-lightweight-data
+  namespace: kube-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 50Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -229,6 +301,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "10"
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: prometheus-lightweight
@@ -237,16 +311,23 @@ spec:
       labels:
         app: prometheus-lightweight
       annotations:
-        lab.projectbluefin.io/config-version: bounded-cadvisor-node-labels-v2
+        lab.projectbluefin.io/config-version: persistent-build-metrics-v1
     spec:
       serviceAccountName: prometheus-lightweight
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: prometheus
           image: quay.io/prometheus/prometheus:v2.53.0
           args:
             - --config.file=/etc/prometheus/prometheus.yml
             - --storage.tsdb.path=/prometheus
-            - --storage.tsdb.retention.time=2h
+            - --storage.tsdb.retention.time=30d
+            - --storage.tsdb.retention.size=45GB
           ports:
             - containerPort: 9090
               name: web
@@ -267,7 +348,8 @@ spec:
           configMap:
             name: prometheus-lightweight-config
         - name: storage
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: prometheus-lightweight-data
 ---
 apiVersion: v1
 kind: Service
