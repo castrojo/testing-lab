@@ -10,6 +10,12 @@
 #                        stampeding the cache or starving lab validation.
 #   migration-containerdisk-build — Serializes the migration workflow while it
 #                        refreshes and consumes its temporary VM source disk.
+#   ghost-container-qa — Cross-workflow capacity limit for the control-plane
+#                        container QA runner (run-container-tests). Each pod
+#                        requests 4Gi on ghost; cap concurrent runs to keep
+#                        total requested memory below the 95% pressure threshold.
+#                        VMs are still scheduled natively and must not use this
+#                        semaphore (see docs/skills/argo-workflows/patterns.md).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -20,3 +26,4 @@ metadata:
 data:
   bst-build: "1"
   migration-containerdisk-build: "1"
+  ghost-container-qa: "8"
