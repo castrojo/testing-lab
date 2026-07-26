@@ -36,10 +36,18 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: kubestellar
+  # KubeFlex expands the hook templates after creation. Treat that
+  # controller-owned field as runtime state so the app-of-apps wave can settle.
+  ignoreDifferences:
+    - group: tenancy.kflex.kubestellar.org
+      kind: PostCreateHook
+      jsonPointers:
+        - /spec/templates
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - RespectIgnoreDifferences=true
       - ServerSideApply=true
