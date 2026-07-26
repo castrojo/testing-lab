@@ -10,6 +10,7 @@ bridge that submits Argo Workflows from ephemeral ARC runners, see
   - [bluefin-qa-pipeline](#bluefin-qa-pipeline)
   - [dakota-qa-pipeline](#dakota-qa-pipeline)
   - [dakota-build-pipeline](#dakota-build-pipeline)
+  - [dakota-publish-pipeline](#dakota-publish-pipeline)
   - [cosmic-build-pipeline](#cosmic-build-pipeline)
   - [bluefin-server-build-pipeline](#bluefin-server-build-pipeline)
   - [bst-qa-pipeline](#bst-qa-pipeline)
@@ -84,6 +85,25 @@ image is verified. Local, cache-only, or fallback builds are diagnostic evidence
 and do not satisfy the distributed gate. Inspect failed child nodes even when the
 Argo parent phase is successful; classify BuildBarn storage/DNS/worker failures as
 infrastructure blockers and repair the lab before retrying.
+
+### dakota-publish-pipeline
+- **Purpose:** Publish the local Zot `dakota:testing` and
+  `dakota-nvidia:testing` images to the corresponding
+  `ghcr.io/projectbluefin` packages without changing their digests.
+- **Source:** `192.168.1.102:30500` (the cluster-reachable Zot NodePort).
+- **Authentication:** operator-managed `ghcr-publish-auth` Secret, type
+  `kubernetes.io/dockerconfigjson`, mounted as an auth file. It is never
+  committed or printed.
+- **DAG:** two independent publication lanes followed by a terminal result
+  check that fails the workflow if either lane did not succeed.
+- **Integrity:** source is copied by digest and the destination digest must
+  match. Each lane has two bounded retries.
+- **OCI evidence:** ORAS discovers and recursively copies referrers when
+  present. Explicit absence or unavailable discovery is non-fatal; failure to
+  copy discovered referrers fails the lane.
+- **Concurrency:** the `dakota-publish` semaphore allows one publication
+  workflow while preserving parallel lane execution inside it.
+- **Just recipe:** `run-dakota-publish`.
 
 ### cosmic-build-pipeline
 - **Purpose:** BuildStream compile pipeline for the default COSMIC image
@@ -219,6 +239,7 @@ the next cycle.
 | `nightly-smoke-lts` | 02:30 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin-lts`, `image-tag=testing`, `suites=smoke,developer,system`, `variant=bluefin-lts` |
 | `nightly-dakota` | — | `dakota-qa-pipeline` | Tests pre-built images only — does not build/warm cache. Currently `suspend: true`. |
 | `nightly-knuckle` | 03:30 | `knuckle-qa-pipeline` | `branch=main`, `namespace=knuckle-test`, `suite=smoke`, `tests-branch=main` |
+| `nightly-dakota-publish` | 21:00 | `dakota-publish-pipeline` | Digest-preserving Zot-to-GHCR publication for both Dakota testing lanes. |
 
 ## Priority Classes
 

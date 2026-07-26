@@ -1,0 +1,193 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: dakota-publish-pipeline
+  namespace: argo
+  annotations:
+    description: |
+      Publishes the local Zot dakota:testing and dakota-nvidia:testing images
+      to GHCR by source digest, verifies each destination digest, and copies
+      OCI referrers when present. Requires the ghcr-publish-auth Secret.
+    bluefin.io/ghcr-publish-auth-secret-type: kubernetes.io/dockerconfigjson
+  labels:
+    app.kubernetes.io/component: image-publisher
+    app.kubernetes.io/part-of: dakota-test-suite
+spec:
+  serviceAccountName: argo
+  activeDeadlineSeconds: 14400
+  entrypoint: publish-all
+  podGC:
+    strategy: OnWorkflowCompletion
+  ttlStrategy:
+    secondsAfterSuccess: 86400
+    secondsAfterFailure: 604800
+
+  templates:
+    - name: publish-all
+      synchronization:
+        semaphores:
+          - configMapKeyRef:
+              name: workflow-semaphores
+              key: dakota-publish
+      dag:
+        tasks:
+          - name: publish-dakota
+            template: publish-lane
+            arguments:
+              parameters:
+                - name: image
+                  value: dakota
+
+          - name: publish-dakota-nvidia
+            template: publish-lane
+            arguments:
+              parameters:
+                - name: image
+                  value: dakota-nvidia
+
+          - name: verify-lane-results
+            depends: >-
+              (publish-dakota.Succeeded || publish-dakota.Failed || publish-dakota.Errored) &&
+              (publish-dakota-nvidia.Succeeded || publish-dakota-nvidia.Failed || publish-dakota-nvidia.Errored)
+            template: verify-lane-results
+            arguments:
+              parameters:
+                - name: dakota-status
+                  value: "{{tasks.publish-dakota.status}}"
+                - name: dakota-nvidia-status
+                  value: "{{tasks.publish-dakota-nvidia.status}}"
+
+    - name: publish-lane
+      activeDeadlineSeconds: 3600
+      retryStrategy:
+        limit: "2"
+        retryPolicy: Always
+        backoff:
+          duration: "30s"
+          factor: "2"
+          maxDuration: "2m"
+      inputs:
+        parameters:
+          - name: image
+      volumes:
+        - name: ghcr-auth
+          secret:
+            secretName: ghcr-publish-auth
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        volumeMounts:
+          - name: ghcr-auth
+            mountPath: /auth
+            readOnly: true
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+        env:
+          - name: IMAGE
+            value: "{{inputs.parameters.image}}"
+          - name: SOURCE_REGISTRY
+            value: "192.168.1.102:30500"
+          - name: DESTINATION_REGISTRY
+            value: "ghcr.io/projectbluefin"
+          - name: IMAGE_TAG
+            value: testing
+        source: |
+          set -euo pipefail
+
+          AUTH_FILE=/auth/config.json
+          SOURCE_REF="${SOURCE_REGISTRY}/${IMAGE}:${IMAGE_TAG}"
+          DESTINATION_REF="${DESTINATION_REGISTRY}/${IMAGE}:${IMAGE_TAG}"
+
+          SOURCE_DIGEST=$(skopeo inspect \
+            --tls-verify=false \
+            --format '{{.Digest}}' \
+            "docker://${SOURCE_REF}")
+          if ! printf '%s\n' "${SOURCE_DIGEST}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "ERROR: invalid source digest for ${SOURCE_REF}: ${SOURCE_DIGEST}" >&2
+            exit 1
+          fi
+
+          echo "Publishing ${SOURCE_REF}@${SOURCE_DIGEST} to ${DESTINATION_REF}" >&2
+          skopeo copy \
+            --all \
+            --src-tls-verify=false \
+            --dest-authfile "${AUTH_FILE}" \
+            "docker://${SOURCE_REGISTRY}/${IMAGE}@${SOURCE_DIGEST}" \
+            "docker://${DESTINATION_REF}"
+
+          SOURCE_DIGEST_REF="${SOURCE_REGISTRY}/${IMAGE}@${SOURCE_DIGEST}"
+          if command -v oras >/dev/null 2>&1; then
+            if DISCOVERY=$(oras discover \
+              --plain-http \
+              --format json \
+              --depth 1 \
+              "${SOURCE_DIGEST_REF}" 2>/dev/null); then
+              REFERRER_COUNT=$(printf '%s' "${DISCOVERY}" | jq '(.referrers // []) | length')
+              if [ "${REFERRER_COUNT}" -eq 0 ]; then
+                echo "OCI referrers: none present for ${SOURCE_DIGEST_REF}; image publication continues" >&2
+              else
+                echo "OCI referrers: found ${REFERRER_COUNT}; copying recursively" >&2
+                oras cp \
+                  --recursive \
+                  --from-plain-http \
+                  --to-registry-config "${AUTH_FILE}" \
+                  --no-tty \
+                  "${SOURCE_DIGEST_REF}" \
+                  "${DESTINATION_REF}"
+              fi
+            else
+              echo "OCI referrers: discovery unavailable for ${SOURCE_DIGEST_REF}; image publication continues" >&2
+            fi
+          else
+            echo "OCI referrers: ORAS unavailable; image publication continues" >&2
+          fi
+
+          DESTINATION_DIGEST=$(skopeo inspect \
+            --authfile "${AUTH_FILE}" \
+            --format '{{.Digest}}' \
+            "docker://${DESTINATION_REF}")
+          if [ "${DESTINATION_DIGEST}" != "${SOURCE_DIGEST}" ]; then
+            echo "ERROR: digest mismatch for ${DESTINATION_REF}: source=${SOURCE_DIGEST} destination=${DESTINATION_DIGEST}" >&2
+            exit 1
+          fi
+
+          echo "Published ${DESTINATION_REF}@${DESTINATION_DIGEST}" >&2
+
+    - name: verify-lane-results
+      inputs:
+        parameters:
+          - name: dakota-status
+          - name: dakota-nvidia-status
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 25m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+        env:
+          - name: DAKOTA_STATUS
+            value: "{{inputs.parameters.dakota-status}}"
+          - name: DAKOTA_NVIDIA_STATUS
+            value: "{{inputs.parameters.dakota-nvidia-status}}"
+        source: |
+          set -euo pipefail
+
+          echo "dakota:testing publication: ${DAKOTA_STATUS}"
+          echo "dakota-nvidia:testing publication: ${DAKOTA_NVIDIA_STATUS}"
+
+          if [ "${DAKOTA_STATUS}" != Succeeded ] || [ "${DAKOTA_NVIDIA_STATUS}" != Succeeded ]; then
+            echo "ERROR: one or more Dakota publication lanes failed" >&2
+            exit 1
+          fi
