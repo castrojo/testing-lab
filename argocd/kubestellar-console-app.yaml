@@ -50,34 +50,7 @@ spec:
           enabled: false
         clusterName: ghost
         consoleProject: kubestellar
-        kubeconfig:
-          existingSecretKey: config
-          content: |
-            apiVersion: v1
-            kind: Config
-            clusters:
-              - name: ghost
-                cluster:
-                  server: https://kubernetes.default.svc
-                  certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-            contexts:
-              - name: ghost
-                context:
-                  cluster: ghost
-                  user: ghost
-            current-context: ghost
-            users:
-              - name: ghost
-                user:
-                  tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
         enabledDashboards: "dashboard,clusters,cluster-admin,deploy,compute,workloads,deployments,pods,services,nodes,events,gitops,helm,operators,security,storage,network"
-        extraEnv:
-          - name: ENABLE_DEMO_DASHBOARDS
-            value: "false"
-          - name: SHOW_DEMO_TO_LOCAL_CTA
-            value: "false"
-          - name: DISABLE_DYNAMIC_CARDS
-            value: "true"
         auth:
           allowedGitHubLogins: castrojo
           adminGitHubLogins: castrojo
