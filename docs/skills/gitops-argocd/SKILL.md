@@ -129,8 +129,10 @@ names to track resources. Always use a fixed `name:`.
 
 **Singleton local-path PVC rollout:** When a GitOps-managed singleton Deployment
 moves from `emptyDir` to a `local-path` `ReadWriteOnce` PVC, set its strategy to
-`Recreate`. Leave placement to `WaitForFirstConsumer` and the scheduler; do not
-add a hostname selector. Size application retention below PVC capacity so WAL,
+`Recreate` and explicitly set `rollingUpdate: null`; Server-Side Apply otherwise
+retains the old rolling-update field and Kubernetes rejects the strategy change.
+Leave placement to `WaitForFirstConsumer` and the scheduler; do not add a
+hostname selector. Size application retention below PVC capacity so WAL,
 compaction, or other temporary files cannot fill the volume.
 
 **Subdirectories and namespaces:** `testing-lab-infra` runs with
