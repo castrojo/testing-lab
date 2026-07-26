@@ -255,6 +255,12 @@ run-bst-build ref="testing" repo="https://github.com/projectbluefin/dakota.git":
       -p build-mode=re \
       -n {{ argo_ns }} --watch
 
+# Re-run the Dakota poller for the current testing SHA without bypassing BST admission.
+force-dakota-poll:
+    argo submit --from cronworkflow/dakota-commit-poller \
+      -p force=true \
+      -n {{ argo_ns }} --watch
+
 # Compatibility alias for older docs/callers.
 run-dakota-validate ref="testing" repo="https://github.com/projectbluefin/dakota.git":
     just run-bst-build {{ ref }} {{ repo }}

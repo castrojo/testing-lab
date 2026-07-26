@@ -196,8 +196,15 @@ validation path succeed.
 The Dakota and Cosmic commit CronWorkflows share one implementation. It compares
 the source SHA, defers when two BST workflows are already admitted, invokes the
 repository-specific build template, and writes the SHA only after that build
-succeeds. The schedules are staggered behind the PR poller to avoid simultaneous
-admission bursts.
+succeeds. Failed builds therefore remain eligible on the next poll. The schedules
+are staggered behind the PR poller to avoid simultaneous admission bursts.
+
+The CronWorkflows pass `force=false`. For recovery after an out-of-band artifact
+loss, `just force-dakota-poll` submits the Dakota CronWorkflow with `force=true`.
+Force bypasses only the stored-SHA equality check: queue admission and the
+`bst-build` semaphore still apply. A retried or resumed older workflow builds its
+captured SHA, but skips the final state write if another successful workflow
+advanced the stored SHA while it was running.
 
 **Current contract:** `image-poller` must not update `image-polling-digests`
 until `run-pipeline.Succeeded`. If the digest is written before QA passes, the

@@ -91,6 +91,7 @@ The workflow authoring guidance is split by topic:
 - Any pod containing `initContainers` (like `git-sync` in `run-gnome-tests.yaml`) that lacks explicit `resources.requests` and `resources.limits` blocks — the `argo-quota` admission controller evaluates all containers in a pod (including init containers), and will reject the entire pod if any container lacks resource definitions.
 - `orphan-pod-gc` memory capped too low (128Mi) — large pod inventories can OOM the cleanup step (`exit code 137`) and silently skip GC.
 - An image poller that writes the new digest to `image-polling-digests` before the downstream QA pipeline succeeds — failures under cluster pressure then drop work permanently (digest is marked seen, no retry on next poll). Persist digest only after `run-pipeline.Succeeded`.
+- A success-only poller that blindly writes its captured SHA after a retry or resume — an older workflow can overwrite state advanced by a newer successful run. Capture the stored value during admission and compare it again before the final write.
 - Aurora/Bazzite digest pollers running full GNOME suite sets (`smoke,common,developer,software,system`) even though these variants are KDE-focused — this creates 5x VM pressure per trigger and overloads scheduling. Keep Aurora/Bazzite pollers on `suites: system`.
 - K8sGPT finding no-endpoint Services for `argocd-applicationset-controller`, `argocd-dex-server`, `argocd-notifications-controller-metrics`, or `kubevirt/virt-exportproxy` — these are documented control-plane exceptions in this cluster shape.
 - Commit message not in Conventional Commits format — the pre-commit hook rejects any commit not matching `<type>(<scope>): <description>`. Valid types: `feat fix ci chore docs refactor test build perf revert`
@@ -125,5 +126,6 @@ Before marking any WorkflowTemplate change done:
 - [ ] All local OCI registry references use `:30500` (NodePort), not `:5000` (container-internal)
 - [ ] `grep -rn 'image:' argo/ manifests/` shows only allowlisted registries: `ghcr.io`, `quay.io`, `registry.fedoraproject.org`, `registry.access.redhat.com`, `registry.k8s.io`, `<lab-ip>`, `localhost`
 - [ ] Image pollers update digest state only after QA pipeline success (failed runs must retry on next poll)
+- [ ] Poller state writers depend on the downstream task's `.Succeeded` result and reject stale writes when the stored value changed after admission
 - [ ] After removing `suspend: true` from a CronWorkflow and syncing, live `spec.suspend` confirmed via `kubectl get -o jsonpath` — not assumed from ArgoCD's `Synced` status alone
 - [ ] After any disk wipe/registry migration/Zot cleanup, every affected containerDisk tag manually force-rebuilt rather than assuming a digest-comparison poller will self-heal
