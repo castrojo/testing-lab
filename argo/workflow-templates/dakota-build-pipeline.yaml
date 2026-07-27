@@ -44,7 +44,28 @@ spec:
         value: "bst-build"
 
   entrypoint: build
-
+  metrics:
+    prometheus:
+      - name: lab_build_workflow_completed_total
+        help: Completed lab build workflows by pipeline and status.
+        labels:
+          - key: pipeline
+            value: dakota
+          - key: status
+            value: "{{workflow.status}}"
+        counter:
+          value: "1"
+      - name: lab_build_workflow_duration_seconds
+        help: Lab build workflow duration in seconds by pipeline and status.
+        labels:
+          - key: pipeline
+            value: dakota
+          - key: status
+            value: "{{workflow.status}}"
+        histogram:
+          buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+          value: "{{workflow.duration}}"
+  
   templates:
 
     - name: build
@@ -53,6 +74,85 @@ spec:
           - configMapKeyRef:
               name: workflow-semaphores
               key: bst-build
+      inputs:
+        parameters:
+          - name: ref
+            value: "{{workflow.parameters.ref}}"
+          - name: commit-sha
+            value: "{{workflow.parameters.commit-sha}}"
+          - name: image-tag
+            value: "{{workflow.parameters.image-tag}}"
+          - name: repo
+            value: "{{workflow.parameters.repo}}"
+          - name: registry
+            value: "{{workflow.parameters.registry}}"
+          - name: build-mode
+            value: "re"
+          - name: lock-key
+            value: "{{workflow.parameters.lock-key}}"
+      steps:
+        - - name: core
+            template: build-core
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: commit-sha
+                  value: "{{inputs.parameters.commit-sha}}"
+                - name: image-tag
+                  value: "{{inputs.parameters.image-tag}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: build-mode
+                  value: "{{inputs.parameters.build-mode}}"
+                - name: lock-key
+                  value: "{{inputs.parameters.lock-key}}"
+
+    - name: build-warmup
+      synchronization:
+        semaphores:
+          - configMapKeyRef:
+              name: workflow-semaphores
+              key: bst-cache-warm
+      inputs:
+        parameters:
+          - name: ref
+            value: "{{workflow.parameters.ref}}"
+          - name: commit-sha
+            value: "{{workflow.parameters.commit-sha}}"
+          - name: image-tag
+            value: "{{workflow.parameters.image-tag}}"
+          - name: repo
+            value: "{{workflow.parameters.repo}}"
+          - name: registry
+            value: "{{workflow.parameters.registry}}"
+          - name: build-mode
+            value: "re"
+          - name: lock-key
+            value: ""
+      steps:
+        - - name: core
+            template: build-core
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: commit-sha
+                  value: "{{inputs.parameters.commit-sha}}"
+                - name: image-tag
+                  value: "{{inputs.parameters.image-tag}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: build-mode
+                  value: "{{inputs.parameters.build-mode}}"
+                - name: lock-key
+                  value: "{{inputs.parameters.lock-key}}"
+
+    - name: build-core
       inputs:
         parameters:
           - name: ref
@@ -326,6 +426,10 @@ spec:
             value: poll
           - name: GRPC_ENABLE_FORK_SUPPORT
             value: "1"
+          # Avoid the FUSE staging backend; BuildStream exits 255 in this lab
+          # environment when the FUSE stager crashes during source staging.
+          - name: BUILDBOX_STAGER
+            value: copy-or-link
           - name: XDG_CACHE_HOME
             # Reuse persistent node-local cache on the XFS mount for fast
             # coordinator state and local artifact reuse across workflows.
@@ -468,8 +572,8 @@ spec:
           echo "=== Building ${ELEMENT} through BuildBarn remote execution ==="
           bst --config "${BST_CONF}" \
               --no-interactive \
-              --max-jobs 24 \
-              --fetchers 24 \
+              --max-jobs 12 \
+              --fetchers 8 \
               build "${ELEMENT}"
 
           echo "=== Exporting ${ELEMENT} ==="
@@ -477,8 +581,8 @@ spec:
           mkdir -p "${EXPORT_DIR}"
           bst --config "${BST_CONF}" \
               --no-interactive \
-              --max-jobs 24 \
-              --fetchers 24 \
+              --max-jobs 12 \
+              --fetchers 8 \
               -o x86_64_v3 true \
               artifact checkout "${ELEMENT}" \
               --directory "${EXPORT_DIR}"

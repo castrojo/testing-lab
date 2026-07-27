@@ -69,9 +69,64 @@ spec:
     - name: build
       synchronization:
         semaphores:
-        - configMapKeyRef:
-            name: workflow-semaphores
-            key: bst-build
+          - configMapKeyRef:
+              name: workflow-semaphores
+              key: bst-build
+      inputs:
+        parameters:
+          - name: ref
+            value: "{{workflow.parameters.ref}}"
+          - name: repo
+            value: "{{workflow.parameters.repo}}"
+          - name: registry
+            value: "{{workflow.parameters.registry}}"
+          - name: build-mode
+            value: "re"
+      steps:
+        - - name: core
+            template: build-core
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: build-mode
+                  value: "{{inputs.parameters.build-mode}}"
+
+    - name: build-warmup
+      synchronization:
+        semaphores:
+          - configMapKeyRef:
+              name: workflow-semaphores
+              key: bst-cache-warm
+      inputs:
+        parameters:
+          - name: ref
+            value: "{{workflow.parameters.ref}}"
+          - name: repo
+            value: "{{workflow.parameters.repo}}"
+          - name: registry
+            value: "{{workflow.parameters.registry}}"
+          - name: build-mode
+            value: "re"
+      steps:
+        - - name: core
+            template: build-core
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: build-mode
+                  value: "{{inputs.parameters.build-mode}}"
+
+    - name: build-core
       inputs:
         parameters:
           - name: ref
@@ -242,6 +297,10 @@ spec:
             value: poll
           - name: GRPC_ENABLE_FORK_SUPPORT
             value: "1"
+          # Avoid the FUSE staging backend; BuildStream exits 255 in this lab
+          # environment when the FUSE stager crashes during source staging.
+          - name: BUILDBOX_STAGER
+            value: copy-or-link
           # buildstream-plugins-community git_repo uses dulwich, whose filter-process
           # protocol trips over git-lfs smudge for repos with .gitattributes LFS
           # entries (e.g. pop-os/cosmic-edit). git CLI handles them fine; dulwich
