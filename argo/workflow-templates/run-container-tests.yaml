@@ -243,6 +243,19 @@ spec:
           rm -rf /run/gdm /var/log/gdm
           mkdir -p /run/gdm /var/log/gdm
 
+          # GDM and its PreSession helpers (e.g. brew-preinstall) run as the gdm
+          # user and need write access to their runtime/state directories. Ensure
+          # the account and group exist and that the directories are owned by gdm.
+          if ! getent group gdm >/dev/null 2>&1; then
+            groupadd -r gdm
+          fi
+          if ! id -u gdm >/dev/null 2>&1; then
+            useradd -r -g gdm -d /var/lib/gdm -s /usr/sbin/nologin gdm
+          fi
+          chown -R gdm:gdm /run/gdm /var/log/gdm
+          chmod 755 /run/gdm
+          chmod 750 /var/log/gdm
+
           # Make sure groups exist so the test user can access DRI/input devices.
           # Some target images expose groups through NSS without writing
           # /etc/group, while useradd only accepts local group entries.
@@ -261,6 +274,16 @@ spec:
             useradd -m -u 1000 -G video,render,input bluefin-test
           else
             usermod -aG video,render,input bluefin-test
+          fi
+
+          # GDM PAM autologin requires a non-expired shadow lastchg value. Without
+          # it the user is forced to change the password and the session never
+          # registers.
+          if command -v chage >/dev/null 2>&1; then
+            chage -d "$(date +%Y-%m-%d)" bluefin-test
+          else
+            today=$(( $(date +%s) / 86400 ))
+            sed -i "s/^bluefin-test:!*/bluefin-test:!:${today}:0:99999:7:::/" /etc/shadow
           fi
 
           # Configure sudo and auto-login before GDM starts.
