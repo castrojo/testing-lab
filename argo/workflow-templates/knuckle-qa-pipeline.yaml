@@ -138,8 +138,10 @@ spec:
           template: run-gnome-tests
         arguments:
           parameters:
-          - name: vm-ip
-            value: "{{tasks.discover-ip.outputs.parameters.vm-ip}}"
+          - name: vm-name
+            value: "knuckle-test-{{workflow.uid}}"
+          - name: vm-namespace
+            value: "{{workflow.parameters.namespace}}"
           - name: suite
             value: "{{workflow.parameters.suite}}"
           - name: variant

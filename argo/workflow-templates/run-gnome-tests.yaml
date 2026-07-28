@@ -18,11 +18,14 @@ spec:
           #   bluefin-smoke-latest-<workflow-id>  or  bluefin-developer-lts-<id>
         bluefin.io/suite: "{{inputs.parameters.suite}}"
       annotations:
-        bluefin.io/vm-ip: "{{inputs.parameters.vm-ip}}"
+        bluefin.io/vm-name: "{{inputs.parameters.vm-name}}"
         bluefin.io/issue: "{{inputs.parameters.issue-title}}"
     inputs:
       parameters:
-      - name: vm-ip
+      - name: vm-name
+      - name: vm-namespace
+            # Kubernetes namespace where the VMI lives (e.g. knuckle-test)
+        value: "knuckle-test"
       - name: suite
             # smoke | developer | software | system
         value: "smoke"
@@ -114,8 +117,10 @@ spec:
           cpu: "2"
           memory: 2Gi
       env:
-      - name: VM_IP
-        value: "{{inputs.parameters.vm-ip}}"
+      - name: VM_NAME
+        value: "{{inputs.parameters.vm-name}}"
+      - name: VM_NS
+        value: "{{inputs.parameters.vm-namespace}}"
       - name: VM_USER
         value: "{{inputs.parameters.ssh-user}}"
       - name: SUITE
@@ -151,18 +156,35 @@ spec:
         LOG=/tmp/results/runner.log
         exec > >(tee -a "$LOG") 2>&1
 
+        # ── Download virtctl (matches version used by knuckle-qa-pipeline) ───────
+        VIRTCTL=/tmp/virtctl
+        if ! command -v virtctl &>/dev/null; then
+          curl -fsSL -o "${VIRTCTL}" \
+            https://github.com/kubevirt/kubevirt/releases/download/v1.8.2/virtctl-v1.8.2-linux-amd64
+          chmod +x "${VIRTCTL}"
+        else
+          VIRTCTL=$(command -v virtctl)
+        fi
 
+        # ── Start virtctl port-forward: tunnel VM SSH port to localhost:2222 ─────
+        echo "Starting virtctl port-forward for vmi/${VM_NAME} in ${VM_NS}..." >&2
+        "${VIRTCTL}" port-forward -n "${VM_NS}" "vmi/${VM_NAME}" 2222:22 &
+        PF_PID=$!
+        trap 'kill ${PF_PID} 2>/dev/null || true' EXIT
+        # Give the tunnel time to establish before the first SSH attempt.
+        sleep 5
 
-        SSH_OPTS="-i ${SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o LogLevel=ERROR"
-        SSH="ssh ${SSH_OPTS} ${VM_USER}@${VM_IP}"
+        VM_HOST=127.0.0.1
+        SSH_OPTS="-i ${SSH_KEY} -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o LogLevel=ERROR"
+        SSH="ssh ${SSH_OPTS} ${VM_USER}@${VM_HOST}"
         SCP="scp ${SSH_OPTS} -r"
         # Root SSH: used for VM readiness check and bluefin-test key bootstrap.
         # Root pubkey auth is set up by bootc --root-ssh-authorized-keys.
-        ROOT_SSH="ssh ${SSH_OPTS} root@${VM_IP}"
+        ROOT_SSH="ssh ${SSH_OPTS} root@${VM_HOST}"
 
         # ── Wait for VM SSH to become ready (prefer bluefin-test; fallback root) ──
         BLUEFIN_READY=0
-        echo "Checking SSH on ${VM_IP} (${VM_USER}, up to 2 min)..." >&2
+        echo "Checking SSH on ${VM_NAME} via port-forward (${VM_USER}, up to 2 min)..." >&2
         if timeout 120 bash -c "
           until ${SSH} 'echo ready' 2>/dev/null; do
             sleep 5
@@ -173,16 +195,16 @@ spec:
         fi
 
         if [[ "${BLUEFIN_READY}" -eq 0 ]]; then
-          echo "Waiting for SSH on ${VM_IP} (root fallback, up to 10 min)..." >&2
+          echo "Waiting for SSH on ${VM_NAME} via port-forward (root fallback, up to 10 min)..." >&2
           # Verbose first attempt to capture the exact auth failure for root.
-          ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          ssh -i "${SSH_KEY}" -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=15 -o LogLevel=DEBUG3 \
-            root@${VM_IP} 'echo root-ssh-diag-ready' 2>&1 < /dev/null || true
+            root@${VM_HOST} 'echo root-ssh-diag-ready' 2>&1 < /dev/null || true
           echo "--- root SSH diagnostic complete; starting retry loop ---" >&2
           # Wait for root SSH — bootc-native mechanism means this is reliable.
           timeout 600 bash -c "
-            until ssh -i '${SSH_KEY}' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                    -o ConnectTimeout=10 -o LogLevel=ERROR root@'${VM_IP}' 'echo ready' 2>/dev/null; do
+            until ssh -i '${SSH_KEY}' -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                    -o ConnectTimeout=10 -o LogLevel=ERROR root@'${VM_HOST}' 'echo ready' 2>/dev/null; do
               sleep 10
             done
           "
@@ -242,10 +264,10 @@ spec:
           # Wait for bluefin-test SSH (KubeVirt injects key; give it a moment).
           echo "Verifying bluefin-test SSH..." >&2
           # One verbose probe to capture exact server refusal before silent retry loop.
-          ssh -v -i "${SSH_KEY}" \
+          ssh -v -i "${SSH_KEY}" -p 2222 \
             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=10 -o PasswordAuthentication=no \
-            ${VM_USER}@${VM_IP} 'echo ok' 2>&1 | \
+            ${VM_USER}@${VM_HOST} 'echo ok' 2>&1 | \
             grep -iE 'debug1|debug2.*key|denied|accept|authentications|offer|refused|pubkey' | head -20 || true
           # Show authorized_keys and sshd -T for bluefin-test (diagnosis only).
           ${ROOT_SSH} "
@@ -332,19 +354,19 @@ spec:
         fi
         echo "Copying tests/${REMOTE_SUITE}/ to VM..." >&2
         ${SSH} "mkdir -p /tmp/bluefin-tests /tmp/results"
-        ${SCP} /workspace/bluefin-test-suite/tests/${REMOTE_SUITE} ${VM_USER}@${VM_IP}:/tmp/bluefin-tests/
+        ${SCP} /workspace/bluefin-test-suite/tests/${REMOTE_SUITE} ${VM_USER}@${VM_HOST}:/tmp/bluefin-tests/
         # Copy tests/shared/ so environment.py can resolve 'tests.shared.*' imports.
         ${SSH} "mkdir -p /tmp/bluefin-tests/tests"
-        ${SCP} /workspace/bluefin-test-suite/tests/shared ${VM_USER}@${VM_IP}:/tmp/bluefin-tests/tests/
+        ${SCP} /workspace/bluefin-test-suite/tests/shared ${VM_USER}@${VM_HOST}:/tmp/bluefin-tests/tests/
         # Some suites import helpers from tests.smoke; copy it when available.
         if [[ "${REMOTE_SUITE}" != "smoke" && -d /workspace/bluefin-test-suite/tests/smoke ]]; then
-          ${SCP} /workspace/bluefin-test-suite/tests/smoke ${VM_USER}@${VM_IP}:/tmp/bluefin-tests/tests/
+          ${SCP} /workspace/bluefin-test-suite/tests/smoke ${VM_USER}@${VM_HOST}:/tmp/bluefin-tests/tests/
         fi
         ${SSH} "touch /tmp/bluefin-tests/__init__.py /tmp/bluefin-tests/tests/__init__.py" || true
 
         if [[ "${SUITE}" != "system" ]]; then
           WAIT_FOR_SHELL=/workspace/bluefin-test-suite/tests/shared/wait_for_shell.py
-          ${SCP} "${WAIT_FOR_SHELL}" ${VM_USER}@${VM_IP}:/tmp/bluefin-tests/${REMOTE_SUITE}/wait_for_shell.py
+          ${SCP} "${WAIT_FOR_SHELL}" ${VM_USER}@${VM_HOST}:/tmp/bluefin-tests/${REMOTE_SUITE}/wait_for_shell.py
         fi
 
         # ── Run tests ────────────────────────────────────────────────────
@@ -364,8 +386,8 @@ spec:
         BEHAVE_RC=0
         if [[ "${SUITE}" == "common" || "${SUITE}" == "system" ]]; then
           # common/system suites are SSH-driven from the runner container (no AT-SPI/display).
-          # It reads VM_IP, VM_USER, and SSH_KEY from the environment, which are
-          # available here but NOT inside the VM.
+          # It reads VM_HOST, VM_USER, and SSH_KEY from the environment; SSH tunnels via
+          # the virtctl port-forward already running on localhost:2222.
           if ! python3 -c 'import behave' 2>/dev/null; then
             python3 -m pip --version &>/dev/null || python3 -m ensurepip --user 2>&1 | tail -2 || true
             python3 -m pip install --quiet behave 2>&1 | tail -3
@@ -374,9 +396,10 @@ spec:
           if [[ "${SUITE}" == "system" ]]; then
             SUITE_FEATURE_DIR="lifecycle"
           fi
-          export VM_IP="${VM_IP}"
+          export VM_HOST="${VM_HOST}"
           export VM_USER="${VM_USER}"
           export SSH_KEY="${SSH_KEY}"
+          export SSH_PORT="2222"
           PYTHONPATH=/workspace/bluefin-test-suite \
           python3 -m behave /workspace/bluefin-test-suite/tests/${SUITE_FEATURE_DIR}/features/ \
             --format json.pretty --outfile /tmp/results/results.json --no-capture ${TAGS_ARG} || BEHAVE_RC=$?
@@ -455,7 +478,7 @@ spec:
         echo "Collecting results..." >&2
         # common suite writes results.json locally in this container; skip VM SCP.
         if [[ "${SUITE}" != "common" ]]; then
-          ${SCP} ${VM_USER}@${VM_IP}:/tmp/results/. /tmp/results/ || true
+          ${SCP} ${VM_USER}@${VM_HOST}:/tmp/results/. /tmp/results/ || true
         fi
 
         # Persist results + screenshots to ghost disk for release evidence
