@@ -50,9 +50,10 @@ auto-merge. The branch is rebuilt from `main` on every run and every file is
 regenerated, so the force-push cannot lose work.
 
 A pull request opened with `GITHUB_TOKEN` receives no `pull_request` check runs —
-GitHub does not let one workflow trigger another. That is fine here, because the
-ruleset evaluates `lint` against the **merge group**, not the pull request. The
-queue still gates the merge.
+GitHub does not let one workflow trigger another. `workflow_dispatch` is exempt
+from that restriction, so the job triggers the real `Lint` workflow against the
+branch head to produce the required `lint` check. The merge group then runs
+`lint` again authoritatively before the merge lands.
 
 Only two actors hold a bypass, and neither is available to Actions:
 
