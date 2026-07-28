@@ -39,6 +39,8 @@ spec:
         value: "api-key"
       - name: prometheus-url
         value: "http://prometheus.kube-system:9090"
+      - name: context-urls
+        value: "https://raw.githubusercontent.com/k8sgpt-ai/k8sgpt/main/README.md,https://raw.githubusercontent.com/kubernetes/website/main/content/en/docs/tasks/debug/debug-application/debug-pods.md,https://raw.githubusercontent.com/kubernetes/website/main/content/en/docs/tasks/debug/debug-application/debug-running-pod.md"
   templates:
     - name: analyze
       activeDeadlineSeconds: 1800
@@ -60,8 +62,45 @@ spec:
           import subprocess
           import tarfile
           import urllib.request
+          import urllib.error
           from pathlib import Path
-    
+
+
+          def fetch_context_docs(urls_param):
+            """Fetch fresh documentation from Context7-style URLs at runtime."""
+            parts = []
+            for url in [u.strip() for u in urls_param.split(",") if u.strip()]:
+              try:
+                req = urllib.request.Request(url, headers={"User-Agent": "k8sgpt-lab/1.0"})
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                  content = resp.read().decode("utf-8", errors="replace")
+                parts.append(f"## Source: {url}\n\n{content[:4000]}")
+                print(f"fetched context: {url} ({len(content)} bytes)")
+              except Exception as exc:
+                print(f"warning: could not fetch context from {url}: {exc}")
+            return "\n\n---\n\n".join(parts)
+
+
+          def call_llm(api_key, base_url, model, system_prompt, user_message):
+            """Call an OpenAI-compatible LLM API directly."""
+            payload = json.dumps({
+              "model": model,
+              "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+              ],
+              "max_tokens": 2048,
+              "temperature": 0.2,
+            }).encode()
+            req = urllib.request.Request(
+              f"{base_url.rstrip('/')}/chat/completions",
+              data=payload,
+              headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+              return json.loads(resp.read())["choices"][0]["message"]["content"]
+
+
           def normalize_results(data, ignored_services):
             ignored = {item for item in ignored_services.split(",") if item}
             results = data.get("results") or []
@@ -77,29 +116,28 @@ spec:
             namespace = "{{workflow.parameters.namespace}}"
             filters = "{{workflow.parameters.filters}}"
             ignored_services = "{{workflow.parameters.ignored-services}}"
-            provider = "{{workflow.parameters.provider}}"
             model = "{{workflow.parameters.model}}"
             base_url = "{{workflow.parameters.base-url}}"
             api_key = os.environ.get("K8SGPT_API_KEY", "")
             prometheus_url = "{{workflow.parameters.prometheus-url}}"
+            context_urls = "{{workflow.parameters.context-urls}}"
             results_dir = Path("/tmp/results")
             bin_dir = Path("/tmp/bin")
             home_dir = Path("/tmp/home")
-            config_dir = home_dir / ".config" / "k8sgpt"
             results_dir.mkdir(parents=True, exist_ok=True)
             bin_dir.mkdir(parents=True, exist_ok=True)
             home_dir.mkdir(parents=True, exist_ok=True)
-            config_dir.mkdir(parents=True, exist_ok=True)
+            (home_dir / ".config" / "k8sgpt").mkdir(parents=True, exist_ok=True)
             os.environ["HOME"] = str(home_dir)
             os.environ["XDG_CONFIG_HOME"] = str(home_dir / ".config")
-    
+
             if namespace and not re.fullmatch(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", namespace):
               raise SystemExit(f"invalid namespace parameter: {namespace}")
             if filters and not re.fullmatch(r"[A-Za-z,]+", filters):
               raise SystemExit(f"invalid filters parameter: {filters}")
             if ignored_services and not re.fullmatch(r"[a-z0-9./,_-]+", ignored_services):
               raise SystemExit(f"invalid ignored-services parameter: {ignored_services}")
-    
+
             arch = os.uname().machine
             if arch in {"x86_64", "amd64"}:
               archive = "k8sgpt_Linux_x86_64.tar.gz"
@@ -107,45 +145,70 @@ spec:
               archive = "k8sgpt_Linux_arm64.tar.gz"
             else:
               raise SystemExit(f"unsupported architecture: {arch}")
-    
+
             archive_path = Path("/tmp/k8sgpt.tgz")
-            url = f"https://github.com/k8sgpt-ai/k8sgpt/releases/download/{k8sgpt_version}/{archive}"
-            with urllib.request.urlopen(url, timeout=60) as response, archive_path.open("wb") as fh:
+            dl_url = f"https://github.com/k8sgpt-ai/k8sgpt/releases/download/{k8sgpt_version}/{archive}"
+            with urllib.request.urlopen(dl_url, timeout=60) as response, archive_path.open("wb") as fh:
               shutil.copyfileobj(response, fh)
-    
             with tarfile.open(archive_path, "r:gz") as tf:
-              member = tf.getmember("k8sgpt")
-              tf.extract(member, bin_dir)
+              tf.extract(tf.getmember("k8sgpt"), bin_dir)
             k8sgpt = bin_dir / "k8sgpt"
             k8sgpt.chmod(0o755)
 
-            if api_key:
-              print(f"configuring k8sgpt provider={provider} model={model} base_url={base_url or '(default)'}")
-              auth_cmd = [str(k8sgpt), "auth", "add", "--backend", provider, "--model", model, "--password", api_key]
-              if base_url:
-                auth_cmd += ["--baseurl", base_url]
-              subprocess.run(auth_cmd, check=True, capture_output=True, text=True)
-              subprocess.run([str(k8sgpt), "auth", "default", "-p", provider], check=True, capture_output=True, text=True)
+            # Stage 1: fetch fresh context docs at runtime (Context7-style, always current)
+            print("fetching fresh context docs...")
+            context_docs = fetch_context_docs(context_urls)
+            if context_docs:
+              print(f"context fetched: {len(context_docs)} chars across {len(context_urls.split(','))} sources")
             else:
-              print("no API key found — running in local analysis mode (no AI explanations)")
-    
+              print("warning: no context docs fetched, LLM will use training data only")
+
+            # Stage 2: k8sgpt analyze in local mode (no --explain) — raw findings only
             cmd = [str(k8sgpt), "analyze", "--output=json"]
             if filters:
               cmd += ["--filter", filters]
             if namespace:
               cmd += ["--namespace", namespace]
-            if api_key:
-              cmd += ["--explain"]
             if prometheus_url:
               cmd += ["--prometheus-url", prometheus_url]
-    
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-            data = normalize_results(json.loads(result.stdout), ignored_services)
-    
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            data = normalize_results(json.loads(result.stdout or "{}"), ignored_services)
+            findings = data.get("results") or []
+            print(f"k8sgpt local findings: {len(findings)}")
+
+            # Stage 3: enrich with LLM using fresh context (if API key available)
+            if api_key and findings:
+              print(f"enriching {len(findings)} findings with {model} + fresh context docs...")
+              findings_text = "\n\n".join(
+                f"[{i+1}] {f.get('kind','?')}/{f.get('name','?')}: {(f.get('error') or [{}])[0].get('Text','')}"
+                for i, f in enumerate(findings)
+              )
+              system_prompt = (
+                "You are a Kubernetes cluster reliability expert. Use the following current"
+                " documentation to inform your analysis.\n\n"
+                + context_docs
+                + "\n\nFor each numbered finding, provide:"
+                "\n- A one-sentence diagnosis"
+                "\n- A concrete remediation step"
+                "\n\nBe concise. Format as numbered list matching the input."
+              )
+              user_msg = f"Analyze these Kubernetes cluster findings:\n\n{findings_text}"
+              try:
+                explanation = call_llm(api_key, base_url, model, system_prompt, user_msg)
+                data["ai_analysis"] = {
+                  "model": model,
+                  "context_sources": [u.strip() for u in context_urls.split(",") if u.strip()],
+                  "explanation": explanation,
+                }
+                print("AI enrichment complete")
+              except Exception as exc:
+                print(f"warning: LLM call failed ({exc}), results include local findings only")
+            elif not api_key:
+              print("no API key — skipping AI enrichment, local findings only")
+
             with (results_dir / "k8sgpt-results.json").open("w", encoding="utf-8") as fh:
-              json.dump(data, fh)
-    
-            print(f"k8sgpt findings: {len(data['results'])}")
+              json.dump(data, fh, indent=2)
+            print(f"k8sgpt findings: {len(findings)}")
 
 
           if __name__ == "__main__":
