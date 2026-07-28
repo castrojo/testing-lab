@@ -7,7 +7,55 @@ metadata:
     app.kubernetes.io/component: pr-poller
     app.kubernetes.io/part-of: bluefin-test-suite
 spec:
+  arguments:
+    parameters:
+      - name: refresh-existing
+        value: "false"
+      - name: repository
+        value: ""
+      - name: commit-sha
+        value: ""
+      - name: pr-number
+        value: ""
+      - name: image
+        value: ""
+      - name: image-tag
+        value: ""
+      - name: image-digest
+        value: ""
+      - name: suites
+        value: ""
+      - name: variant
+        value: ""
+      - name: branch
+        value: ""
+      - name: testsuite-branch
+        value: ""
+      - name: testsuite-repo
+        value: ""
   serviceAccountName: argo
+  metrics:
+    prometheus:
+      - name: lab_build_workflow_completed_total
+        help: Completed lab build workflows by pipeline and status.
+        labels:
+          - key: pipeline
+            value: pr-poller
+          - key: status
+            value: "{workflow.status}"
+        counter:
+          value: "1"
+      - name: lab_build_workflow_duration_seconds
+        help: Lab build workflow duration in seconds by pipeline and status.
+        labels:
+          - key: pipeline
+            value: pr-poller
+          - key: status
+            value: "{workflow.status}"
+        histogram:
+          buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+          value: "{workflow.duration}"
+
   entrypoint: poll-labeled-prs
   templates:
     - name: poll-labeled-prs
@@ -31,6 +79,8 @@ spec:
               secretKeyRef:
                 name: github-token
                 key: token
+          - name: REFRESH_EXISTING
+            value: "{{workflow.parameters.refresh-existing}}"
         source: |
           set -euo pipefail
 
@@ -131,18 +181,21 @@ spec:
            SHA=$(echo "$PR"  | jq -r '.head.sha')
            PR_NUM=$(echo "$PR" | jq -r '.number')
 
-           # Dedup: one workflow per PR head SHA — ever. Without this the
-           # poller re-dispatched every open PR on every cycle, flooding the
-           # cluster with duplicate runs. To force a re-test of the same SHA,
-           # delete the old workflow (kubectl delete wf -n argo -l
-           # bluefin.io/pr-sha=<sha12>) or push a new commit.
+           # Dedup: one workflow per PR head SHA by default. Refresh mode
+           # bypasses this guard so an operator can force a fresh run for an
+           # already-open PR without waiting for a new commit.
            SHA12="${SHA:0:12}"
-           EXISTING=$(kubectl get workflows -n argo \
-             -l "bluefin.io/pr-number=${PR_NUM},bluefin.io/pr-sha=${SHA12}" \
-             --no-headers 2>/dev/null | wc -l)
-           if [[ "$EXISTING" -gt 0 ]]; then
-             echo "PR #${PR_NUM} ${REPO}: workflow for ${SHA12} already exists (${EXISTING}), skipping" >&2
-             return
+           if [[ "${REFRESH_EXISTING}" == "true" ]]; then
+             kubectl delete workflow -n argo -l "bluefin.io/pr-number=${PR_NUM},bluefin.io/pr-sha=${SHA12}" --ignore-not-found >/dev/null 2>&1 || true
+             echo "PR #${PR_NUM} ${REPO}: refresh mode enabled, re-dispatching ${SHA12}" >&2
+           else
+             EXISTING=$(kubectl get workflows -n argo \
+               -l "bluefin.io/pr-number=${PR_NUM},bluefin.io/pr-sha=${SHA12}" \
+               --no-headers 2>/dev/null | wc -l)
+             if [[ "$EXISTING" -gt 0 ]]; then
+               echo "PR #${PR_NUM} ${REPO}: workflow for ${SHA12} already exists (${EXISTING}), skipping" >&2
+               return
+             fi
            fi
 
            HEAD_BRANCH=$(echo "$PR" | jq -r '.head.ref')
@@ -326,26 +379,26 @@ spec:
                      arguments:
                        parameters:
                          - name: repository
-                           value: "{{workflow.parameters.repository}}"
+                           value: "{{{{workflow.parameters.repository}}}}"
                          - name: sha
-                           value: "{{workflow.parameters.commit-sha}}"
+                           value: "{{{{workflow.parameters.commit-sha}}}}"
                          - name: pr-number
-                           value: "{{workflow.parameters.pr-number}}"
+                           value: "{{{{workflow.parameters.pr-number}}}}"
                          - name: state
                            value: in_progress
                          - name: conclusion
                            value: ""
                          - name: workflow-name
-                           value: "{{workflow.name}}"
+                           value: "{{{{workflow.name}}}}"
                          - name: workflow-url
-                           value: "${ARGO_WORKFLOW_URL_BASE}/{{workflow.name}}"
+                           value: "${ARGO_WORKFLOW_URL_BASE}/{{{{workflow.name}}}}"
                          - name: title
                            value: ${DISPLAY_NAME} lab validation is running
                          - name: summary
                            value: |
                              The lab admitted PR #${PR_NUM} at commit \`${SHA}\`.
 
-                             Validation is running in Argo workflow \`{{workflow.name}}\`.
+                             Validation is running in Argo workflow \`{{{{workflow.name}}}}\`.
                          - name: text
                            value: ""
                          - name: started-at
@@ -354,7 +407,7 @@ spec:
                            value: ""
                    - name: build
                      depends: "(report-start.Succeeded || report-start.Failed || report-start.Errored)"
-                     when: "'{{workflow.parameters.repository}}' == 'projectbluefin/dakota'"
+                     when: "'{{{{workflow.parameters.repository}}}}' == 'projectbluefin/dakota'"
                      templateRef:
                        name: dakota-build-pipeline
                        template: build
@@ -374,56 +427,56 @@ spec:
                            value: "bst-build"
                    - name: qa-dakota
                      depends: "build.Succeeded"
-                     when: "'{{workflow.parameters.repository}}' == 'projectbluefin/dakota'"
+                     when: "'{{{{workflow.parameters.repository}}}}' == 'projectbluefin/dakota'"
                      templateRef:
                        name: dakota-qa-pipeline
                        template: pipeline
                      arguments:
                        parameters:
                          - name: image
-                           value: "{{workflow.parameters.image}}"
+                           value: "{{{{workflow.parameters.image}}}}"
                          - name: image-tag
-                           value: "{{workflow.parameters.image-tag}}"
+                           value: "{{{{workflow.parameters.image-tag}}}}"
                          - name: image-digest
-                           value: "{{workflow.parameters.image-digest}}"
+                           value: "{{{{workflow.parameters.image-digest}}}}"
                          - name: suites
-                           value: "{{workflow.parameters.suites}}"
+                           value: "{{{{workflow.parameters.suites}}}}"
                          - name: variant
-                           value: "{{workflow.parameters.variant}}"
+                           value: "{{{{workflow.parameters.variant}}}}"
                          - name: branch
-                           value: "{{workflow.parameters.branch}}"
+                           value: "{{{{workflow.parameters.branch}}}}"
                          - name: testsuite-branch
-                           value: "{{workflow.parameters.testsuite-branch}}"
+                           value: "{{{{workflow.parameters.testsuite-branch}}}}"
                          - name: testsuite-repo
-                           value: "{{workflow.parameters.testsuite-repo}}"
+                           value: "{{{{workflow.parameters.testsuite-repo}}}}"
                    - name: qa-bluefin
                      depends: "(report-start.Succeeded || report-start.Failed || report-start.Errored)"
-                     when: "'{{workflow.parameters.repository}}' != 'projectbluefin/dakota'"
+                     when: "'{{{{workflow.parameters.repository}}}}' != 'projectbluefin/dakota'"
                      templateRef:
                        name: bluefin-qa-pipeline
                        template: pipeline
                      arguments:
                        parameters:
                           - name: image
-                            value: "{{workflow.parameters.image}}"
+                            value: "{{{{workflow.parameters.image}}}}"
                           - name: image-tag
-                            value: "{{workflow.parameters.image-tag}}"
+                            value: "{{{{workflow.parameters.image-tag}}}}"
                           - name: suites
-                            value: "{{workflow.parameters.suites}}"
+                            value: "{{{{workflow.parameters.suites}}}}"
                           - name: variant
-                            value: "{{workflow.parameters.variant}}"
+                            value: "{{{{workflow.parameters.variant}}}}"
                           - name: branch
-                            value: "{{workflow.parameters.branch}}"
+                            value: "{{{{workflow.parameters.branch}}}}"
                           - name: pr-number
-                            value: "{{workflow.parameters.pr-number}}"
+                            value: "{{{{workflow.parameters.pr-number}}}}"
                           - name: sha
-                            value: "{{workflow.parameters.commit-sha}}"
+                            value: "{{{{workflow.parameters.commit-sha}}}}"
                           - name: repo
-                            value: "{{workflow.parameters.repository}}"
+                            value: "{{{{workflow.parameters.repository}}}}"
                           - name: testsuite-branch
-                            value: "{{workflow.parameters.testsuite-branch}}"
+                            value: "{{{{workflow.parameters.testsuite-branch}}}}"
                           - name: testsuite-repo
-                            value: "{{workflow.parameters.testsuite-repo}}"
+                            value: "{{{{workflow.parameters.testsuite-repo}}}}"
              - name: report-final
                steps:
                  - - name: github-check
@@ -433,15 +486,15 @@ spec:
                      arguments:
                        parameters:
                          - name: repository
-                           value: "{{workflow.parameters.repository}}"
+                           value: "{{{{workflow.parameters.repository}}}}"
                          - name: sha
-                           value: "{{workflow.parameters.commit-sha}}"
+                           value: "{{{{workflow.parameters.commit-sha}}}}"
                          - name: pr-number
-                           value: "{{workflow.parameters.pr-number}}"
+                           value: "{{{{workflow.parameters.pr-number}}}}"
                          - name: final-status
-                           value: "{{workflow.status}}"
+                           value: "{{{{workflow.status}}}}"
                          - name: workflow-url
-                           value: "${ARGO_WORKFLOW_URL_BASE}/{{workflow.name}}"
+                           value: "${ARGO_WORKFLOW_URL_BASE}/{{{{workflow.name}}}}"
           EOF
             )
             WORKFLOW_URL="${ARGO_WORKFLOW_URL_BASE}/${WORKFLOW_NAME}"

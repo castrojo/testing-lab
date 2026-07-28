@@ -182,6 +182,50 @@ def test_pr_poller_uses_the_exact_testsuite_pr_source():
     assert "value: ${TESTSUITE_REPO}" in content
 
 
+def test_pr_poller_supports_explicit_refresh_mode():
+    content = (ROOT / "argo/workflow-templates/pr-poller.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "name: refresh-existing" in content
+    assert 'value: "false"' in content
+    assert "name: REFRESH_EXISTING" in content
+    assert 'value: "{{workflow.parameters.refresh-existing}}"' in content
+    assert 'if [[ "${REFRESH_EXISTING}" == "true" ]]; then' in content
+    assert 'kubectl delete workflow -n argo -l "bluefin.io/pr-number=${PR_NUM},bluefin.io/pr-sha=${SHA12}"' in content
+
+
+def test_pr_label_poller_cron_forwards_refresh_mode_to_workflow_template():
+    cron = (ROOT / "manifests/pr-label-poller.yaml").read_text(encoding="utf-8")
+
+    assert "workflowTemplateRef:\n      name: pr-poller" in cron
+    assert "- name: refresh-existing" in cron
+    assert 'value: "false"' in cron
+
+
+def test_pr_poller_declares_parameters_used_by_inline_workflow():
+    content = (ROOT / "argo/workflow-templates/pr-poller.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    args_block = content.split("spec:", 1)[1].split("templates:", 1)[0]
+    for name in [
+        "refresh-existing",
+        "repository",
+        "commit-sha",
+        "pr-number",
+        "image",
+        "image-tag",
+        "image-digest",
+        "suites",
+        "variant",
+        "branch",
+        "testsuite-branch",
+        "testsuite-repo",
+    ]:
+        assert f"- name: {name}" in args_block
+
+
 def test_container_runner_never_falls_back_to_a_different_testsuite_revision():
     content = (ROOT / "argo/workflow-templates/run-container-tests.yaml").read_text(
         encoding="utf-8"
@@ -318,7 +362,9 @@ def test_pr_poller_carries_image_digest_into_dakota_qa_workflow():
 
     dakota_block = poller.split("name: qa-dakota", 1)[1].split("name: qa-bluefin", 1)[0]
     assert "- name: image-digest" in dakota_block
-    assert 'value: "{{workflow.parameters.image-digest}}"' in dakota_block
+    # The inline child-workflow manifest escapes Argo expressions so they are
+    # resolved by the child workflow, not the parent poller.
+    assert 'value: "{{{{workflow.parameters.image-digest}}}}"' in dakota_block
     assert "dakota-qa-pipeline" in dakota_block
 
 
