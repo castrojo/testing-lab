@@ -372,7 +372,6 @@ def main():
                 if seen_at:
                     return {
                         'seen_at': seen_at,
-                        'run_url': run.get('run_url'),
                         'run_id': run.get('id'),
                     }
             return None
@@ -380,6 +379,9 @@ def main():
         summary = {}
         for image, cfg in image_map.items():
             repo = cfg['repo']
+            # Published as the public dashboard evidence link, so it must always resolve
+            # for an anonymous visitor. Never fall back to an in-cluster Argo UI URL.
+            public_evidence_url = f"https://github.com/{repo}/releases"
             releases = run_json(f"gh api repos/{repo}/releases?per_page=100")
             if not isinstance(releases, list):
                 releases = []
@@ -412,11 +414,11 @@ def main():
                 'stable_seen_at': stable_seen_at,
                 'stable_age_days': max(0, int((now_dt - stable_dt).total_seconds() // 86400)) if stable_dt else None,
                 'stable_tag': (stable_ghcr.get('tag') if stable_ghcr else None) or (stable_rel.get('tag_name') if stable_rel else None) or (stable_fallback.get('run_id') if stable_fallback else None),
-                'stable_source_url': (stable_ghcr.get('source_url') if stable_ghcr else None) or (stable_rel.get('html_url') if stable_rel else None) or (stable_fallback.get('run_url') if stable_fallback else None),
+                'stable_source_url': (stable_ghcr.get('source_url') if stable_ghcr else None) or (stable_rel.get('html_url') if stable_rel else None) or public_evidence_url,
                 'testing_seen_at': testing_seen_at,
                 'testing_age_days': max(0, int((now_dt - testing_dt).total_seconds() // 86400)) if testing_dt else None,
                 'testing_tag': (testing_ghcr.get('tag') if testing_ghcr else None) or (testing_rel.get('tag_name') if testing_rel else None) or (testing_fallback.get('run_id') if testing_fallback else None),
-                'testing_source_url': (testing_ghcr.get('source_url') if testing_ghcr else None) or (testing_rel.get('html_url') if testing_rel else None) or (testing_fallback.get('run_url') if testing_fallback else None),
+                'testing_source_url': (testing_ghcr.get('source_url') if testing_ghcr else None) or (testing_rel.get('html_url') if testing_rel else None) or public_evidence_url,
             }
         return summary
 
