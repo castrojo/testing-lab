@@ -295,6 +295,24 @@ spec:
             sudo modprobe uinput 2>/dev/null || true
             sudo chmod 0666 /dev/uinput 2>/dev/null || true
             sudo chcon -t uinput_device_t /dev/uinput 2>/dev/null || true
+
+            # Validate uinput readiness so key-combo failures surface at setup
+            # with a clear diagnostic instead of a cryptic python-uinput error.
+            if [[ ! -c /dev/uinput ]]; then
+              echo "FATAL: /dev/uinput is not present after setup (modprobe failed or module unavailable)" >&2
+              ls -l /dev/uinput 2>/dev/null || true
+              exit 1
+            fi
+            if [[ ! -w /dev/uinput ]]; then
+              echo "FATAL: /dev/uinput is present but not writable by \$(id -un)" >&2
+              ls -lZ /dev/uinput 2>/dev/null || true
+              exit 1
+            fi
+            if ! python3 -c 'import uinput' 2>/dev/null; then
+              echo "FATAL: python-uinput import failed" >&2
+              exit 1
+            fi
+            echo "uinput device is ready" >&2
           fi
         "
         echo "Dependencies ready." >&2

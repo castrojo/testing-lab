@@ -1,0 +1,14 @@
+# Coverage contract for the unit-test gate.
+# The unit suite exercises the shared helper modules below.  Other
+# tests/service_catalog/shared helpers are validated by the service-catalog
+# lane integration tests, not by this unit gate, so they are omitted here.
+[run]
+source =
+    tests/shared
+    tests/service_catalog/shared
+omit =
+    tests/service_catalog/shared/deploy.py
+    tests/service_catalog/shared/persistence.py
+    tests/service_catalog/shared/reachability.py
+    tests/service_catalog/shared/redeploy.py
+    tests/service_catalog/shared/teardown.py
