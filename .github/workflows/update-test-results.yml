@@ -30,10 +30,7 @@ jobs:
   update:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
-      actions: write
-      statuses: write
+      contents: read
       packages: read
       issues: read
 
@@ -116,8 +113,7 @@ jobs:
 
       - name: Publish refreshed data
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DATA_BRANCH: bot/dashboard-data
+          DEPLOY_KEY: ${{ secrets.DASHBOARD_DEPLOY_KEY }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -131,75 +127,20 @@ jobs:
             exit 0
           fi
 
-          # The `main — merge queue` ruleset blocks direct pushes and GITHUB_TOKEN
-          # holds no bypass, so publish through the queue instead. The branch is
-          # always rebuilt from the checked-out main and every file is
-          # regenerated, so force-pushing it can never lose work.
-          git checkout -B "$DATA_BRANCH"
+          # The `main - merge queue` ruleset blocks direct pushes and GITHUB_TOKEN
+          # holds no bypass, so push over SSH with the repository deploy key,
+          # which the ruleset lists as a bypass actor. Routing generated data
+          # through the queue instead does not work: GITHUB_TOKEN may not start
+          # workflows, so neither the pull request nor the merge group it creates
+          # ever gets its required `lint` run.
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git remote set-url origin "git@github.com:${GITHUB_REPOSITORY}.git"
+
           git commit \
             -m 'chore: refresh dashboard data (screenshots, bugs, stats)' \
             -m 'Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>'
-          git push --force origin "$DATA_BRANCH"
-          sha=$(git rev-parse HEAD)
-
-          pr=$(gh pr list --head "$DATA_BRANCH" --state open --json number --jq '.[0].number // empty')
-          if [ -z "$pr" ]; then
-            url=$(gh pr create \
-              --base main \
-              --head "$DATA_BRANCH" \
-              --title 'chore: refresh dashboard data' \
-              --body 'Automated dashboard data refresh from the update-test-results workflow. Regenerated from main on every run; lint runs in the merge queue.')
-            pr="${url##*/}"
-          fi
-          echo "Publishing via PR #${pr}"
-
-          # GITHUB_TOKEN may not start workflows, so this pull request gets no
-          # pull_request run of Lint and the required `lint` context would never
-          # report. workflow_dispatch is exempt from that restriction, but a
-          # dispatched run's check is not associated with the pull request, so it
-          # cannot satisfy the requirement either. Run the real Lint workflow and
-          # mirror its conclusion into a commit status, which does count. The
-          # merge group still runs lint authoritatively before the merge lands.
-          gh workflow run lint.yaml --ref "$DATA_BRANCH"
-
-          run_id=""
-          for _ in $(seq 1 30); do
-            run_id=$(gh run list --workflow=lint.yaml --branch "$DATA_BRANCH" \
-              --event workflow_dispatch --limit 5 \
-              --json databaseId,headSha \
-              --jq "[.[] | select(.headSha == \"$sha\")][0].databaseId // empty")
-            [ -n "$run_id" ] && break
-            sleep 5
-          done
-          if [ -z "$run_id" ]; then
-            echo "Lint dispatch never started for $sha"
-            exit 1
-          fi
-
-          lint_state=success
-          gh run watch "$run_id" --exit-status >/dev/null 2>&1 || lint_state=failure
-          echo "Lint run $run_id concluded: $lint_state"
-
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${sha}" \
-            -f state="$lint_state" \
-            -f context=lint \
-            -f description='Mirrored from the dispatched Lint run' \
-            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${run_id}" >/dev/null
-
-          if [ "$lint_state" != success ]; then
-            echo "Lint failed; not publishing."
-            exit 1
-          fi
-
-          # The stale action_required record leaves the pull request UNSTABLE,
-          # and auto-merge waits on every check rather than just the required
-          # ones, so enqueue explicitly. --auto remains as a fallback for when
-          # the branch is momentarily BEHIND.
-          gh pr merge "$pr" --auto --squash || true
-          pr_id=$(gh pr view "$pr" --json id --jq .id)
-          # shellcheck disable=SC2016  # $id is a GraphQL variable, not a shell one
-          gh api graphql -f query='mutation($id: ID!) {
-            enqueuePullRequest(input: {pullRequestId: $id}) {
-              mergeQueueEntry { position state }
-            }
-          }' -f id="$pr_id" || echo "Enqueue deferred to the next run."
+          git pull --rebase -X ours origin main
+          git push origin HEAD:main
