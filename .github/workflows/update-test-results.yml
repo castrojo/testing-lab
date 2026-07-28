@@ -32,6 +32,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      actions: write
       packages: read
       issues: read
 
@@ -138,6 +139,12 @@ jobs:
             -m 'chore: refresh dashboard data (screenshots, bugs, stats)' \
             -m 'Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>'
           git push --force origin "$DATA_BRANCH"
+
+          # A PR opened by GITHUB_TOKEN gets no pull_request check runs, so the
+          # required `lint` context would never report and the PR could not
+          # enter the queue. workflow_dispatch is exempt from that restriction,
+          # so trigger the real Lint workflow against the branch head.
+          gh workflow run lint.yaml --ref "$DATA_BRANCH"
 
           pr=$(gh pr list --head "$DATA_BRANCH" --state open --json number --jq '.[0].number // empty')
           if [ -z "$pr" ]; then
