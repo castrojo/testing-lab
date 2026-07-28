@@ -110,6 +110,15 @@ The workflow authoring guidance is split by topic:
   ORAS or skopeo. Use a pinned tool image (or an explicit, checked bootstrap),
   and validate flags against that pinned release. In particular, ORAS v1.2.3
   `discover` supports `--format json` but not `--depth`.
+- **Assuming archive utilities exist in `lab-runner`**: the image includes
+  Python, `curl`, and `jq`, but not `tar`. Download archives to a workspace,
+  extract them with `python3 -m tarfile`, and remove the archive afterward, or
+  use a pinned image that provides the required utility.
+- **Doubling braces for generated child workflows**: `{{{{workflow.*}}}}`
+  reaches a child Workflow literally and its `when` expressions compare the
+  wrong value. When an outer script must emit an Argo expression, build the
+  braces at runtime (for example with `printf '\x7b\x7b'`) so the outer
+  template does not consume them.
 - **PR approval gate bypass**: Routine labels such as `automerge` or `chore/deps` are not maintainer approval. PR-batch templates must stop before build/QA when `pr/needs-review` remains or live GitHub review data lacks a verified maintainer approval.
 - **Custom metric cardinality**: Never label workflow metrics with workflow
   names, UIDs, commit SHAs, refs, image digests, or build elements. Use only
