@@ -35,7 +35,19 @@ jobs:
       issues: read
 
     steps:
+      # The `main — merge queue` ruleset blocks direct pushes. Only the
+      # OrganizationAdmin and MergeRaptor bypass actors may push refreshed
+      # dashboard data straight to main, so mint a MergeRaptor token here.
+      - name: Mint MergeRaptor token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.MERGERAPTOR_APP_ID }}
+          private-key: ${{ secrets.MERGERAPTOR_PRIVATE_KEY }}
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Install oras
         run: |
@@ -118,6 +130,8 @@ jobs:
           git add -A docs/
           if git diff --cached --quiet; then
             echo "No changes to commit"
+          elif [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "Ref ${GITHUB_REF} is not main; refreshed data verified but not published."
           else
             git commit \
               -m 'chore: refresh dashboard data (screenshots, bugs, stats)' \
