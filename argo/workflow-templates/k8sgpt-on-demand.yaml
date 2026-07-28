@@ -35,6 +35,8 @@ spec:
         value: "k8sgpt-openai"
       - name: api-key-secret-key
         value: "api-key"
+      - name: prometheus-url
+        value: "http://prometheus.kube-system:9090"
   templates:
     - name: analyze
       activeDeadlineSeconds: 1800
@@ -76,6 +78,7 @@ spec:
             provider = "{{workflow.parameters.provider}}"
             model = "{{workflow.parameters.model}}"
             api_key = os.environ.get("K8SGPT_API_KEY", "")
+            prometheus_url = "{{workflow.parameters.prometheus-url}}"
             results_dir = Path("/tmp/results")
             bin_dir = Path("/tmp/bin")
             home_dir = Path("/tmp/home")
@@ -93,8 +96,6 @@ spec:
               raise SystemExit(f"invalid filters parameter: {filters}")
             if ignored_services and not re.fullmatch(r"[a-z0-9./,_-]+", ignored_services):
               raise SystemExit(f"invalid ignored-services parameter: {ignored_services}")
-            if not api_key:
-              raise SystemExit("K8SGPT_API_KEY is not set; create the k8sgpt-openai secret or override api-key-secret-name/key")
     
             arch = os.uname().machine
             if arch in {"x86_64", "amd64"}:
@@ -115,15 +116,22 @@ spec:
             k8sgpt = bin_dir / "k8sgpt"
             k8sgpt.chmod(0o755)
 
-            print(f"configuring k8sgpt provider={provider} model={model}")
-            subprocess.run([str(k8sgpt), "auth", "add", "--backend", provider, "--model", model, "--password", api_key], check=True, capture_output=True, text=True)
-            subprocess.run([str(k8sgpt), "auth", "default", "-p", provider], check=True, capture_output=True, text=True)
+            if api_key:
+              print(f"configuring k8sgpt provider={provider} model={model}")
+              subprocess.run([str(k8sgpt), "auth", "add", "--backend", provider, "--model", model, "--password", api_key], check=True, capture_output=True, text=True)
+              subprocess.run([str(k8sgpt), "auth", "default", "-p", provider], check=True, capture_output=True, text=True)
+            else:
+              print("no API key found — running in local analysis mode (no AI explanations)")
     
             cmd = [str(k8sgpt), "analyze", "--output=json"]
             if filters:
               cmd += ["--filter", filters]
             if namespace:
               cmd += ["--namespace", namespace]
+            if api_key:
+              cmd += ["--explain"]
+            if prometheus_url:
+              cmd += ["--prometheus-url", prometheus_url]
     
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
             data = normalize_results(json.loads(result.stdout), ignored_services)
