@@ -65,6 +65,11 @@ group then runs `lint` again authoritatively before the merge lands.
 `BEHIND` whenever `main` moves. This self-heals: the next scheduled run rebuilds
 the branch from current `main`.
 
+The blocked `action_required` record also leaves the pull request `UNSTABLE`.
+Auto-merge waits on *every* check rather than just the required ones, so it
+never enqueues on its own — the job enqueues explicitly through the
+`enqueuePullRequest` GraphQL mutation and keeps `--auto` only as a fallback.
+
 Only two actors hold a bypass, and neither is available to Actions:
 
 | Actor | Used by |
