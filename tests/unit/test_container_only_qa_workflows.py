@@ -136,7 +136,9 @@ def test_container_runner_creates_runtime_directories_before_gdm():
     )
 
     assert "mkdir -p /run/dbus /run/systemd/seats /run/systemd/users /run/gdm /var/log/gdm" in content
+    assert "chown -R gdm:gdm /run/gdm /var/log/gdm" in content
     assert "chmod 755 /run/gdm" in content
+    assert 'chage -d "$(date +%Y-%m-%d)" bluefin-test' in content
 
 
 def test_native_systemd_runner_uses_a_scheduler_managed_target_pod():
