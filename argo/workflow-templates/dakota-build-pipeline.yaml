@@ -69,11 +69,6 @@ spec:
   templates:
 
     - name: build
-      synchronization:
-        semaphores:
-          - configMapKeyRef:
-              name: workflow-semaphores
-              key: bst-build
       inputs:
         parameters:
           - name: ref
@@ -90,7 +85,18 @@ spec:
             value: "re"
           - name: lock-key
             value: "{{workflow.parameters.lock-key}}"
+      synchronization:
+        semaphores:
+          - configMapKeyRef:
+              name: workflow-semaphores
+              key: bst-build
       steps:
+        - - name: detect-build-mode
+            template: detect-build-mode
+            arguments:
+              parameters:
+                - name: build-mode
+                  value: "{{inputs.parameters.build-mode}}"
         - - name: core
             template: build-core
             arguments:
@@ -106,7 +112,7 @@ spec:
                 - name: registry
                   value: "{{inputs.parameters.registry}}"
                 - name: build-mode
-                  value: "{{inputs.parameters.build-mode}}"
+                  value: "{{steps.detect-build-mode.outputs.parameters.mode}}"
                 - name: lock-key
                   value: "{{inputs.parameters.lock-key}}"
 
@@ -378,9 +384,9 @@ spec:
                       - "{{workflow.name}}"
               topologyKey: kubernetes.io/hostname
       priorityClassName: bst-build
-      activeDeadlineSeconds: 43200
+      activeDeadlineSeconds: 10800
       retryStrategy:
-        limit: "2"
+        limit: "1"
         retryPolicy: "Always"
       inputs:
         parameters:
@@ -426,8 +432,10 @@ spec:
             value: poll
           - name: GRPC_ENABLE_FORK_SUPPORT
             value: "1"
-          # Avoid the FUSE staging backend; BuildStream exits 255 in this lab
-          # environment when the FUSE stager crashes during source staging.
+          # The BuildStream image used by this workflow only accepts the
+          # `fuse` and `copy-or-link` staging backends. The unsupported
+          # `copy` backend crashes immediately with a buildbox-casd startup
+          # error, so use `copy-or-link` here.
           - name: BUILDBOX_STAGER
             value: copy-or-link
           - name: XDG_CACHE_HOME
@@ -486,6 +494,18 @@ spec:
           if [[ -f /src/elements/bluefin/common.bst ]]; then
             sed -i 's#rm -f "%{install-root}%{sysconfdir}/profile.d/umotd.sh"#rm -f "%{install-root}%{sysconfdir}/profile.d/umotd.sh" || true#g' /src/elements/bluefin/common.bst
           fi
+
+          echo "=== Patching bootc element to bypass manpage generation in this environment ==="
+          python3 - <<'BOOTC_PATCH'
+          from pathlib import Path
+          path = Path('/src/elements/gnomeos-deps/bootc.bst')
+          text = path.read_text()
+          old = 'kind: make\n\nsources:\n'
+          new = 'kind: make\n\nconfig:\n  build-commands:\n  - python3 -c \'from pathlib import Path; p=Path("Makefile"); t=p.read_text(); old=".PHONY: manpages\\nmanpages:\\n\\tcargo run --release --package xtask -- manpages\\n"; new=".PHONY: manpages\\nmanpages:\\n\\t@true\\n"; assert old in t, "bootc Makefile layout changed unexpectedly"; p.write_text(t.replace(old, new, 1))\'\n  - make PREFIX="/usr"\n\nsources:\n'
+          if old not in text:
+              raise SystemExit('bootc element layout changed unexpectedly')
+          path.write_text(text.replace(old, new, 1))
+          BOOTC_PATCH
 
           echo "=== Synchronizing upstream patch queues for cache reuse ==="
           rm -rf /tmp/upstream-patches

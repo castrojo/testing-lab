@@ -4,10 +4,15 @@
 # callers, including workflow-of-workflows invocations via templateRef.
 #
 # Keys:
-#   bst-build          — Global Dakota/Cosmic BuildStream execution lane.
-#                        One pipeline owns the slot; its variants still run in
-#                        parallel, keeping both BuildBarn workers busy without
-#                        stampeding the cache or starving lab validation.
+#   bst-build          — Global Dakota/Cosmic/Bluefin Server BuildStream
+#                        execution lane. One pipeline owns the slot; its
+#                        variants still run in parallel, keeping both BuildBarn
+#                        workers busy without stampeding the cache or starving
+#                        lab validation.
+#   bst-cache-warm     — Dedicated lane for the bst-cache-warm recovery chain.
+#                        Keeps cache re-seeding from occupying the production
+#                        bst-build slot while still allowing only one warmup
+#                        build at a time.
 #   migration-containerdisk-build — Serializes the migration workflow while it
 #                        refreshes and consumes its temporary VM source disk.
 #   ghost-container-qa — Cross-workflow capacity limit for the control-plane
@@ -29,6 +34,7 @@ metadata:
     app.kubernetes.io/part-of: lab
 data:
   bst-build: "1"
+  bst-cache-warm: "1"
   migration-containerdisk-build: "1"
   ghost-container-qa: "6"
   dakota-publish: "1"

@@ -8,17 +8,17 @@ metadata:
     app.kubernetes.io/component: buildstream
 
 data:
-  # Dakota's coordinator fetches four artifacts/sources concurrently. Two
-  # BuildBarn workers each expose one action slot, so admit two remote builds
-  # and permit eight jobs within each action (the runner CPU limit).
+  # Dakota's coordinator fetches four artifacts/sources concurrently. Use a
+  # moderate profile that still leaves headroom for BuildBarn queue depth and
+  # worker action pressure while avoiding the earlier over-saturation.
   dakota-buildstream.conf: |
     scheduler:
       network-retries: 8
-      fetchers: 24
-      builders: 24
-      pushers: 12
+      fetchers: 8
+      builders: 4
+      pushers: 4
     build:
-      max-jobs: 24
+      max-jobs: 12
 
     artifacts:
       override-project-caches: false

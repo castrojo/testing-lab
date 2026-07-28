@@ -58,11 +58,6 @@ spec:
   templates:
 
     - name: build
-      synchronization:
-        semaphores:
-          - configMapKeyRef:
-              name: workflow-semaphores
-              key: bst-build
       inputs:
         parameters:
           - name: ref
@@ -74,6 +69,12 @@ spec:
           - name: build-mode
             value: "re"
       steps:
+        - - name: detect-build-mode
+            template: detect-build-mode
+            arguments:
+              parameters:
+                - name: build-mode
+                  value: "{{inputs.parameters.build-mode}}"
         - - name: core
             template: build-core
             arguments:
@@ -85,7 +86,7 @@ spec:
                 - name: registry
                   value: "{{inputs.parameters.registry}}"
                 - name: build-mode
-                  value: "{{inputs.parameters.build-mode}}"
+                  value: "{{steps.detect-build-mode.outputs.parameters.mode}}"
 
     - name: build-warmup
       synchronization:
@@ -118,6 +119,11 @@ spec:
                   value: "{{inputs.parameters.build-mode}}"
 
     - name: build-core
+      synchronization:
+        semaphores:
+          - configMapKeyRef:
+              name: workflow-semaphores
+              key: bst-build
       inputs:
         parameters:
           - name: ref
@@ -256,7 +262,7 @@ spec:
                   value: "{{inputs.parameters.mode}}"
     - name: bst-build-re
       priorityClassName: bst-build
-      activeDeadlineSeconds: 21600   # 6 hours per pod for cold-cache pulls + compile
+      activeDeadlineSeconds: 10800   # 3 hours per pod to avoid queue starvation and long tail failures
       retryStrategy:
         limit: "1"
         retryPolicy: "Always"
