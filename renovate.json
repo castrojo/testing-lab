@@ -2,5 +2,36 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "local>projectbluefin/renovate-config"
+  ],
+  "kubernetes": {
+    "fileMatch": [
+      "^argo/workflow-templates/kde-[^/]+\\.yaml$",
+      "^manifests/kde-[^/]+\\.yaml$"
+    ]
+  },
+  "packageRules": [
+    {
+      "description": ["Group KDE lane integration image updates"],
+      "matchFileNames": ["image-versions.kde.yaml"],
+      "groupName": "kde-integration-pins",
+      "labels": ["chore/deps", "kde"]
+    },
+    {
+      "description": ["Do not Renovate the moving KDE source on invent.kde.org"],
+      "matchManagers": ["kubernetes"],
+      "matchFileNames": [
+        "argo/workflow-templates/kde-source-tracker.yaml",
+        "manifests/kde-source-tracker.yaml"
+      ],
+      "matchDepNames": ["**/invent.kde.org/**"],
+      "enabled": false
+    },
+    {
+      "description": ["bst2 BuildStream image is versioned with the KDE build agent"],
+      "matchManagers": ["kubernetes"],
+      "matchFileNames": ["argo/workflow-templates/kde-*.yaml"],
+      "matchDepNames": ["**/bst2"],
+      "enabled": false
+    }
   ]
 }
