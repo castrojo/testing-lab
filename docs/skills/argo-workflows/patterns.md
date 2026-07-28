@@ -728,3 +728,37 @@ When designing or updating BuildStream compilation pipelines (e.g. `dakota-build
 - **Preferred Node Affinities**: Avoid hard node pinnings (like `nodeSelector: kubernetes.io/hostname: exo-0`) on build templates. Instead, utilize a `preferredDuringSchedulingIgnoredDuringExecution` preferred node affinity targeting the primary build node (e.g., `exo-0` with weight 100) to keep cache locality warm under normal conditions, while enabling the Kubernetes scheduler to gracefully schedule build pods onto other available nodes (such as `exo-1`) when the primary is overloaded or undergoing maintenance. This fully aligns with scheduler-driven placement policies.
 
 ```
+
+### 18. Bootc-compatible OCI build gates
+
+When a BuildStream build is intended to produce a bootc-compatible OCI image,
+validate the export before pushing to any registry. Do not assume that a
+filesystem compose element, a rootfs tarball, or an artifact directory is a
+valid bootc image.
+
+Required checks before push:
+- Export is an OCI layout (`oci-layout` + `index.json`).
+- Image label `containers.bootc` is `"1"` or `"true"`.
+- Image architecture is `amd64` (for x86_64 targets).
+- Rootfs contains `/usr/lib/ostree/prepare-root.conf` or
+  `/etc/ostree/prepare-root.conf`.
+
+If any check fails, exit with a clear `BLOCKER:` message and do not push. This
+keeps the registry free of images that would fail `bootc install` or mislead
+QA dashboards. Preserve the source SHA, element name, and reason in the blocker
+log so the failure is actionable.
+
+Example workflow shape:
+```yaml
+- name: build-kde
+  template: bst-build-re
+  # builds os/filesystem.bst or an OCI image element
+- name: validate-bootc
+  depends: build-kde
+  template: validate-bootc
+```
+
+Parameterized defaults should point at the real source element. For KDE Linux
+MR !534 the default element is `os/filesystem.bst`, which currently produces a
+rootfs artifact, not an OCI image, so the gate fails safely with a documented
+blocker until the MR adds an OCI image element.
