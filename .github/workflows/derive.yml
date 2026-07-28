@@ -34,6 +34,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           echo "DERIVE_BRANCH=bot/derive-metrics" >> "$GITHUB_ENV"
+          # Fetch the bot branch so origin/bot/derive-metrics exists locally. Without it
+          # `git push --force-with-lease` has no remote-tracking ref to compare against and
+          # always aborts with "stale info".
+          git fetch --no-tags origin +refs/heads/bot/derive-metrics:refs/remotes/origin/bot/derive-metrics || true
           git checkout -B bot/derive-metrics
 
       - name: Set up Python 3.12

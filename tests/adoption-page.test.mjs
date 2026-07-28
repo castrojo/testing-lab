@@ -10,6 +10,22 @@ function html(file) {
   return readFileSync(path.join(repo, file), 'utf8');
 }
 
+// Lane coverage is derived from the same source of truth the generator uses, so adding a
+// variant or branch never requires editing a magic number here.
+function trackedLaneCount() {
+  return Object.values(trackedVariants()).reduce(
+    (total, details) => total + (details.branches || []).length,
+    0,
+  );
+}
+
+function trackedVariants() {
+  const publishers = JSON.parse(
+    readFileSync(path.join(repo, 'docs/data/variant-publishers.json'), 'utf8'),
+  );
+  return publishers.variants || {};
+}
+
 test('adoption page renders summary metrics, lane details, trust cards, chart containers, and explicit unavailable states', () => {
   execFileSync('npm', ['run', 'build'], {
     cwd: repo,
@@ -144,8 +160,16 @@ test('adoption-metrics.json contract satisfies the page model contract', () => {
   assert.ok(Array.isArray(dataset.trust_cards), 'trust_cards is an array');
   assert.ok(Array.isArray(dataset.rows), 'rows is an array');
 
-  assert.equal(dataset.rows.length, 13, 'adoption dataset has 13 lane rows');
-  assert.equal(dataset.trust_cards.length, 8, 'adoption dataset has 8 trust cards');
+  assert.equal(
+    dataset.rows.length,
+    trackedLaneCount(),
+    'adoption dataset has one lane row per tracked variant-branch in variant-publishers.json',
+  );
+  assert.equal(
+    dataset.trust_cards.length,
+    Object.keys(trackedVariants()).length,
+    'adoption dataset has one trust card per tracked variant in variant-publishers.json',
+  );
 
   // All rows carry a valid state enum value; every unavailable row carries an explicit non-empty
   // state_reason. This is a permanent behavioral contract — it holds whether 0 or all lanes
