@@ -6,7 +6,7 @@ concurrency:
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '*/30 * * * *'
   push:
     branches: [main]
     paths:
@@ -31,23 +31,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
       packages: read
       issues: read
 
     steps:
-      # The `main — merge queue` ruleset blocks direct pushes. Only the
-      # OrganizationAdmin and MergeRaptor bypass actors may push refreshed
-      # dashboard data straight to main, so mint a MergeRaptor token here.
-      - name: Mint MergeRaptor token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.MERGERAPTOR_APP_ID }}
-          private-key: ${{ secrets.MERGERAPTOR_PRIVATE_KEY }}
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          token: ${{ steps.app-token.outputs.token }}
 
       - name: Install oras
         run: |
@@ -123,19 +112,45 @@ jobs:
       - name: Verify multipage dashboard
         run: npm test
 
-      - name: Commit changes
+      - name: Publish refreshed data
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DATA_BRANCH: bot/dashboard-data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A docs/
           if git diff --cached --quiet; then
             echo "No changes to commit"
-          elif [ "${GITHUB_REF}" != "refs/heads/main" ]; then
-            echo "Ref ${GITHUB_REF} is not main; refreshed data verified but not published."
-          else
-            git commit \
-              -m 'chore: refresh dashboard data (screenshots, bugs, stats)' \
-              -m 'Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>'
-            git pull --rebase -X ours origin main
-            git push origin HEAD:main
+            exit 0
           fi
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "Ref ${GITHUB_REF} is not main; refreshed data verified but not published."
+            exit 0
+          fi
+
+          # The `main — merge queue` ruleset blocks direct pushes and GITHUB_TOKEN
+          # holds no bypass, so publish through the queue instead. The branch is
+          # always rebuilt from the checked-out main and every file is
+          # regenerated, so force-pushing it can never lose work.
+          git checkout -B "$DATA_BRANCH"
+          git commit \
+            -m 'chore: refresh dashboard data (screenshots, bugs, stats)' \
+            -m 'Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>'
+          git push --force origin "$DATA_BRANCH"
+
+          pr=$(gh pr list --head "$DATA_BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            url=$(gh pr create \
+              --base main \
+              --head "$DATA_BRANCH" \
+              --title 'chore: refresh dashboard data' \
+              --body 'Automated dashboard data refresh from the update-test-results workflow. Regenerated from main on every run; lint runs in the merge queue.')
+            pr="${url##*/}"
+          fi
+          echo "Publishing via PR #${pr}"
+
+          # A PR opened by GITHUB_TOKEN gets no pull_request check runs, but the
+          # ruleset evaluates `lint` against the merge group, so the queue still
+          # gates this merge.
+          gh pr merge "$pr" --auto --squash
