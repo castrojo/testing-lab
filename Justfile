@@ -282,6 +282,19 @@ force-kde-source-poll:
       -p force=true \
       -n {{ argo_ns }} --watch
 
+# Run KDE Linux BST build pipeline against the tracked MR !534 source.
+# Builds os/filesystem.bst by default and gates on a bootc-compatible OCI
+# export. The current MR source does not yet define an OCI image element, so
+# the default run is expected to fail safely with a documented blocker.
+# Usage: just run-kde-build
+# Usage: just run-kde-build refs/merge-requests/534/head https://invent.kde.org/kde-linux/kde-linux.git
+run-kde-build ref="refs/merge-requests/534/head" repo="https://invent.kde.org/kde-linux/kde-linux.git":
+    argo submit --from workflowtemplate/kde-build-pipeline \
+      -p ref={{ ref }} \
+      -p repo={{ repo }} \
+      -p build-mode=re \
+      -n {{ argo_ns }} --watch
+
 # Compatibility alias for older docs/callers.
 run-dakota-validate ref="testing" repo="https://github.com/projectbluefin/dakota.git":
     just run-bst-build {{ ref }} {{ repo }}

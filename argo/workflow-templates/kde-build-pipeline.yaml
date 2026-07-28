@@ -1,0 +1,600 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: kde-build-pipeline
+  namespace: argo
+  annotations:
+    description: |
+      KDE Linux BST build pipeline. Clones a GitLab MR source (or any git ref)
+      of a KDE BuildStream project, builds the requested element through
+      BuildBarn remote execution, validates that the export is a bootc-compatible
+      x86_64 OCI image, and pushes it to local Zot (:30500).
+
+      Default build element is os/filesystem.bst, which is the KDE Linux MR !534
+      filesystem compose element. That element produces a rootfs artifact, not a
+      bootc OCI image. The workflow therefore implements a safe failing gate: it
+      builds the element, confirms the export lacks the bootc contract, and fails
+      with a documented blocker instead of pushing a misleading image.
+
+      To produce a real image, point image-element at an element that emits an OCI
+      layout with the containers.bootc label (e.g. oci/kde-linux/image.bst in a
+      downstream BuildStream project).
+
+      Triggered on-demand; there is no automatic poller yet. Only distributed
+      mode ('re') is admitted. Uses the shared bst-build semaphore.
+  labels:
+    app.kubernetes.io/component: kde-build
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  serviceAccountName: argo
+  # Serialised through the bst-build semaphore; generous workflow ceiling so
+  # a cold KDE build is not killed while queued or during a long cold compile.
+  activeDeadlineSeconds: 86400
+  podGC:
+    strategy: OnWorkflowSuccess
+  ttlStrategy:
+    secondsAfterCompletion: 86400
+    secondsAfterFailure: 604800
+
+  arguments:
+    parameters:
+      - name: repo
+        value: "https://invent.kde.org/kde-linux/kde-linux.git"
+      - name: ref
+        value: "refs/merge-requests/534/head"
+      - name: commit-sha
+        value: ""
+      - name: image-tag
+        value: "testing"
+      - name: registry
+        value: "192.168.1.102:30500"
+      - name: build-mode
+        value: "re"
+      - name: build-element
+        value: "os/filesystem.bst"
+      - name: build-options
+        value: "arch x86_64"
+      - name: image-element
+        value: ""
+      - name: tag
+        value: "kde-linux"
+      - name: lock-key
+        value: "bst-build"
+
+  entrypoint: build
+  metrics:
+    prometheus:
+      - name: lab_build_workflow_completed_total
+        help: Completed lab build workflows by pipeline and status.
+        labels:
+          - key: pipeline
+            value: kde
+          - key: status
+            value: "{{workflow.status}}"
+        counter:
+          value: "1"
+      - name: lab_build_workflow_duration_seconds
+        help: Lab build workflow duration in seconds by pipeline and status.
+        labels:
+          - key: pipeline
+            value: kde
+          - key: status
+            value: "{{workflow.status}}"
+        histogram:
+          buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+          value: "{{workflow.duration}}"
+
+  templates:
+    - name: build
+      inputs:
+        parameters:
+          - name: ref
+            value: "{{workflow.parameters.ref}}"
+          - name: commit-sha
+            value: "{{workflow.parameters.commit-sha}}"
+          - name: image-tag
+            value: "{{workflow.parameters.image-tag}}"
+          - name: repo
+            value: "{{workflow.parameters.repo}}"
+          - name: registry
+            value: "{{workflow.parameters.registry}}"
+          - name: build-mode
+            value: "{{workflow.parameters.build-mode}}"
+          - name: build-element
+            value: "{{workflow.parameters.build-element}}"
+          - name: build-options
+            value: "{{workflow.parameters.build-options}}"
+          - name: image-element
+            value: "{{workflow.parameters.image-element}}"
+          - name: tag
+            value: "{{workflow.parameters.tag}}"
+          - name: lock-key
+            value: "{{workflow.parameters.lock-key}}"
+      synchronization:
+        semaphores:
+          - configMapKeyRef:
+              name: workflow-semaphores
+              key: "{{inputs.parameters.lock-key}}"
+      steps:
+        - - name: detect-build-mode
+            template: detect-build-mode
+            arguments:
+              parameters:
+                - name: build-mode
+                  value: "{{inputs.parameters.build-mode}}"
+        - - name: core
+            template: build-core
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: commit-sha
+                  value: "{{inputs.parameters.commit-sha}}"
+                - name: image-tag
+                  value: "{{inputs.parameters.image-tag}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: build-mode
+                  value: "{{steps.detect-build-mode.outputs.parameters.mode}}"
+                - name: build-element
+                  value: "{{inputs.parameters.build-element}}"
+                - name: build-options
+                  value: "{{inputs.parameters.build-options}}"
+                - name: image-element
+                  value: "{{inputs.parameters.image-element}}"
+                - name: tag
+                  value: "{{inputs.parameters.tag}}"
+
+    - name: build-core
+      inputs:
+        parameters:
+          - name: ref
+            value: "{{workflow.parameters.ref}}"
+          - name: commit-sha
+            value: "{{workflow.parameters.commit-sha}}"
+          - name: image-tag
+            value: "{{workflow.parameters.image-tag}}"
+          - name: repo
+            value: "{{workflow.parameters.repo}}"
+          - name: registry
+            value: "{{workflow.parameters.registry}}"
+          - name: build-mode
+            value: "{{workflow.parameters.build-mode}}"
+          - name: build-element
+            value: "{{workflow.parameters.build-element}}"
+          - name: build-options
+            value: "{{workflow.parameters.build-options}}"
+          - name: image-element
+            value: "{{workflow.parameters.image-element}}"
+          - name: tag
+            value: "{{workflow.parameters.tag}}"
+      dag:
+        tasks:
+          - name: detect-build-mode
+            template: detect-build-mode
+            arguments:
+              parameters:
+                - name: build-mode
+                  value: "{{inputs.parameters.build-mode}}"
+          - name: build-kde
+            template: run-bst-step
+            depends: detect-build-mode
+            arguments:
+              parameters:
+                - name: element
+                  value: "{{inputs.parameters.build-element}}"
+                - name: build-options
+                  value: "{{inputs.parameters.build-options}}"
+                - name: tag
+                  value: "{{inputs.parameters.tag}}"
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: commit-sha
+                  value: "{{inputs.parameters.commit-sha}}"
+                - name: image-tag
+                  value: "{{inputs.parameters.image-tag}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: mode
+                  value: "{{tasks.detect-build-mode.outputs.parameters.mode}}"
+
+    - name: detect-build-mode
+      inputs:
+        parameters:
+          - name: build-mode
+      outputs:
+        parameters:
+          - name: mode
+            valueFrom:
+              path: /tmp/mode
+      script:
+        image: cgr.dev/chainguard/kubectl:latest-dev
+        command: [bash]
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        source: |
+          set -euo pipefail
+          REQUESTED="{{inputs.parameters.build-mode}}"
+          if [[ "${REQUESTED}" != "re" ]]; then
+            echo "KDE build-mode '${REQUESTED}' is forbidden; only distributed mode ('re') is permitted" >&2
+            exit 1
+          fi
+
+          MAX_AGE_SECONDS=60
+          NOW="$(date -u +%s)"
+          for NODE in ghost exo-0; do
+            LINK="$(kubectl get node "${NODE}" -o jsonpath='{.metadata.annotations.lab\.projectbluefin\.io/usb4-link}')"
+            OBSERVED_AT="$(kubectl get node "${NODE}" -o jsonpath='{.metadata.annotations.lab\.projectbluefin\.io/usb4-link-observed-at}')"
+            READY="$(kubectl get node "${NODE}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')"
+
+            if [[ "${LINK}" != "up" || ! "${OBSERVED_AT}" =~ ^[0-9]+$ || "${READY}" != "True" ]]; then
+              echo "USB4 BuildBarn gate rejected ${NODE}: link=${LINK:-missing} observed-at=${OBSERVED_AT:-missing} ready=${READY:-unknown}" >&2
+              exit 1
+            fi
+            if (( NOW - OBSERVED_AT > MAX_AGE_SECONDS )); then
+              echo "USB4 BuildBarn gate rejected ${NODE}: observation is stale ($((NOW - OBSERVED_AT))s old)" >&2
+              exit 1
+            fi
+          done
+
+          WORKERS="$(kubectl get pods -n buildbarn -l app=worker -o jsonpath='{range .items[*]}{.spec.nodeName}{"|"}{.status.phase}{"|"}{.status.containerStatuses[*].ready}{"\n"}{end}')"
+          for NODE in ghost exo-0; do
+            if ! grep -Eq "^${NODE}\|Running\|true true$" <<<"${WORKERS}"; then
+              echo "USB4 BuildBarn gate rejected: no Ready worker on ${NODE}" >&2
+              exit 1
+            fi
+          done
+
+          echo "USB4-backed BuildBarn remote execution admitted"
+          printf '%s' re > /tmp/mode
+
+    - name: run-bst-step
+      inputs:
+        parameters:
+          - name: element
+          - name: build-options
+          - name: tag
+          - name: ref
+          - name: commit-sha
+          - name: image-tag
+          - name: repo
+          - name: registry
+          - name: mode
+      dag:
+        tasks:
+          - name: bst-re
+            template: bst-build-re
+            when: "'{{inputs.parameters.mode}}' == 're'"
+            arguments:
+              parameters:
+                - name: element
+                  value: "{{inputs.parameters.element}}"
+                - name: build-options
+                  value: "{{inputs.parameters.build-options}}"
+                - name: tag
+                  value: "{{inputs.parameters.tag}}"
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: commit-sha
+                  value: "{{inputs.parameters.commit-sha}}"
+                - name: image-tag
+                  value: "{{inputs.parameters.image-tag}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: mode
+                  value: "{{inputs.parameters.mode}}"
+
+    - name: bst-build-re
+      priorityClassName: bst-build
+      activeDeadlineSeconds: 10800
+      retryStrategy:
+        limit: "1"
+        retryPolicy: "Always"
+      inputs:
+        parameters:
+          - name: element
+          - name: build-options
+          - name: tag
+          - name: ref
+          - name: commit-sha
+          - name: image-tag
+          - name: repo
+          - name: registry
+          - name: mode
+      volumes:
+        - name: fuse
+          hostPath:
+            path: /dev/fuse
+        - name: bst-cache
+          hostPath:
+            path: /var/lib/dakota/buildstream-cache
+            type: DirectoryOrCreate
+        - name: buildstream-config
+          configMap:
+            name: buildstream-remote-cache
+            items:
+              - key: dakota-buildstream.conf
+                path: buildstream.conf
+              - key: remote-execution.conf
+                path: remote-execution.conf
+              - key: recc-environment.conf
+                path: recc-environment.conf
+      script:
+        image: "{{inputs.parameters.registry}}/bst2:64eb0b4930d57a92710822898fb73af6cc1ae35d"
+        command: [bash]
+        securityContext:
+          privileged: true
+          seLinuxOptions:
+            type: spc_t
+        env:
+          - name: GRPC_POLL_STRATEGY
+            value: poll
+          - name: GRPC_ENABLE_FORK_SUPPORT
+            value: "1"
+          - name: BUILDBOX_STAGER
+            value: copy-or-link
+          - name: XDG_CACHE_HOME
+            value: "/root/.cache"
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+                optional: true
+          - name: GITLAB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: gitlab-token
+                key: token
+                optional: true
+        resources:
+          requests:
+            cpu: "2"
+            memory: 4Gi
+            ephemeral-storage: 10Gi
+          limits:
+            cpu: "4"
+            memory: 8Gi
+            ephemeral-storage: 50Gi
+        volumeMounts:
+          - name: fuse
+            mountPath: /dev/fuse
+          - name: bst-cache
+            mountPath: /root/.cache
+          - name: buildstream-config
+            mountPath: /etc/buildstream
+            readOnly: true
+        source: |
+          set -euo pipefail
+
+          ELEMENT="{{inputs.parameters.element}}"
+          BUILD_OPTIONS="{{inputs.parameters.build-options}}"
+          TAG="{{inputs.parameters.tag}}"
+          IMAGE_TAG="{{inputs.parameters.image-tag}}"
+          REF="{{inputs.parameters.ref}}"
+          REPO="{{inputs.parameters.repo}}"
+          COMMIT_SHA="{{inputs.parameters.commit-sha}}"
+
+          ADMISSION_EPOCH="$(date -u +%s)"
+          echo "=== KDE build admitted at ${ADMISSION_EPOCH} ==="
+          echo "queue/admission: workflow={{workflow.name}} semaphore={{workflow.parameters.lock-key}} admitted_at=${ADMISSION_EPOCH}"
+
+          mkdir -p "${XDG_CACHE_HOME}"
+          find "${XDG_CACHE_HOME}/buildstream/sources/git_repo" -type f -name '*.lock' -delete 2>/dev/null || true
+
+          echo "=== Cache state before build ==="
+          du -sh "${XDG_CACHE_HOME}/buildstream" 2>/dev/null || echo "cache-state: local_cache_size=0"
+          echo "cache-state: local_cache_path=${XDG_CACHE_HOME}/buildstream"
+
+          echo "=== Cloning KDE source @ ${REF} ==="
+          rm -rf /src
+          mkdir -p /src
+
+          # GitLab merge-request refs live at refs/merge-requests/<iid>/head.
+          # Branch/tag refs are cloned normally; MR refs need an explicit fetch.
+          if [[ "${REF}" == refs/merge-requests/*/head || "${REF}" == merge-requests/*/head ]]; then
+            MR_REF="${REF#merge-requests/}"
+            MR_REF="${MR_REF#refs/merge-requests/}"
+            MR_IID="${MR_REF%/head}"
+            echo "source: type=gitlab-mr mr_iid=${MR_IID}"
+            git init /src
+            cd /src
+            git remote add origin "${REPO}"
+            git fetch --depth=1 origin "refs/merge-requests/${MR_IID}/head"
+            git checkout --detach FETCH_HEAD
+          else
+            echo "source: type=ref ref=${REF}"
+            if [[ -n "${GITHUB_TOKEN:-}" && "${REPO}" == https://github.com/* ]]; then
+              AUTH_REPO="https://x-access-token:${GITHUB_TOKEN}@${REPO#https://}"
+            elif [[ -n "${GITLAB_TOKEN:-}" && "${REPO}" == https://*gitlab*/* ]]; then
+              AUTH_REPO="https://oauth2:${GITLAB_TOKEN}@${REPO#https://}"
+            else
+              AUTH_REPO="${REPO}"
+            fi
+            git clone --depth=1 --branch "${REF}" "${AUTH_REPO}" /src
+            cd /src
+          fi
+
+          if [[ -n "${COMMIT_SHA}" ]]; then
+            echo "=== Checking out exact commit ${COMMIT_SHA} ==="
+            git fetch --depth=1 origin "${COMMIT_SHA}"
+            git checkout --detach "${COMMIT_SHA}"
+          fi
+
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          echo "source: sha=${SOURCE_SHA} repo=${REPO} ref=${REF}"
+
+          PROJECT_NAME="$(awk -F': *' '/^name:/{print $2; exit}' project.conf | tr -d '\r')"
+          if [[ -z "${PROJECT_NAME}" ]]; then
+            echo "ERROR: could not determine BuildStream project name from project.conf" >&2
+            exit 1
+          fi
+          echo "source: project_name=${PROJECT_NAME}"
+
+          cp /etc/buildstream/buildstream.conf /tmp/buildstream-cluster.conf
+          BST_CONF=/tmp/buildstream-cluster.conf
+
+          cat >> /tmp/buildstream-cluster.conf <<EOF
+          projects:
+            ${PROJECT_NAME}:
+              artifacts:
+                override-project-caches: false
+                servers:
+                - url: grpc://bb-remote-asset.buildbarn.svc.cluster.local:8984
+                  type: index
+                  push: true
+                - url: grpc://frontend.buildbarn.svc.cluster.local:8980
+                  type: storage
+                  push: true
+                - url: https://gbm.gnome.org:11003
+                  push: false
+                - url: https://cache.freedesktop-sdk.io:11001
+                  push: false
+              source-caches:
+                override-project-caches: true
+                servers:
+                - url: https://gbm.gnome.org:11003
+                  push: false
+                - url: https://cache.freedesktop-sdk.io:11001
+                  push: false
+          EOF
+
+          echo "=== Distributed build: remote execution enabled ==="
+          sed 's/^/    /' /etc/buildstream/remote-execution.conf >> /tmp/buildstream-cluster.conf
+          if ! grep -q '^    remote-execution:$' /tmp/buildstream-cluster.conf; then
+            echo "BuildStream remote execution configuration is missing" >&2
+            exit 1
+          fi
+          echo "=== Verified BuildStream remote execution configuration ==="
+
+          # Parse build options into -o flags.
+          BST_OPTS=()
+          if [[ -n "${BUILD_OPTIONS}" ]]; then
+            # Split on whitespace; expect pairs like "arch x86_64".
+            read -ra OPT_PARTS <<<"${BUILD_OPTIONS}"
+            i=0
+            while (( i < ${#OPT_PARTS[@]} )); do
+              if [[ "${OPT_PARTS[i]}" == -* ]]; then
+                BST_OPTS+=("${OPT_PARTS[i]}" "${OPT_PARTS[i+1]}")
+                (( i += 2 )) || true
+              else
+                BST_OPTS+=("-o" "${OPT_PARTS[i]}" "${OPT_PARTS[i+1]}")
+                (( i += 2 )) || true
+              fi
+            done
+          fi
+
+          START_EPOCH="$(date -u +%s)"
+          echo "build/start: element=${ELEMENT} options='${BUILD_OPTIONS}' start_epoch=${START_EPOCH} source_sha=${SOURCE_SHA}"
+
+          echo "=== Building ${ELEMENT} through BuildBarn remote execution ==="
+          bst --config "${BST_CONF}" \
+              --no-interactive \
+              --max-jobs 12 \
+              --fetchers 8 \
+              "${BST_OPTS[@]}" \
+              build "${ELEMENT}"
+
+          BUILD_END_EPOCH="$(date -u +%s)"
+          echo "build/end: element=${ELEMENT} end_epoch=${BUILD_END_EPOCH} duration_seconds=$((BUILD_END_EPOCH - START_EPOCH)) source_sha=${SOURCE_SHA}"
+
+          echo "=== Exporting ${ELEMENT} ==="
+          EXPORT_DIR="/tmp/export-$(basename ${ELEMENT} .bst)"
+          mkdir -p "${EXPORT_DIR}"
+          bst --config "${BST_CONF}" \
+              --no-interactive \
+              --max-jobs 12 \
+              --fetchers 8 \
+              artifact checkout "${ELEMENT}" \
+              --directory "${EXPORT_DIR}"
+
+          echo "=== Validating bootc contract ==="
+          if [[ ! -f "${EXPORT_DIR}/index.json" || ! -f "${EXPORT_DIR}/oci-layout" ]]; then
+            echo "BLOCKER: ${ELEMENT} export is not an OCI layout (missing index.json/oci-layout)." >&2
+            echo "         KDE Linux MR !534 currently defines os/filesystem.bst as a compose/rootfs" >&2
+            echo "         artifact, not a bootc-compatible OCI image. No OCI image element exists in" >&2
+            echo "         this source, so packaging a bootc image would require unsafe assumptions." >&2
+            echo "bootc-check: result=failed reason=not-oci-layout element=${ELEMENT} source_sha=${SOURCE_SHA}"
+            exit 1
+          fi
+
+          # Prefer skopeo for read-only inspection; fall back to podman.
+          INSPECT_TOOL="podman"
+          if command -v skopeo >/dev/null 2>&1; then
+            INSPECT_TOOL="skopeo"
+          fi
+
+          echo "bootc-check: tool=${INSPECT_TOOL}"
+
+          if [[ "${INSPECT_TOOL}" == "skopeo" ]]; then
+            BOOTC_LABEL="$(skopeo inspect --format '{{.Labels.containers.bootc}}' --tls-verify=false "oci:${EXPORT_DIR}" 2>/dev/null || true)"
+            OCI_ARCH="$(skopeo inspect --format '{{.Architecture}}' --tls-verify=false "oci:${EXPORT_DIR}" 2>/dev/null || true)"
+          else
+            IMAGE_ID="$(podman pull -q "oci:${EXPORT_DIR}" | tail -n 1)"
+            BOOTC_LABEL="$(podman inspect --format '{{index .Config.Labels "containers.bootc"}}' "${IMAGE_ID}" 2>/dev/null || true)"
+            OCI_ARCH="$(podman inspect --format '{{.Architecture}}' "${IMAGE_ID}" 2>/dev/null || true)"
+          fi
+
+          echo "bootc-check: containers.bootc='${BOOTC_LABEL}' architecture='${OCI_ARCH}'"
+
+          if [[ "${BOOTC_LABEL}" != "1" && "${BOOTC_LABEL}" != "true" ]]; then
+            echo "BLOCKER: ${ELEMENT} export is missing the containers.bootc label; not a bootc-compatible OCI image" >&2
+            echo "bootc-check: result=failed reason=missing-containers.bootc-label element=${ELEMENT} source_sha=${SOURCE_SHA}"
+            exit 1
+          fi
+
+          if [[ "${OCI_ARCH}" != "amd64" ]]; then
+            echo "BLOCKER: expected x86_64 (amd64) OCI image, got '${OCI_ARCH}'" >&2
+            echo "bootc-check: result=failed reason=unexpected-architecture arch=${OCI_ARCH} element=${ELEMENT} source_sha=${SOURCE_SHA}"
+            exit 1
+          fi
+
+          echo "bootc-check: result=passed containers.bootc=${BOOTC_LABEL} architecture=${OCI_ARCH}"
+
+          echo "=== Checking ostree prepare-root.conf ==="
+          if [[ "${INSPECT_TOOL}" == "skopeo" ]]; then
+            IMAGE_ID="$(podman pull -q "oci:${EXPORT_DIR}" | tail -n 1)"
+          fi
+          MOUNT_DIR=""
+          if podman image mount "${IMAGE_ID}" >/tmp/mount-point 2>/dev/null; then
+            MOUNT_DIR="$(cat /tmp/mount-point)"
+          else
+            echo "WARN: podman image mount failed; falling back to container probe"
+            if ! podman run --rm --entrypoint=/bin/sh "${IMAGE_ID}" -c 'test -f /usr/lib/ostree/prepare-root.conf || test -f /etc/ostree/prepare-root.conf'; then
+              echo "BLOCKER: /usr/lib/ostree/prepare-root.conf and /etc/ostree/prepare-root.conf are both missing" >&2
+              echo "bootc-check: result=failed reason=missing-prepare-root.conf element=${ELEMENT} source_sha=${SOURCE_SHA}"
+              exit 1
+            fi
+          fi
+          if [[ -n "${MOUNT_DIR}" ]]; then
+            if [[ ! -f "${MOUNT_DIR}/usr/lib/ostree/prepare-root.conf" && ! -f "${MOUNT_DIR}/etc/ostree/prepare-root.conf" ]]; then
+              echo "BLOCKER: /usr/lib/ostree/prepare-root.conf and /etc/ostree/prepare-root.conf are both missing" >&2
+              echo "bootc-check: result=failed reason=missing-prepare-root.conf element=${ELEMENT} source_sha=${SOURCE_SHA}"
+              exit 1
+            fi
+            podman image unmount "${IMAGE_ID}" >/dev/null 2>&1 || true
+          fi
+          echo "bootc-check: prepare-root.conf present"
+
+          echo "=== Pushing to local Zot ==="
+          IMAGE_ID="$(podman pull -q "oci:${EXPORT_DIR}" | tail -n 1)"
+          podman tag "${IMAGE_ID}" "localhost/${TAG}:${IMAGE_TAG}"
+          podman push --tls-verify=false "localhost/${TAG}:${IMAGE_TAG}" "docker://{{inputs.parameters.registry}}/${TAG}:${IMAGE_TAG}"
+          podman rmi "localhost/${TAG}:${IMAGE_TAG}" "${IMAGE_ID}" 2>/dev/null || true
+
+          END_EPOCH="$(date -u +%s)"
+          echo "=== Build complete: {{inputs.parameters.registry}}/${TAG}:${IMAGE_TAG} ==="
+          echo "pipeline/end: end_epoch=${END_EPOCH} total_seconds=$((END_EPOCH - ADMISSION_EPOCH)) source_sha=${SOURCE_SHA}"
+          echo "cache-state: local_cache_path=${XDG_CACHE_HOME}/buildstream"
+          du -sh "${XDG_CACHE_HOME}/buildstream" 2>/dev/null || echo "cache-state: local_cache_size=unavailable"
