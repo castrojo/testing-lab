@@ -30,9 +30,11 @@ spec:
       - name: provider
         value: "openai"
       - name: model
-        value: "gpt-5-mini"
+        value: "MAI-Code-1-Flash"
+      - name: base-url
+        value: "https://models.inference.ai.azure.com"
       - name: api-key-secret-name
-        value: "k8sgpt-openai"
+        value: "k8sgpt-github"
       - name: api-key-secret-key
         value: "api-key"
       - name: prometheus-url
@@ -77,6 +79,7 @@ spec:
             ignored_services = "{{workflow.parameters.ignored-services}}"
             provider = "{{workflow.parameters.provider}}"
             model = "{{workflow.parameters.model}}"
+            base_url = "{{workflow.parameters.base-url}}"
             api_key = os.environ.get("K8SGPT_API_KEY", "")
             prometheus_url = "{{workflow.parameters.prometheus-url}}"
             results_dir = Path("/tmp/results")
@@ -117,8 +120,11 @@ spec:
             k8sgpt.chmod(0o755)
 
             if api_key:
-              print(f"configuring k8sgpt provider={provider} model={model}")
-              subprocess.run([str(k8sgpt), "auth", "add", "--backend", provider, "--model", model, "--password", api_key], check=True, capture_output=True, text=True)
+              print(f"configuring k8sgpt provider={provider} model={model} base_url={base_url or '(default)'}")
+              auth_cmd = [str(k8sgpt), "auth", "add", "--backend", provider, "--model", model, "--password", api_key]
+              if base_url:
+                auth_cmd += ["--baseurl", base_url]
+              subprocess.run(auth_cmd, check=True, capture_output=True, text=True)
               subprocess.run([str(k8sgpt), "auth", "default", "-p", provider], check=True, capture_output=True, text=True)
             else:
               print("no API key found — running in local analysis mode (no AI explanations)")
