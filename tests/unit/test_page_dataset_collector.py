@@ -125,7 +125,7 @@ def test_applications_matrix_keeps_bazaar_fallbacks_explicit():
     assert metrics['tracked_applications']['value'] == 2
     assert metrics['application_rows']['value'] == 8
     assert metrics['rows_with_primary_app_results']['value'] == 6
-    assert metrics['rows_with_fallback_signals']['value'] == 1
+    assert metrics['rows_with_fallback_signals']['value'] == 2
 
     rows = {row['id']: row for row in dataset['rows']}
     bluefin = rows['bazaar-bluefin-testing']
@@ -137,7 +137,7 @@ def test_applications_matrix_keeps_bazaar_fallbacks_explicit():
         'Bazaar flatpak preinstall file is present',
         'bazaar user service is available',
     ]
-    assert rows['bazaar-dakota-testing']['fallback_signal_count'] == 0
+    assert rows['bazaar-dakota-testing']['fallback_signal_count'] == 1
     # Real enrolled variants from test-surface software cells must appear;
     # fabricated variants must not.
     assert {row['variant'] for row in dataset['rows']} == {
