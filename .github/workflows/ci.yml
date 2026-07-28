@@ -40,7 +40,8 @@ jobs:
 
 
       - name: Run unit tests with coverage
-        run: python -m pytest --cov=tests/shared --cov=tests/service_catalog/shared --cov-report=term-missing --cov-fail-under=60 tests/unit/
+        # .coveragerc defines the intended unit-test coverage contract.
+        run: python -m pytest --cov-config=.coveragerc --cov=tests/shared --cov=tests/service_catalog/shared --cov-report=term-missing --cov-fail-under=60 tests/unit/
 
       - name: Pytest discovery check
         run: python -m pytest --collect-only tests/
