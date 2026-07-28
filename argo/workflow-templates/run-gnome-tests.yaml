@@ -290,7 +290,14 @@ spec:
               sudo dnf clean packages -q 2>/dev/null || true
               python3 -m pip --version &>/dev/null || python3 -m ensurepip --user 2>&1 | tail -2 || true
               python3 -m pip install --quiet --user qecore dogtail python-uinput behave 2>&1 | tail -3
-              for f in \$HOME/.local/bin/qecore_*; do sudo ln -sf \"\$f\" /usr/local/bin/\$(basename \"\$f\") 2>/dev/null; done
+              # qecore may install console scripts under ~/.local/qecore/bin
+              # instead of ~/.local/bin; normalize both layouts.
+              mkdir -p \$HOME/.local/bin
+              for f in \$HOME/.local/bin/qecore_* \$HOME/.local/qecore/bin/qecore_*; do
+                [[ -x \"\$f\" ]] || continue
+                ln -sf \"\$f\" \$HOME/.local/bin/\$(basename \"\$f\")
+                sudo ln -sf \"\$f\" /usr/local/bin/\$(basename \"\$f\") 2>/dev/null || true
+              done
             fi
             sudo modprobe uinput 2>/dev/null || true
             sudo chmod 0666 /dev/uinput 2>/dev/null || true
@@ -427,7 +434,13 @@ spec:
             sleep 2
             rm -f /tmp/headless* /tmp/qecore* /tmp/.headless* 2>/dev/null || true
             source /tmp/session.env
-            \$HOME/.local/bin/qecore-headless \
+            qecore_headless=\"\$(command -v qecore-headless || true)\"
+            if [[ -z \"\$qecore_headless\" ]]; then
+              echo \"FATAL: qecore-headless is not installed in the VM\" >&2
+              find \$HOME/.local -type f -name qecore-headless -ls 2>/dev/null || true
+              exit 127
+            fi
+            \"\$qecore_headless\" \\
               --session-type wayland \
               --session-desktop gnome \
               \"/tmp/run-suite.sh\"

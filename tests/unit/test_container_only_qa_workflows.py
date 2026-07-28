@@ -275,6 +275,12 @@ def test_unrelated_vm_workflows_keep_their_shared_helpers():
         encoding="utf-8"
     )
     assert "name: run-gnome-tests" in knuckle
+    gnome_runner = (ROOT / "argo/workflow-templates/run-gnome-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert ".local/qecore/bin/qecore_*" in gnome_runner
+    assert "command -v qecore-headless" in gnome_runner
+    assert "qecore-headless is not installed in the VM" in gnome_runner
     assert "name: teardown-vm" in knuckle
     assert "name: provision-containerdisk-vm" in migration
     assert "name: teardown-vm" in migration
