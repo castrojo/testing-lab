@@ -327,6 +327,10 @@ spec:
                 BST_WORKLOAD="false"
                 ;;
             esac
+            # Build literal Argo expressions for the generated child workflow
+            # without exposing double braces to this outer template.
+            ARGO_OPEN=$(printf '\x7b\x7b')
+            ARGO_CLOSE=$(printf '\x7d\x7d')
             WORKFLOW_NAME=$(kubectl create -f - -o jsonpath='{.metadata.name}' <<EOF
           apiVersion: argoproj.io/v1alpha1
           kind: Workflow
@@ -379,26 +383,26 @@ spec:
                      arguments:
                        parameters:
                          - name: repository
-                           value: "{{{{workflow.parameters.repository}}}}"
+                           value: "${ARGO_OPEN}workflow.parameters.repository${ARGO_CLOSE}"
                          - name: sha
-                           value: "{{{{workflow.parameters.commit-sha}}}}"
+                           value: "${ARGO_OPEN}workflow.parameters.commit-sha${ARGO_CLOSE}"
                          - name: pr-number
-                           value: "{{{{workflow.parameters.pr-number}}}}"
+                           value: "${ARGO_OPEN}workflow.parameters.pr-number${ARGO_CLOSE}"
                          - name: state
                            value: in_progress
                          - name: conclusion
                            value: ""
                          - name: workflow-name
-                           value: "{{{{workflow.name}}}}"
+                           value: "${ARGO_OPEN}workflow.name${ARGO_CLOSE}"
                          - name: workflow-url
-                           value: "${ARGO_WORKFLOW_URL_BASE}/{{{{workflow.name}}}}"
+                           value: "${ARGO_WORKFLOW_URL_BASE}/${ARGO_OPEN}workflow.name${ARGO_CLOSE}"
                          - name: title
                            value: ${DISPLAY_NAME} lab validation is running
                          - name: summary
                            value: |
                              The lab admitted PR #${PR_NUM} at commit \`${SHA}\`.
 
-                             Validation is running in Argo workflow \`{{{{workflow.name}}}}\`.
+                             Validation is running in Argo workflow \`${ARGO_OPEN}workflow.name${ARGO_CLOSE}\`.
                          - name: text
                            value: ""
                          - name: started-at
@@ -407,7 +411,7 @@ spec:
                            value: ""
                    - name: build
                      depends: "(report-start.Succeeded || report-start.Failed || report-start.Errored)"
-                     when: "'{{{{workflow.parameters.repository}}}}' == 'projectbluefin/dakota'"
+                     when: "'${ARGO_OPEN}workflow.parameters.repository${ARGO_CLOSE}' == 'projectbluefin/dakota'"
                      templateRef:
                        name: dakota-build-pipeline
                        template: build
@@ -427,56 +431,56 @@ spec:
                            value: "bst-build"
                    - name: qa-dakota
                      depends: "build.Succeeded"
-                     when: "'{{{{workflow.parameters.repository}}}}' == 'projectbluefin/dakota'"
+                     when: "'${ARGO_OPEN}workflow.parameters.repository${ARGO_CLOSE}' == 'projectbluefin/dakota'"
                      templateRef:
                        name: dakota-qa-pipeline
                        template: pipeline
                      arguments:
                        parameters:
                          - name: image
-                           value: "{{{{workflow.parameters.image}}}}"
+                           value: "${ARGO_OPEN}workflow.parameters.image${ARGO_CLOSE}"
                          - name: image-tag
-                           value: "{{{{workflow.parameters.image-tag}}}}"
+                           value: "${ARGO_OPEN}workflow.parameters.image-tag${ARGO_CLOSE}"
                          - name: image-digest
-                           value: "{{{{workflow.parameters.image-digest}}}}"
+                           value: "${ARGO_OPEN}workflow.parameters.image-digest${ARGO_CLOSE}"
                          - name: suites
-                           value: "{{{{workflow.parameters.suites}}}}"
+                           value: "${ARGO_OPEN}workflow.parameters.suites${ARGO_CLOSE}"
                          - name: variant
-                           value: "{{{{workflow.parameters.variant}}}}"
+                           value: "${ARGO_OPEN}workflow.parameters.variant${ARGO_CLOSE}"
                          - name: branch
-                           value: "{{{{workflow.parameters.branch}}}}"
+                           value: "${ARGO_OPEN}workflow.parameters.branch${ARGO_CLOSE}"
                          - name: testsuite-branch
-                           value: "{{{{workflow.parameters.testsuite-branch}}}}"
+                           value: "${ARGO_OPEN}workflow.parameters.testsuite-branch${ARGO_CLOSE}"
                          - name: testsuite-repo
-                           value: "{{{{workflow.parameters.testsuite-repo}}}}"
+                           value: "${ARGO_OPEN}workflow.parameters.testsuite-repo${ARGO_CLOSE}"
                    - name: qa-bluefin
                      depends: "(report-start.Succeeded || report-start.Failed || report-start.Errored)"
-                     when: "'{{{{workflow.parameters.repository}}}}' != 'projectbluefin/dakota'"
+                     when: "'${ARGO_OPEN}workflow.parameters.repository${ARGO_CLOSE}' != 'projectbluefin/dakota'"
                      templateRef:
                        name: bluefin-qa-pipeline
                        template: pipeline
                      arguments:
                        parameters:
                           - name: image
-                            value: "{{{{workflow.parameters.image}}}}"
+                            value: "${ARGO_OPEN}workflow.parameters.image${ARGO_CLOSE}"
                           - name: image-tag
-                            value: "{{{{workflow.parameters.image-tag}}}}"
+                            value: "${ARGO_OPEN}workflow.parameters.image-tag${ARGO_CLOSE}"
                           - name: suites
-                            value: "{{{{workflow.parameters.suites}}}}"
+                            value: "${ARGO_OPEN}workflow.parameters.suites${ARGO_CLOSE}"
                           - name: variant
-                            value: "{{{{workflow.parameters.variant}}}}"
+                            value: "${ARGO_OPEN}workflow.parameters.variant${ARGO_CLOSE}"
                           - name: branch
-                            value: "{{{{workflow.parameters.branch}}}}"
+                            value: "${ARGO_OPEN}workflow.parameters.branch${ARGO_CLOSE}"
                           - name: pr-number
-                            value: "{{{{workflow.parameters.pr-number}}}}"
+                            value: "${ARGO_OPEN}workflow.parameters.pr-number${ARGO_CLOSE}"
                           - name: sha
-                            value: "{{{{workflow.parameters.commit-sha}}}}"
+                            value: "${ARGO_OPEN}workflow.parameters.commit-sha${ARGO_CLOSE}"
                           - name: repo
-                            value: "{{{{workflow.parameters.repository}}}}"
+                            value: "${ARGO_OPEN}workflow.parameters.repository${ARGO_CLOSE}"
                           - name: testsuite-branch
-                            value: "{{{{workflow.parameters.testsuite-branch}}}}"
+                            value: "${ARGO_OPEN}workflow.parameters.testsuite-branch${ARGO_CLOSE}"
                           - name: testsuite-repo
-                            value: "{{{{workflow.parameters.testsuite-repo}}}}"
+                            value: "${ARGO_OPEN}workflow.parameters.testsuite-repo${ARGO_CLOSE}"
              - name: report-final
                steps:
                  - - name: github-check
@@ -486,15 +490,15 @@ spec:
                      arguments:
                        parameters:
                          - name: repository
-                           value: "{{{{workflow.parameters.repository}}}}"
+                           value: "${ARGO_OPEN}workflow.parameters.repository${ARGO_CLOSE}"
                          - name: sha
-                           value: "{{{{workflow.parameters.commit-sha}}}}"
+                           value: "${ARGO_OPEN}workflow.parameters.commit-sha${ARGO_CLOSE}"
                          - name: pr-number
-                           value: "{{{{workflow.parameters.pr-number}}}}"
+                           value: "${ARGO_OPEN}workflow.parameters.pr-number${ARGO_CLOSE}"
                          - name: final-status
-                           value: "{{{{workflow.status}}}}"
+                           value: "${ARGO_OPEN}workflow.status${ARGO_CLOSE}"
                          - name: workflow-url
-                           value: "${ARGO_WORKFLOW_URL_BASE}/{{{{workflow.name}}}}"
+                           value: "${ARGO_WORKFLOW_URL_BASE}/${ARGO_OPEN}workflow.name${ARGO_CLOSE}"
           EOF
             )
             WORKFLOW_URL="${ARGO_WORKFLOW_URL_BASE}/${WORKFLOW_NAME}"
