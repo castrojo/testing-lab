@@ -39,39 +39,29 @@ without a check run. See the [GitHub Actions `merge_group` documentation](https:
 
 ## Automated data pushes
 
-The dashboard ingestion workflow (`update-test-results.yml`) commits regenerated
-`docs/` data directly to `main` every five minutes. Machine-generated data does
-not go through the queue, so that push depends on a **bypass actor**:
+Nothing pushes to `main` from GitHub Actions. The default `GITHUB_TOKEN` holds
+**no** ruleset bypass, so a direct push fails with `GH013: Repository rule
+violations found for refs/heads/main`.
+
+The dashboard ingestion workflow (`update-test-results.yml`) therefore publishes
+through the queue like any other change: it force-pushes regenerated `docs/`
+data to `bot/dashboard-data`, opens or reuses a pull request, and enables
+auto-merge. The branch is rebuilt from `main` on every run and every file is
+regenerated, so the force-push cannot lose work.
+
+A pull request opened with `GITHUB_TOKEN` receives no `pull_request` check runs —
+GitHub does not let one workflow trigger another. That is fine here, because the
+ruleset evaluates `lint` against the **merge group**, not the pull request. The
+queue still gates the merge.
+
+Only two actors hold a bypass, and neither is available to Actions:
 
 | Actor | Used by |
 |---|---|
-| `OrganizationAdmin` | in-cluster Argo pushes (`scripts/publish_test_results.py`) |
-| `mergeraptor` (Integration, app id `3069633`) | `update-test-results.yml` |
+| `OrganizationAdmin` | in-cluster Argo pushes (`scripts/publish_test_results.py`, `argo/workflow-templates/*cve-scan.yaml`) |
 
-The default `GITHUB_TOKEN` has **no** bypass. A workflow that pushes to `main`
-must mint a MergeRaptor installation token and hand it to `actions/checkout`:
-
-```yaml
-- name: Mint MergeRaptor token
-  id: app-token
-  uses: actions/create-github-app-token@<pinned-sha>
-  with:
-    app-id: ${{ secrets.MERGERAPTOR_APP_ID }}
-    private-key: ${{ secrets.MERGERAPTOR_PRIVATE_KEY }}
-
-- uses: actions/checkout@<pinned-sha>
-  with:
-    token: ${{ steps.app-token.outputs.token }}
-```
-
-The GitHub Actions app itself cannot be granted a bypass — the API rejects it
-with `Actor GitHub Actions integration must be part of the ruleset source or
-owner organization`.
-
-If a data workflow reports `GH013: Repository rule violations found for
-refs/heads/main`, it is pushing with `GITHUB_TOKEN`. This is silent for as long
-as an earlier step is also failing, so check the push step even when the visible
-failure is a test.
+If an automated job reports `GH013`, it is pushing to `main` directly. Route it
+through `bot/dashboard-data` instead of reaching for a bypass token.
 
 ## Queueing a PR
 
