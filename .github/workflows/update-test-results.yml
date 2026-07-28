@@ -140,12 +140,6 @@ jobs:
             -m 'Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>'
           git push --force origin "$DATA_BRANCH"
 
-          # A PR opened by GITHUB_TOKEN gets no pull_request check runs, so the
-          # required `lint` context would never report and the PR could not
-          # enter the queue. workflow_dispatch is exempt from that restriction,
-          # so trigger the real Lint workflow against the branch head.
-          gh workflow run lint.yaml --ref "$DATA_BRANCH"
-
           pr=$(gh pr list --head "$DATA_BRANCH" --state open --json number --jq '.[0].number // empty')
           if [ -z "$pr" ]; then
             url=$(gh pr create \
@@ -157,7 +151,12 @@ jobs:
           fi
           echo "Publishing via PR #${pr}"
 
-          # A PR opened by GITHUB_TOKEN gets no pull_request check runs, but the
-          # ruleset evaluates `lint` against the merge group, so the queue still
-          # gates this merge.
+          # GitHub records a pull_request-triggered `lint` run for this branch and
+          # immediately marks it action_required, because GITHUB_TOKEN may not
+          # start workflows. Required checks resolve to the newest run of a given
+          # name, so dispatch the real Lint workflow *after* the pull request
+          # settles; its success then supersedes the blocked record.
+          # workflow_dispatch is exempt from the GITHUB_TOKEN restriction.
+          gh workflow run lint.yaml --ref "$DATA_BRANCH"
+
           gh pr merge "$pr" --auto --squash
