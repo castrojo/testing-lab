@@ -49,13 +49,17 @@ data to `bot/dashboard-data`, opens or reuses a pull request, and enables
 auto-merge. The branch is rebuilt from `main` on every run and every file is
 regenerated, so the force-push cannot lose work.
 
-A pull request opened with `GITHUB_TOKEN` cannot start workflows, so GitHub
-records the `pull_request` run of `Lint` and immediately marks it
-`action_required`. Required checks resolve to the newest run of a given name, so
-the job dispatches the real `Lint` workflow *after* the pull request settles —
-`workflow_dispatch` is exempt from the restriction, and its success supersedes
-the blocked record. The merge group then runs `lint` again authoritatively
-before the merge lands.
+`GITHUB_TOKEN` may not start workflows, so the data pull request gets no
+`pull_request` run of `Lint` and the required `lint` context would never report.
+`workflow_dispatch` is exempt from that restriction, but a dispatched run's
+check is **not associated with the pull request**, so it cannot satisfy the
+requirement either — enqueueing fails with `Required status check "lint" is
+expected`.
+
+The job therefore runs the real `Lint` workflow against the branch head, waits
+for it, and mirrors its conclusion into a **commit status** named `lint`, which
+does count toward the PR rollup. If lint fails, nothing is published. The merge
+group then runs `lint` again authoritatively before the merge lands.
 
 `strict_required_status_checks_policy` is on, so the data pull request shows
 `BEHIND` whenever `main` moves. This self-heals: the next scheduled run rebuilds
