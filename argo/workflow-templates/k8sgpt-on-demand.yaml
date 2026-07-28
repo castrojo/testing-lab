@@ -40,7 +40,7 @@ spec:
       - name: prometheus-url
         value: "http://prometheus.kube-system:9090"
       - name: context-urls
-        value: "https://raw.githubusercontent.com/k8sgpt-ai/k8sgpt/main/README.md,https://raw.githubusercontent.com/kubernetes/website/main/content/en/docs/tasks/debug/debug-application/debug-pods.md,https://raw.githubusercontent.com/kubernetes/website/main/content/en/docs/tasks/debug/debug-application/debug-running-pod.md"
+        value: "https://context7.com/kubernetes/website/llms.txt,https://context7.com/argoproj/argo-workflows/llms.txt,https://context7.com/argoproj/argo-cd/llms.txt,https://context7.com/kubevirt/user-guide/llms.txt,https://context7.com/kubevirt/containerized-data-importer/llms.txt,https://context7.com/websites/prometheus_io/llms.txt,https://context7.com/k3s-io/docs/llms.txt,https://context7.com/kubestellar/kubestellar/llms.txt,https://context7.com/k8sgpt-ai/k8sgpt/llms.txt"
   templates:
     - name: analyze
       activeDeadlineSeconds: 1800
@@ -74,7 +74,7 @@ spec:
                 req = urllib.request.Request(url, headers={"User-Agent": "k8sgpt-lab/1.0"})
                 with urllib.request.urlopen(req, timeout=20) as resp:
                   content = resp.read().decode("utf-8", errors="replace")
-                parts.append(f"## Source: {url}\n\n{content[:4000]}")
+                parts.append(f"## Source: {url}\n\n{content[:8000]}")
                 print(f"fetched context: {url} ({len(content)} bytes)")
               except Exception as exc:
                 print(f"warning: could not fetch context from {url}: {exc}")
