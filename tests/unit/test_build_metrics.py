@@ -81,6 +81,7 @@ def test_safe_build_workflows_emit_only_low_cardinality_metrics():
         "cosmic-build-pipeline.yaml": "cosmic",
         "bluefin-server-build-pipeline.yaml": "bluefin-server",
         "bst-qa-pipeline.yaml": "bst-qa",
+        "dakota-build-pipeline.yaml": "dakota",
     }
 
     for filename, pipeline in pipelines.items():
@@ -98,10 +99,3 @@ def test_safe_build_workflows_emit_only_low_cardinality_metrics():
                 {"key": "pipeline", "value": pipeline},
                 {"key": "status", "value": "{{workflow.status}}"},
             ]
-
-    dakota = yaml.safe_load(
-        (ROOT / "argo/workflow-templates/dakota-build-pipeline.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert "metrics" not in dakota["spec"]
