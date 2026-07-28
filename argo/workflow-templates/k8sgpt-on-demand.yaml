@@ -103,7 +103,7 @@ spec:
               return json.loads(resp.read())["choices"][0]["message"]["content"]
 
 
-          def normalize_results(data, ignored_services, ignored_ingresses):
+          def normalize_results(data, ignored_services="", ignored_ingresses=""):
             ignored_svcs = {item for item in ignored_services.split(",") if item}
             ignored_ings = {item for item in ignored_ingresses.split(",") if item}
             results = data.get("results") or []

@@ -37,7 +37,7 @@ def test_dakota_pr_workflow_updates_one_check_without_comments():
     assert "dispatch_lab_check()" in poller
     assert "onExit: report-final" in poller
     assert "name: report-start" in poller
-    assert "name: github-check-reporter" in poller
+    assert 'REPORTER="github-check-reporter"' in poller
     assert "name: qa-bluefin" in poller
     assert "projectbluefin/bluefin-lts" in poller
     assert "value: in_progress" in poller

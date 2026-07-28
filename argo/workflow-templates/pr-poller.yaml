@@ -167,7 +167,7 @@ spec:
           dispatch_pr() {
            local PR="$1"
            local REPO SHA PR_NUM HEAD_BRANCH BRANCH TESTSUITE_BRANCH EXISTING TMPL TITLE TITLE_SLUG
-           local PRODUCT DISPLAY_NAME PR_IMAGE PR_IMAGE_TAG PR_SUITES BST_WORKLOAD
+           local PRODUCT DISPLAY_NAME PR_IMAGE PR_IMAGE_TAG PR_SUITES BST_WORKLOAD REPORTER
 
            # Rate-limit: stop dispatching once we hit MAX_DISPATCH this run
            if [[ "$DISPATCHED" -ge "$MAX_DISPATCH" ]]; then
@@ -292,8 +292,10 @@ spec:
 
            if [[ "$REPO" == "projectbluefin/bluefin" ||
                  "$REPO" == "projectbluefin/bluefin-lts" ||
-                 "$REPO" == "projectbluefin/dakota" ]]; then
+                 "$REPO" == "projectbluefin/dakota" ||
+                 "$REPO" == "projectbluefin/testsuite" ]]; then
             PRODUCT="${REPO##*/}"
+            REPORTER="github-check-reporter"
             case "${PRODUCT}" in
               dakota)
                 DISPLAY_NAME="Dakota"
@@ -325,6 +327,14 @@ spec:
                 PR_IMAGE_TAG="testing"
                 PR_SUITES="smoke"
                 BST_WORKLOAD="false"
+                ;;
+              testsuite)
+                DISPLAY_NAME="Testsuite"
+                PR_IMAGE="ghcr.io/projectbluefin/bluefin"
+                PR_IMAGE_TAG="testing"
+                PR_SUITES="smoke,common"
+                BST_WORKLOAD="false"
+                REPORTER="github-status-reporter"
                 ;;
             esac
             # Build literal Argo expressions for the generated child workflow
@@ -378,7 +388,7 @@ spec:
                  tasks:
                    - name: report-start
                      templateRef:
-                       name: github-check-reporter
+                       name: ${REPORTER}
                        template: send
                      arguments:
                        parameters:
@@ -485,7 +495,7 @@ spec:
                steps:
                  - - name: github-check
                      templateRef:
-                       name: github-check-reporter
+                       name: ${REPORTER}
                        template: final
                      arguments:
                        parameters:
@@ -502,7 +512,9 @@ spec:
           EOF
             )
             WORKFLOW_URL="${ARGO_WORKFLOW_URL_BASE}/${WORKFLOW_NAME}"
-            if ! dispatch_lab_check \
+            if [[ "${REPORTER}" == "github-status-reporter" ]]; then
+              echo "PR #${PR_NUM} ${REPO}: queued status will be published by ${WORKFLOW_NAME}" >&2
+            elif ! dispatch_lab_check \
               "${REPO}" \
               "${SHA}" \
               "${PR_NUM}" \

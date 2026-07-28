@@ -1,0 +1,217 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: github-status-reporter
+  namespace: argo
+  annotations:
+    description: |
+      Publishes the testsuite lab lifecycle as a commit status. This is used
+      for repositories that do not have the repository_dispatch Check Run
+      receiver workflow.
+  labels:
+    app.kubernetes.io/component: github-status-reporter
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  serviceAccountName: argo
+  entrypoint: send
+  arguments:
+    parameters:
+      - name: repository
+        value: projectbluefin/testsuite
+      - name: sha
+        value: ""
+      - name: pr-number
+        value: ""
+      - name: state
+        value: queued
+      - name: conclusion
+        value: ""
+      - name: workflow-name
+        value: ""
+      - name: workflow-url
+        value: ""
+      - name: title
+        value: Lab validation
+      - name: summary
+        value: No lab summary was provided.
+  templates:
+    - name: send
+      inputs:
+        parameters:
+          - name: repository
+            value: "{{workflow.parameters.repository}}"
+          - name: sha
+            value: "{{workflow.parameters.sha}}"
+          - name: pr-number
+            value: "{{workflow.parameters.pr-number}}"
+          - name: state
+            value: "{{workflow.parameters.state}}"
+          - name: conclusion
+            value: "{{workflow.parameters.conclusion}}"
+          - name: workflow-name
+            value: "{{workflow.parameters.workflow-name}}"
+          - name: workflow-url
+            value: "{{workflow.parameters.workflow-url}}"
+          - name: title
+            value: "{{workflow.parameters.title}}"
+          - name: summary
+            value: "{{workflow.parameters.summary}}"
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: REPOSITORY
+            value: "{{inputs.parameters.repository}}"
+          - name: SHA
+            value: "{{inputs.parameters.sha}}"
+          - name: PR_NUMBER
+            value: "{{inputs.parameters.pr-number}}"
+          - name: CHECK_STATE
+            value: "{{inputs.parameters.state}}"
+          - name: CONCLUSION
+            value: "{{inputs.parameters.conclusion}}"
+          - name: WORKFLOW_NAME
+            value: "{{inputs.parameters.workflow-name}}"
+          - name: WORKFLOW_URL
+            value: "{{inputs.parameters.workflow-url}}"
+          - name: CHECK_TITLE
+            value: "{{inputs.parameters.title}}"
+          - name: CHECK_SUMMARY
+            value: "{{inputs.parameters.summary}}"
+        source: |
+          set -euo pipefail
+
+          [[ "${REPOSITORY}" == "projectbluefin/testsuite" ]] ||
+            { echo "Refusing status for ${REPOSITORY}" >&2; exit 1; }
+          [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]] ||
+            { echo "Invalid commit SHA: ${SHA}" >&2; exit 1; }
+
+          case "${CHECK_STATE}" in
+            queued|in_progress) STATUS=pending ;;
+            completed)
+              case "${CONCLUSION}" in
+                success) STATUS=success ;;
+                failure|timed_out) STATUS=failure ;;
+                cancelled) STATUS=error ;;
+                *) STATUS=error ;;
+              esac
+              ;;
+            *) echo "Invalid state: ${CHECK_STATE}" >&2; exit 1 ;;
+          esac
+
+          PAYLOAD=$(jq -n \
+            --arg state "${STATUS}" \
+            --arg context "ghost-lab" \
+            --arg description "${CHECK_TITLE}: ${CHECK_SUMMARY:0:140}" \
+            --arg target_url "${WORKFLOW_URL}" \
+            '{state: $state, context: $context, description: $description, target_url: $target_url}')
+          HTTP_CODE=$(curl -sS -o /tmp/github-response -w '%{http_code}' \
+            -X POST \
+            -H "Authorization: ******" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${SHA}" \
+            --data-binary "${PAYLOAD}")
+          if [[ "${HTTP_CODE}" != "201" ]]; then
+            echo "GitHub commit status failed with HTTP ${HTTP_CODE}" >&2
+            cat /tmp/github-response >&2
+            exit 1
+          fi
+          echo "Published ${STATUS} ghost-lab status for ${SHA}"
+
+    - name: final
+      inputs:
+        parameters:
+          - name: repository
+          - name: sha
+          - name: pr-number
+          - name: final-status
+          - name: workflow-url
+      steps:
+        - - name: collect
+            template: collect
+            arguments:
+              parameters:
+                - name: repository
+                  value: "{{inputs.parameters.repository}}"
+                - name: sha
+                  value: "{{inputs.parameters.sha}}"
+                - name: pr-number
+                  value: "{{inputs.parameters.pr-number}}"
+                - name: final-status
+                  value: "{{inputs.parameters.final-status}}"
+                - name: workflow-url
+                  value: "{{inputs.parameters.workflow-url}}"
+        - - name: publish
+            template: send
+            arguments:
+              parameters:
+                - name: repository
+                  value: "{{inputs.parameters.repository}}"
+                - name: sha
+                  value: "{{inputs.parameters.sha}}"
+                - name: pr-number
+                  value: "{{inputs.parameters.pr-number}}"
+                - name: state
+                  value: completed
+                - name: conclusion
+                  value: "{{steps.collect.outputs.parameters.conclusion}}"
+                - name: workflow-name
+                  value: "{{workflow.name}}"
+                - name: workflow-url
+                  value: "{{inputs.parameters.workflow-url}}"
+                - name: title
+                  value: "{{steps.collect.outputs.parameters.title}}"
+                - name: summary
+                  value: "{{steps.collect.outputs.parameters.summary}}"
+
+    - name: collect
+      inputs:
+        parameters:
+          - name: final-status
+          - name: pr-number
+          - name: workflow-url
+      outputs:
+        parameters:
+          - name: conclusion
+            valueFrom:
+              path: /tmp/conclusion
+          - name: title
+            valueFrom:
+              path: /tmp/title
+          - name: summary
+            valueFrom:
+              path: /tmp/summary
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        source: |
+          set -euo pipefail
+          case "{{inputs.parameters.final-status}}" in
+            Succeeded) conclusion=success; title="Testsuite lab validation passed" ;;
+            Failed|Error) conclusion=failure; title="Testsuite lab validation failed" ;;
+            Stopped|Terminated) conclusion=cancelled; title="Testsuite lab validation cancelled" ;;
+            *) conclusion=error; title="Testsuite lab validation finished: {{inputs.parameters.final-status}}" ;;
+          esac
+          printf '%s' "${conclusion}" > /tmp/conclusion
+          printf '%s' "${title}" > /tmp/title
+          printf 'PR #{{inputs.parameters.pr-number}} finished as {{inputs.parameters.final-status}}. Workflow: {{inputs.parameters.workflow-url}}' > /tmp/summary
