@@ -123,6 +123,9 @@ data:
             target_label: node
 
       - job_name: 'argo-workflow-controller'
+        scheme: https
+        tls_config:
+          insecure_skip_verify: true
         kubernetes_sd_configs:
           - role: pod
             namespaces:
