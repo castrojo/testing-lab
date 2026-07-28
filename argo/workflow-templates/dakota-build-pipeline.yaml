@@ -44,15 +44,121 @@ spec:
         value: "bst-build"
 
   entrypoint: build
-
+  metrics:
+    prometheus:
+      - name: lab_build_workflow_completed_total
+        help: Completed lab build workflows by pipeline and status.
+        labels:
+          - key: pipeline
+            value: dakota
+          - key: status
+            value: "{{workflow.status}}"
+        counter:
+          value: "1"
+      - name: lab_build_workflow_duration_seconds
+        help: Lab build workflow duration in seconds by pipeline and status.
+        labels:
+          - key: pipeline
+            value: dakota
+          - key: status
+            value: "{{workflow.status}}"
+        histogram:
+          buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+          value: "{{workflow.duration}}"
+  
   templates:
 
     - name: build
+      inputs:
+        parameters:
+          - name: ref
+            value: "{{workflow.parameters.ref}}"
+          - name: commit-sha
+            value: "{{workflow.parameters.commit-sha}}"
+          - name: image-tag
+            value: "{{workflow.parameters.image-tag}}"
+          - name: repo
+            value: "{{workflow.parameters.repo}}"
+          - name: registry
+            value: "{{workflow.parameters.registry}}"
+          - name: build-mode
+            value: "re"
+          - name: lock-key
+            value: "{{workflow.parameters.lock-key}}"
       synchronization:
         semaphores:
           - configMapKeyRef:
               name: workflow-semaphores
               key: bst-build
+      steps:
+        - - name: detect-build-mode
+            template: detect-build-mode
+            arguments:
+              parameters:
+                - name: build-mode
+                  value: "{{inputs.parameters.build-mode}}"
+        - - name: core
+            template: build-core
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: commit-sha
+                  value: "{{inputs.parameters.commit-sha}}"
+                - name: image-tag
+                  value: "{{inputs.parameters.image-tag}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: build-mode
+                  value: "{{steps.detect-build-mode.outputs.parameters.mode}}"
+                - name: lock-key
+                  value: "{{inputs.parameters.lock-key}}"
+
+    - name: build-warmup
+      synchronization:
+        semaphores:
+          - configMapKeyRef:
+              name: workflow-semaphores
+              key: bst-cache-warm
+      inputs:
+        parameters:
+          - name: ref
+            value: "{{workflow.parameters.ref}}"
+          - name: commit-sha
+            value: "{{workflow.parameters.commit-sha}}"
+          - name: image-tag
+            value: "{{workflow.parameters.image-tag}}"
+          - name: repo
+            value: "{{workflow.parameters.repo}}"
+          - name: registry
+            value: "{{workflow.parameters.registry}}"
+          - name: build-mode
+            value: "re"
+          - name: lock-key
+            value: ""
+      steps:
+        - - name: core
+            template: build-core
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: commit-sha
+                  value: "{{inputs.parameters.commit-sha}}"
+                - name: image-tag
+                  value: "{{inputs.parameters.image-tag}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: build-mode
+                  value: "{{inputs.parameters.build-mode}}"
+                - name: lock-key
+                  value: "{{inputs.parameters.lock-key}}"
+
+    - name: build-core
       inputs:
         parameters:
           - name: ref
@@ -278,9 +384,9 @@ spec:
                       - "{{workflow.name}}"
               topologyKey: kubernetes.io/hostname
       priorityClassName: bst-build
-      activeDeadlineSeconds: 43200
+      activeDeadlineSeconds: 10800
       retryStrategy:
-        limit: "2"
+        limit: "1"
         retryPolicy: "Always"
       inputs:
         parameters:
@@ -326,6 +432,12 @@ spec:
             value: poll
           - name: GRPC_ENABLE_FORK_SUPPORT
             value: "1"
+          # The BuildStream image used by this workflow only accepts the
+          # `fuse` and `copy-or-link` staging backends. The unsupported
+          # `copy` backend crashes immediately with a buildbox-casd startup
+          # error, so use `copy-or-link` here.
+          - name: BUILDBOX_STAGER
+            value: copy-or-link
           - name: XDG_CACHE_HOME
             # Reuse persistent node-local cache on the XFS mount for fast
             # coordinator state and local artifact reuse across workflows.
@@ -382,6 +494,18 @@ spec:
           if [[ -f /src/elements/bluefin/common.bst ]]; then
             sed -i 's#rm -f "%{install-root}%{sysconfdir}/profile.d/umotd.sh"#rm -f "%{install-root}%{sysconfdir}/profile.d/umotd.sh" || true#g' /src/elements/bluefin/common.bst
           fi
+
+          echo "=== Patching bootc element to bypass manpage generation in this environment ==="
+          python3 - <<'BOOTC_PATCH'
+          from pathlib import Path
+          path = Path('/src/elements/gnomeos-deps/bootc.bst')
+          text = path.read_text()
+          old = 'kind: make\n\nsources:\n'
+          new = 'kind: make\n\nconfig:\n  build-commands:\n  - python3 -c \'from pathlib import Path; p=Path("Makefile"); t=p.read_text(); old=".PHONY: manpages\\nmanpages:\\n\\tcargo run --release --package xtask -- manpages\\n"; new=".PHONY: manpages\\nmanpages:\\n\\t@true\\n"; assert old in t, "bootc Makefile layout changed unexpectedly"; p.write_text(t.replace(old, new, 1))\'\n  - make PREFIX="/usr"\n\nsources:\n'
+          if old not in text:
+              raise SystemExit('bootc element layout changed unexpectedly')
+          path.write_text(text.replace(old, new, 1))
+          BOOTC_PATCH
 
           echo "=== Synchronizing upstream patch queues for cache reuse ==="
           rm -rf /tmp/upstream-patches
@@ -468,8 +592,8 @@ spec:
           echo "=== Building ${ELEMENT} through BuildBarn remote execution ==="
           bst --config "${BST_CONF}" \
               --no-interactive \
-              --max-jobs 24 \
-              --fetchers 24 \
+              --max-jobs 12 \
+              --fetchers 8 \
               build "${ELEMENT}"
 
           echo "=== Exporting ${ELEMENT} ==="
@@ -477,8 +601,8 @@ spec:
           mkdir -p "${EXPORT_DIR}"
           bst --config "${BST_CONF}" \
               --no-interactive \
-              --max-jobs 24 \
-              --fetchers 24 \
+              --max-jobs 12 \
+              --fetchers 8 \
               -o x86_64_v3 true \
               artifact checkout "${ELEMENT}" \
               --directory "${EXPORT_DIR}"

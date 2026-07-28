@@ -1,0 +1,186 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: bst-cache-warm
+  namespace: argo
+  annotations:
+    description: |
+      Controlled BuildStream/BuildBarn cache re-warm. Verifies the same USB4
+      and BuildBarn admission gates used by Dakota/Cosmic/Bluefin Server
+      builds before serially invoking those templates to repopulate BuildBarn
+      action and artifact caches. Triggered manually or by the Prometheus
+      alert/EventSource path.
+  labels:
+    app.kubernetes.io/component: bst-cache-warm
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  serviceAccountName: argo
+  activeDeadlineSeconds: 86400
+  podGC:
+    strategy: OnWorkflowCompletion
+  ttlStrategy:
+    secondsAfterSuccess: 3600
+    secondsAfterFailure: 86400
+
+  arguments:
+    parameters:
+      - name: dakota-repo
+        value: "https://github.com/projectbluefin/dakota.git"
+      - name: dakota-ref
+        value: "testing"
+      - name: cosmic-repo
+        value: "https://github.com/RazorfinOS-org/cosmic-build-meta.git"
+      - name: cosmic-ref
+        value: "main"
+      - name: bluefin-server-repo
+        value: "https://github.com/projectbluefin/server.git"
+      - name: bluefin-server-ref
+        value: "main"
+      - name: registry
+        value: "192.168.1.102:30500"
+      - name: build-mode
+        value: "re"
+
+  entrypoint: warmup
+  metrics:
+    prometheus:
+      - name: lab_build_workflow_completed_total
+        help: Completed lab build workflows by pipeline and status.
+        labels:
+          - key: pipeline
+            value: bst-cache-warm
+          - key: status
+            value: "{{workflow.status}}"
+        counter:
+          value: "1"
+      - name: lab_build_workflow_duration_seconds
+        help: Lab build workflow duration in seconds by pipeline and status.
+        labels:
+          - key: pipeline
+            value: bst-cache-warm
+          - key: status
+            value: "{{workflow.status}}"
+        histogram:
+          buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+          value: "{{workflow.duration}}"
+
+  templates:
+    - name: warmup
+      dag:
+        tasks:
+          - name: admission-gate
+            template: detect-build-mode
+            arguments:
+              parameters:
+                - name: build-mode
+                  value: "{{workflow.parameters.build-mode}}"
+          # The production build templates each hold the global bst-build
+          # semaphore. Chain the warmup lanes so Dakota, Cosmic, and Bluefin
+          # Server never hold that semaphore at the same time within a single
+          # warmup run. The build-warmup templates use the dedicated
+          # bst-cache-warm semaphore instead, isolating re-seeding from the
+          # production build lane.
+          - name: warm-dakota
+            depends: admission-gate.Succeeded
+            templateRef:
+              name: dakota-build-pipeline
+              template: build-warmup
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{workflow.parameters.dakota-ref}}"
+                - name: commit-sha
+                  value: ""
+                - name: image-tag
+                  value: "testing"
+                - name: repo
+                  value: "{{workflow.parameters.dakota-repo}}"
+                - name: registry
+                  value: "{{workflow.parameters.registry}}"
+                - name: build-mode
+                  value: "{{workflow.parameters.build-mode}}"
+          - name: warm-cosmic
+            depends: warm-dakota.Succeeded
+            templateRef:
+              name: cosmic-build-pipeline
+              template: build-warmup
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{workflow.parameters.cosmic-ref}}"
+                - name: repo
+                  value: "{{workflow.parameters.cosmic-repo}}"
+                - name: registry
+                  value: "{{workflow.parameters.registry}}"
+                - name: build-mode
+                  value: "{{workflow.parameters.build-mode}}"
+          - name: warm-bluefin-server
+            depends: warm-cosmic.Succeeded
+            templateRef:
+              name: bluefin-server-build-pipeline
+              template: build-warmup
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{workflow.parameters.bluefin-server-ref}}"
+                - name: repo
+                  value: "{{workflow.parameters.bluefin-server-repo}}"
+                - name: registry
+                  value: "{{workflow.parameters.registry}}"
+                - name: build-mode
+                  value: "{{workflow.parameters.build-mode}}"
+
+    - name: detect-build-mode
+      inputs:
+        parameters:
+          - name: build-mode
+      outputs:
+        parameters:
+          - name: mode
+            valueFrom:
+              path: /tmp/mode
+      script:
+        image: cgr.dev/chainguard/kubectl:latest-dev
+        command: [bash]
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        source: |
+          set -euo pipefail
+          REQUESTED="{{inputs.parameters.build-mode}}"
+          if [[ "${REQUESTED}" != "re" ]]; then
+            echo "Cache warmup rejected: build-mode '${REQUESTED}' is forbidden; only 're' is permitted" >&2
+            exit 1
+          fi
+
+          MAX_AGE_SECONDS=60
+          NOW="$(date -u +%s)"
+          for NODE in ghost exo-0; do
+            LINK="$(kubectl get node "${NODE}" -o jsonpath='{.metadata.annotations.lab\.projectbluefin\.io/usb4-link}')"
+            OBSERVED_AT="$(kubectl get node "${NODE}" -o jsonpath='{.metadata.annotations.lab\.projectbluefin\.io/usb4-link-observed-at}')"
+            READY="$(kubectl get node "${NODE}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')"
+
+            if [[ "${LINK}" != "up" || ! "${OBSERVED_AT}" =~ ^[0-9]+$ || "${READY}" != "True" ]]; then
+              echo "Cache warmup rejected ${NODE}: link=${LINK:-missing} observed-at=${OBSERVED_AT:-missing} ready=${READY:-unknown}" >&2
+              exit 1
+            fi
+            if (( NOW - OBSERVED_AT > MAX_AGE_SECONDS )); then
+              echo "Cache warmup rejected ${NODE}: USB4 observation stale ($((NOW - OBSERVED_AT))s)" >&2
+              exit 1
+            fi
+          done
+
+          WORKERS="$(kubectl get pods -n buildbarn -l app=worker -o jsonpath='{range .items[*]}{.spec.nodeName}{"|"}{.status.phase}{"|"}{.status.containerStatuses[*].ready}{"\n"}{end}')"
+          for NODE in ghost exo-0; do
+            if ! grep -Eq "^${NODE}\|Running\|true true$" <<<"${WORKERS}"; then
+              echo "Cache warmup rejected: no Ready BuildBarn worker on ${NODE}" >&2
+              exit 1
+            fi
+          done
+
+          echo "BuildBarn remote-execution grid admitted for cache warmup"
+          printf '%s' re > /tmp/mode

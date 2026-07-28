@@ -67,11 +67,72 @@ spec:
   templates:
 
     - name: build
+      inputs:
+        parameters:
+          - name: ref
+            value: "{{workflow.parameters.ref}}"
+          - name: repo
+            value: "{{workflow.parameters.repo}}"
+          - name: registry
+            value: "{{workflow.parameters.registry}}"
+          - name: build-mode
+            value: "re"
+      steps:
+        - - name: detect-build-mode
+            template: detect-build-mode
+            arguments:
+              parameters:
+                - name: build-mode
+                  value: "{{inputs.parameters.build-mode}}"
+        - - name: core
+            template: build-core
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: build-mode
+                  value: "{{steps.detect-build-mode.outputs.parameters.mode}}"
+
+    - name: build-warmup
       synchronization:
         semaphores:
-        - configMapKeyRef:
-            name: workflow-semaphores
-            key: bst-build
+          - configMapKeyRef:
+              name: workflow-semaphores
+              key: bst-cache-warm
+      inputs:
+        parameters:
+          - name: ref
+            value: "{{workflow.parameters.ref}}"
+          - name: repo
+            value: "{{workflow.parameters.repo}}"
+          - name: registry
+            value: "{{workflow.parameters.registry}}"
+          - name: build-mode
+            value: "re"
+      steps:
+        - - name: core
+            template: build-core
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: build-mode
+                  value: "{{inputs.parameters.build-mode}}"
+
+    - name: build-core
+      synchronization:
+        semaphores:
+          - configMapKeyRef:
+              name: workflow-semaphores
+              key: bst-build
       inputs:
         parameters:
           - name: ref
@@ -192,14 +253,15 @@ spec:
                   value: "{{inputs.parameters.mode}}"
     - name: bst-build-re
       priorityClassName: bst-build
-      # 2026-07-11: Raised 5400 -> 43200 (dakota parity). A cold local BST
-      # build exceeds 90 min; attempt (2) of run ...-queued-1783735153 was
-      # killed healthy at 94 min by this step deadline.
-      activeDeadlineSeconds: 43200
+      # Fail fast when we are stuck in remote source fetch/retry loops instead of
+      # letting a pod burn 30+ minutes of cluster time before the workflow gives
+      # up. A healthy distributed build should either finish or surface a real
+      # infrastructure error well before this window.
+      activeDeadlineSeconds: 1800
       retryStrategy:
-        # Every retry remains distributed; repair BuildBarn rather than compiling
-        # locally if an action fails.
-        limit: "5"
+        # Keep the queue healthy: a stalled or infrastructure-backed build should
+        # fail immediately rather than consume another pod slot on retry.
+        limit: 0
         retryPolicy: "Always"
       inputs:
         parameters:
@@ -242,6 +304,10 @@ spec:
             value: poll
           - name: GRPC_ENABLE_FORK_SUPPORT
             value: "1"
+          # Avoid the FUSE staging backend; BuildStream exits 255 in this lab
+          # environment when the FUSE stager crashes during source staging.
+          - name: BUILDBOX_STAGER
+            value: copy-or-link
           # buildstream-plugins-community git_repo uses dulwich, whose filter-process
           # protocol trips over git-lfs smudge for repos with .gitattributes LFS
           # entries (e.g. pop-os/cosmic-edit). git CLI handles them fine; dulwich
@@ -311,20 +377,29 @@ spec:
           echo "=== Distributed build: remote execution enabled (USB4 link up) ==="
           sed 's/^/    /' /etc/buildstream/remote-execution.conf >> /tmp/buildstream-cluster.conf
 
+          BST_BUILD_TIMEOUT_SECONDS=1800
+          BST_EXPORT_TIMEOUT_SECONDS=600
+
           echo "=== Building ${ELEMENT} ==="
-          bst --config "${BST_CONF}" \
+          if ! timeout --signal=TERM --kill-after=30s "${BST_BUILD_TIMEOUT_SECONDS}s" bst --config "${BST_CONF}" \
               --no-interactive \
               -o x86_64_v3 true \
-              build "${ELEMENT}"
+              build "${ELEMENT}"; then
+            echo "BST build timed out after ${BST_BUILD_TIMEOUT_SECONDS}s for ${ELEMENT}" >&2
+            exit 1
+          fi
 
           echo "=== Exporting ${ELEMENT} ==="
           EXPORT_DIR="/tmp/export-$(basename ${ELEMENT} .bst)"
           mkdir -p "${EXPORT_DIR}"
-          bst --config "${BST_CONF}" \
+          if ! timeout --signal=TERM --kill-after=30s "${BST_EXPORT_TIMEOUT_SECONDS}s" bst --config "${BST_CONF}" \
               --no-interactive \
               -o x86_64_v3 true \
               artifact checkout "${ELEMENT}" \
-              --directory "${EXPORT_DIR}"
+              --directory "${EXPORT_DIR}"; then
+            echo "BST artifact export timed out after ${BST_EXPORT_TIMEOUT_SECONDS}s for ${ELEMENT}" >&2
+            exit 1
+          fi
 
           echo "=== Pushing to local Zot ==="
           if command -v skopeo >/dev/null 2>&1; then

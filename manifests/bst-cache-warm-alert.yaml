@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bst-cache-warm-alerts
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/component: prometheus
+    app.kubernetes.io/part-of: lab
+
+data:
+  bst-cache-warm.rules.yml: |
+    groups:
+      - name: buildbarn-cache
+        rules:
+          - alert: BSTCacheCold
+            expr: |
+              (
+                increase(lab_build_workflow_completed_total{pipeline="dakota",status="Succeeded"}[6h]) == 0
+                or
+                absent(lab_build_workflow_completed_total{pipeline="dakota",status="Succeeded"})
+              )
+              and
+              (
+                count(up{job="buildbarn", app="worker"} == 1) >= 1
+              )
+            for: 10m
+            labels:
+              severity: warning
+              team: lab
+            annotations:
+              summary: "BuildStream cache appears cold"
+              description: "No successful Dakota BuildStream run has completed in the last 6h; warmup should re-seed BuildBarn caches."
+              runbook_url: "https://github.com/projectbluefin/lab/blob/main/docs/skills/cluster-tooling/buildstream.md"

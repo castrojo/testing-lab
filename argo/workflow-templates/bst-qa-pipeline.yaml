@@ -117,6 +117,10 @@ spec:
             value: "{{inputs.parameters.element}}"
           - name: REMOTE_EXECUTION_SERVICE
             value: "{{inputs.parameters.remote-execution-service}}"
+          # Avoid the FUSE staging backend; BuildStream exits 255 in this lab
+          # environment when the FUSE stager crashes during source staging.
+          - name: BUILDBOX_STAGER
+            value: copy-or-link
         source: |
           set -euo pipefail
 
