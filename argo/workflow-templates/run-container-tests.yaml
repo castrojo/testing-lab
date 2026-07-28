@@ -268,6 +268,16 @@ spec:
                 nss_entry=$(getent group "${group}" || true)
                 if [ -n "${nss_entry}" ]; then
                   printf '%s\n' "${nss_entry}" >>/etc/group
+                else
+                  # Image has no entry anywhere — synthesize with well-known fallback GIDs
+                  # so tests can run on minimal images (e.g. common, knuckle CI images).
+                  case "${group}" in
+                    video)  gid=39  ;;
+                    render) gid=989 ;;
+                    input)  gid=999 ;;
+                    *)      gid=997 ;;
+                  esac
+                  printf '%s:x:%s:\n' "${group}" "${gid}" >>/etc/group
                 fi
               fi
             fi

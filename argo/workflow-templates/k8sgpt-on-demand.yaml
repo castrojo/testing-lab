@@ -27,6 +27,8 @@ spec:
         value: "Pod,Deployment,Service,Ingress,Node"
       - name: ignored-services
         value: "argocd/argocd-applicationset-controller,argocd/argocd-dex-server,argocd/argocd-notifications-controller-metrics,kubevirt/virt-exportproxy,llm-d/llm-d-modelserver"
+      - name: ignored-ingresses
+        value: "wds1-system/wds1"
       - name: provider
         value: "openai"
       - name: model
@@ -101,12 +103,14 @@ spec:
               return json.loads(resp.read())["choices"][0]["message"]["content"]
 
 
-          def normalize_results(data, ignored_services):
-            ignored = {item for item in ignored_services.split(",") if item}
+          def normalize_results(data, ignored_services, ignored_ingresses):
+            ignored_svcs = {item for item in ignored_services.split(",") if item}
+            ignored_ings = {item for item in ignored_ingresses.split(",") if item}
             results = data.get("results") or []
             data["results"] = [
               item for item in results
-              if item.get("kind") != "Service" or item.get("name") not in ignored
+              if not (item.get("kind") == "Service" and item.get("name") in ignored_svcs)
+              and not (item.get("kind") == "Ingress" and item.get("name") in ignored_ings)
             ]
             return data
 
@@ -116,6 +120,7 @@ spec:
             namespace = "{{workflow.parameters.namespace}}"
             filters = "{{workflow.parameters.filters}}"
             ignored_services = "{{workflow.parameters.ignored-services}}"
+            ignored_ingresses = "{{workflow.parameters.ignored-ingresses}}"
             model = "{{workflow.parameters.model}}"
             base_url = "{{workflow.parameters.base-url}}"
             api_key = os.environ.get("K8SGPT_API_KEY", "")
@@ -172,7 +177,7 @@ spec:
             if prometheus_url:
               cmd += ["--prometheus-url", prometheus_url]
             result = subprocess.run(cmd, capture_output=True, text=True)
-            data = normalize_results(json.loads(result.stdout or "{}"), ignored_services)
+            data = normalize_results(json.loads(result.stdout or "{}"), ignored_services, ignored_ingresses)
             findings = data.get("results") or []
             print(f"k8sgpt local findings: {len(findings)}")
 
