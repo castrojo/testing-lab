@@ -45,10 +45,10 @@ def test_dakota_requires_distributed_capacity_matched_execution():
         encoding="utf-8"
     )
 
-    assert "fetchers: 24" in config
-    assert "builders: 24" in config
-    assert "pushers: 12" in config
-    assert "max-jobs: 24" in config
+    assert "fetchers: 8" in config
+    assert "builders: 4" in config
+    assert "pushers: 4" in config
+    assert "max-jobs: 12" in config
     assert "nodeSelector:\n        kubernetes.io/hostname: ghost" not in pipeline
     assert "depends: detect-build-mode" in pipeline
     assert "Verified BuildStream remote execution configuration" in pipeline
