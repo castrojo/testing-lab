@@ -39,45 +39,38 @@ without a check run. See the [GitHub Actions `merge_group` documentation](https:
 
 ## Automated data pushes
 
-Nothing pushes to `main` from GitHub Actions. The default `GITHUB_TOKEN` holds
-**no** ruleset bypass, so a direct push fails with `GH013: Repository rule
-violations found for refs/heads/main`.
-
-The dashboard ingestion workflow (`update-test-results.yml`) therefore publishes
-through the queue like any other change: it force-pushes regenerated `docs/`
-data to `bot/dashboard-data`, opens or reuses a pull request, and enables
-auto-merge. The branch is rebuilt from `main` on every run and every file is
-regenerated, so the force-push cannot lose work.
-
-`GITHUB_TOKEN` may not start workflows, so the data pull request gets no
-`pull_request` run of `Lint` and the required `lint` context would never report.
-`workflow_dispatch` is exempt from that restriction, but a dispatched run's
-check is **not associated with the pull request**, so it cannot satisfy the
-requirement either — enqueueing fails with `Required status check "lint" is
-expected`.
-
-The job therefore runs the real `Lint` workflow against the branch head, waits
-for it, and mirrors its conclusion into a **commit status** named `lint`, which
-does count toward the PR rollup. If lint fails, nothing is published. The merge
-group then runs `lint` again authoritatively before the merge lands.
-
-`strict_required_status_checks_policy` is on, so the data pull request shows
-`BEHIND` whenever `main` moves. This self-heals: the next scheduled run rebuilds
-the branch from current `main`.
-
-The blocked `action_required` record also leaves the pull request `UNSTABLE`.
-Auto-merge waits on *every* check rather than just the required ones, so it
-never enqueues on its own — the job enqueues explicitly through the
-`enqueuePullRequest` GraphQL mutation and keeps `--auto` only as a fallback.
-
-Only two actors hold a bypass, and neither is available to Actions:
+The dashboard ingestion workflow (`update-test-results.yml`) commits regenerated
+`docs/` data straight to `main`. Machine-generated data does not go through the
+queue, so that push relies on a **bypass actor**:
 
 | Actor | Used by |
 |---|---|
 | `OrganizationAdmin` | in-cluster Argo pushes (`scripts/publish_test_results.py`, `argo/workflow-templates/*cve-scan.yaml`) |
+| `DeployKey` | `update-test-results.yml`, via the `DASHBOARD_DEPLOY_KEY` secret |
 
-If an automated job reports `GH013`, it is pushing to `main` directly. Route it
-through `bot/dashboard-data` instead of reaching for a bypass token.
+The default `GITHUB_TOKEN` holds **no** bypass; pushing with it fails with
+`GH013: Repository rule violations found for refs/heads/main`. The ingestion job
+therefore rewrites its remote to SSH and authenticates with a repository deploy
+key that has write access.
+
+### Why generated data does not go through the queue
+
+Routing it through a bot pull request does not work, and the failure is not
+obvious:
+
+- `GITHUB_TOKEN` may not start workflows, so a bot-opened pull request gets no
+  `pull_request` run of `Lint` and the required `lint` context never reports.
+- `workflow_dispatch` is exempt from that restriction, but a dispatched run's
+  check is not associated with the pull request, so it cannot satisfy the
+  requirement either. Enqueueing fails with
+  `Pull request Required status check "lint" is expected`.
+- Mirroring the dispatched run into a commit status *does* satisfy the pull
+  request, but the merge group the bot then creates gets no `merge_group` run
+  for the same reason, so the entry sits at `AWAITING_CHECKS` until it times
+  out.
+
+A bypass actor is the only mechanism that works end to end for machine-generated
+commits. Human and Renovate pull requests still go through the queue normally.
 
 ## Queueing a PR
 
