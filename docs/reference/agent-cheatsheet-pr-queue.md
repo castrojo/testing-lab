@@ -15,7 +15,7 @@ Mandatory gate for `knuckle`, `dakota`, and this repo's PRs.
    - Log output → `argo logs -n argo <name>`
    - Pod state → `kubectl get pods -n argo`
    - VMI state only for VM-backed lanes → `kubectl get vmi -A`
-3. Keep the PR comment minimal: what ran, pass/fail, and blockers only. Never paste raw Argo logs until they have been checked for credentials.
+3. Keep the PR comment minimal: what ran, pass/fail, and blockers only. Never paste raw Argo logs until they have been checked for credentials. This is a *manual reviewer comment*, distinct from the automated `testing-lab / <repo>` Check Run the `pr-label-poller` posts — do not restate the automated check's result.
 4. Treat `pr/needs-review` as a hard human gate; `automerge` and `chore/deps` do not prove maintainer approval.
 5. Only then apply `agent-tested` and approve / queue.
 

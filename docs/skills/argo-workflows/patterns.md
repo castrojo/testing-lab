@@ -403,17 +403,32 @@ If the template is retagged, update the dashboard fallback writable-repos list i
 
 ### 20aa. Report factory PR workflows through one GitHub Check Run
 
-Bluefin, Bluefin LTS, and Dakota PR validation each use one native Check Run
-named `testing-lab / <repository>`, owned by the existing MergeRaptor GitHub
-App. Do not post PR comments or a parallel commit status for the same result.
+Factory PR validation for the repos in the poller's `AUTO_REPOS` list
+(`projectbluefin/common`, `bluefin`, `bluefin-lts`, `dakota`, `knuckle`,
+`testsuite`), plus any PR carrying the `test-on-lab` label, each use one native
+Check Run named `testing-lab / <repository>`, owned by the existing MergeRaptor
+GitHub App. Do not post PR comments or a parallel commit status for the same
+result. (This automated Check Run is a different channel from the manual
+reviewer comments an operator posts during PR-queue review; do not conflate the
+two.)
 
 The auth boundary is deliberate:
 
 1. The lab uses its existing GitHub credential only to send a
-   `repository_dispatch` event to the target repository.
+   `repository_dispatch` event (`event_type: "lab-check"`) to the target
+   repository.
 2. The target repository's `lab-check.yml` mints a short-lived MergeRaptor
    installation token from the existing GitHub Actions org secrets.
 3. MergeRaptor creates or updates the Check Run for the exact PR head SHA.
+
+Enrollment is a **two-sided contract**: dispatching from the lab (sender) only
+produces visible feedback when the target repo also ships
+`.github/workflows/lab-check.yml` on its default branch (receiver). A repo added
+to `AUTO_REPOS` without that receiver workflow is *half-enrolled* — the dispatch
+returns HTTP 204 and the Argo QA runs, but no Check Run, comment, or error ever
+appears on the PR. Adding a repo to lab PR feedback therefore means editing both
+sides. As of this writing `common`, `knuckle`, and `testsuite` are dispatched to
+but lack the receiver workflow, so their results are silently dropped.
 
 Never copy the MergeRaptor private key into Kubernetes. Keep the dispatch
 payload nested and bounded. Include workflow parameters, phase counts,

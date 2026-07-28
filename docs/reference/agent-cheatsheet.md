@@ -82,6 +82,7 @@ Run `just logs` first. Then match a row. **Bluefin and Dakota image-poll QA are 
 | Workflow stuck `Pending` | Run §3 |
 | Workflow stuck on a `NotReady` node / pod never progresses | `kubectl get nodes`; if the worker is `NotReady`, `argo stop -n argo <workflow>` and submit a fresh run so the scheduler can place it on a healthy node (often `ghost`) |
 | Template change did not take effect | Run §4 |
+| Lab QA ran but no `testing-lab / <repo>` Check Run on the factory PR | `gh api repos/projectbluefin/<repo>/contents/.github/workflows/lab-check.yml` — a `404` means the repo is sender-enrolled (in the poller's `AUTO_REPOS`) but missing the receiver workflow, so the `lab-check` dispatch is silently dropped. See [`/docs/ops/RUNBOOK.md`](/docs/ops/RUNBOOK.md) failure modes. |
 
 If no row matches:
 

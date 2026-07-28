@@ -273,11 +273,43 @@ change their DAGs.
 
 ### Factory PR feedback
 
-The active `pr-label-poller` checks every open Bluefin, Bluefin LTS, and Dakota
-PR every five minutes. Bluefin and Bluefin LTS run smoke QA against their
-current `:testing` images; Dakota creates a SHA-pinned BuildStream build and
-container-QA workflow. Feedback is reported through one repository-specific
-Check Run; no PR comment is created.
+The active `pr-label-poller` runs every five minutes and dispatches QA for two
+sets of PRs. Pass 1 covers every open PR in the auto-test repos, no label
+required:
+
+| Repo | QA path |
+|---|---|
+| `projectbluefin/common` | smoke suite against bluefin `:testing` |
+| `projectbluefin/bluefin` | smoke suite against current `:testing` image |
+| `projectbluefin/bluefin-lts` | smoke suite against current `:testing` image |
+| `projectbluefin/dakota` | SHA-pinned BuildStream build + container QA |
+| `projectbluefin/knuckle` | `knuckle-qa-pipeline` |
+| `projectbluefin/testsuite` | smoke + common suites against bluefin `:testing` |
+
+Pass 2 is an org-wide catch-all that also picks up any open `projectbluefin` PR
+carrying the `test-on-lab` label. The authoritative repo list is `AUTO_REPOS` in
+[`argo/workflow-templates/pr-poller.yaml`](../../argo/workflow-templates/pr-poller.yaml).
+Feedback is reported through one repository-specific automated Check Run; no PR
+comment is created. (This automated Check Run is distinct from the manual
+reviewer comments an operator posts during PR-queue review — see
+[`docs/ops/lab-operations.md`](../ops/lab-operations.md) §9.)
+
+**Enrollment is a two-sided contract.** A repo only receives visible feedback
+when *both* halves exist:
+
+1. **Sender** — the repo is in `AUTO_REPOS` (or a PR carries `test-on-lab`), so
+   the lab dispatches a `lab-check` event to it.
+2. **Receiver** — the target repo has `.github/workflows/lab-check.yml` on its
+   default branch to turn that dispatch into a Check Run.
+
+If only the sender half exists, the dispatch succeeds (HTTP 204) but **nothing
+appears on the PR** — no Check Run, no comment, no error visible to the author.
+As of this writing the receiver workflow is present in `bluefin`, `bluefin-lts`,
+and `dakota`, and **missing** in `common`, `knuckle`, and `testsuite`, so lab QA
+for those three repos runs but is silently dropped on the GitHub side. Adding a
+repo to `AUTO_REPOS` without also adding `lab-check.yml` is not a complete
+enrollment. See [`docs/ops/RUNBOOK.md`](../ops/RUNBOOK.md) for the diagnosis
+steps when QA ran but nothing surfaces on the PR.
 
 The check lifecycle is:
 
@@ -298,12 +330,13 @@ counts, and Argo failure messages. Raw pod logs stay in the private Argo UI to
 avoid copying authenticated output into GitHub.
 
 ```bash
-just lab-check-status <bluefin|bluefin-lts|dakota> <pr-number>
+just lab-check-status <repo> <pr-number>
 ```
 
 The Check Run is created by the org-wide MergeRaptor GitHub App. Its private key
 remains in GitHub Actions; Kubernetes sends only `repository_dispatch` payloads.
-Each repository's `lab-check.yml` must exist on its default branch. The app
+Each repository's `lab-check.yml` must exist on its default branch, or the
+dispatch is silently dropped (see the enrollment contract above). The app
 installation must grant `checks: write`.
 
 ### `dakota-publish-pipeline`

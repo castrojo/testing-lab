@@ -117,19 +117,33 @@ full parameter set.
 
 ---
 
-## PR Label Trigger (`test-on-lab`)
+## PR Feedback Poller (`pr-label-poller`)
 
-The `pr-label-poller` CronWorkflow runs every 5 minutes and scans the
-`projectbluefin` org for open PRs labeled `test-on-lab`. For each matching PR it
-has not already processed (idempotency tracked via GitHub commit status), it:
+The `pr-label-poller` CronWorkflow runs every 5 minutes and dispatches QA in two
+passes:
 
-1. Identifies the target repo (bluefin, bluefin-lts, dakota, etc.)
-2. Dispatches the appropriate WorkflowTemplate with the PR's branch/SHA as parameters
-3. Sets a `pending` commit status on the PR SHA
-4. On workflow completion, sets `success` or `failure` commit status
+- **Pass 1 — auto-test repos.** Every open PR in the poller's `AUTO_REPOS` list
+  (`projectbluefin/common`, `bluefin`, `bluefin-lts`, `dakota`, `knuckle`,
+  `testsuite`) is tested with no label required.
+- **Pass 2 — label catch-all.** Any open `projectbluefin` PR labeled
+  `test-on-lab` is also picked up.
 
-To trigger: add the `test-on-lab` label to a PR in the `projectbluefin` org.
-The poller picks it up within 5 minutes.
+For each PR it has not already processed (idempotency is tracked by looking for
+an existing Argo workflow for that repo + head SHA), it:
+
+1. Identifies the target repo and routes to the matching WorkflowTemplate.
+2. Creates the Argo workflow with the PR's branch/SHA as parameters.
+3. Sends a `repository_dispatch` (`event_type: "lab-check"`) to the target repo,
+   which its `.github/workflows/lab-check.yml` turns into a `testing-lab / <repo>`
+   Check Run (queued → in-progress → completed). No commit status or PR comment
+   is created.
+
+Feedback only surfaces when the target repo ships the `lab-check.yml` receiver;
+see the two-sided enrollment contract in
+[`WORKFLOWS.md`](./WORKFLOWS.md) "Factory PR feedback".
+
+To force a run outside `AUTO_REPOS`: add the `test-on-lab` label to a PR in the
+`projectbluefin` org. The poller picks it up within 5 minutes.
 
 ---
 
