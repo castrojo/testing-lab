@@ -276,6 +276,12 @@ force-dakota-poll:
       -p force=true \
       -n {{ argo_ns }} --watch
 
+# Re-run the KDE source tracker for MR !534 even if the SHA has not changed.
+force-kde-source-poll:
+    argo submit --from cronworkflow/kde-source-tracker \
+      -p force=true \
+      -n {{ argo_ns }} --watch
+
 # Compatibility alias for older docs/callers.
 run-dakota-validate ref="testing" repo="https://github.com/projectbluefin/dakota.git":
     just run-bst-build {{ ref }} {{ repo }}

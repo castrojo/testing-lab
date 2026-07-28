@@ -387,6 +387,45 @@ today's anonymous-write registry and becomes required only at the documented
 authentication activation gate. See
 [Zot candidate promotion](../ops/zot-candidate-promotion.md).
 
+### `kde-source-tracker`
+
+GitLab-aware source state for KDE Linux MR !534. Polls
+`https://invent.kde.org/kde-linux/kde-linux/-/merge_requests/534` and records an
+immutable SHA provenance log:
+
+- While the MR is **open**, the effective source is the MR head SHA.
+- After the MR **merges**, the tracker transitions to the `master` branch HEAD.
+- State is persisted to the `kde-source-state` ConfigMap under the `kde-mr-534`
+  key prefix.
+- Every changed source SHA appends a record to the bounded history log in the
+  same ConfigMap.
+
+Downstream KDE OCI build/publish/QA pipelines can read the authoritative SHA
+from the ConfigMap instead of re-polling GitLab.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `gitlab-host` | `invent.kde.org` | GitLab instance host |
+| `project` | `kde-linux/kde-linux` | URL-encoded project path |
+| `mr-iid` | `534` | Merge request IID to track |
+| `target-branch` | `master` | Branch to track after merge |
+| `state-key` | `kde-mr-534` | ConfigMap key prefix |
+| `state-configmap` | `kde-source-state` | ConfigMap that owns the state |
+| `history-limit` | `100` | Maximum source-history records kept |
+| `force` | `false` | Re-record the current source even if unchanged |
+
+Manual run:
+
+```bash
+argo submit --from workflowtemplate/kde-source-tracker -n argo --watch
+```
+
+Force a fresh source record:
+
+```bash
+just force-kde-source-poll
+```
+
 ---
 
 ## Catalog installs
@@ -430,6 +469,7 @@ Lives in `manifests/`, applied via the `testing-lab-infra` ArgoCD app:
 |---|---|---|---|
 | `nightly-smoke` | 02:00 UTC | `bluefin-qa-pipeline` (latest) | Catch upstream regressions |
 | `nightly-smoke-lts` | 02:30 UTC | `bluefin-qa-pipeline` (lts)    | Same, for LTS branch; first fire builds the missing golden disk |
+| `kde-source-tracker` | `9/10 * * * *` | `kde-source-tracker` | Track KDE Linux MR !534 head SHA; switch to master after merge |
 | `nightly-dakota-publish` | 21:00 UTC | `dakota-publish-pipeline` | Copy both Dakota testing lanes from Zot to GHCR by digest |
 | `orphan-vm-cleanup` | every 2h | inline | GC stale per-run hostDisks in bluefin, flatcar, and knuckle namespaces |
 

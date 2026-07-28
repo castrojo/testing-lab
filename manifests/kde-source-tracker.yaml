@@ -1,0 +1,43 @@
+# CronWorkflow: polls KDE Linux MR !534 on invent.kde.org every 10 minutes.
+# Tracks the MR head SHA while the MR is open and switches to the master HEAD
+# after merge. State is owned by the kde-source-tracker WorkflowTemplate.
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: kde-source-tracker
+  namespace: argo
+  labels:
+    app.kubernetes.io/component: source-tracker
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  suspend: false
+  schedules:
+    - "9/10 * * * *"
+  timezone: "UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  workflowMetadata:
+    labels:
+      bluefin.io/source-tracker: "true"
+      bluefin.io/bst-source: kde
+  workflowSpec:
+    serviceAccountName: argo
+    entrypoint: track
+    arguments:
+      parameters:
+        - name: gitlab-host
+          value: invent.kde.org
+        - name: project
+          value: kde-linux/kde-linux
+        - name: mr-iid
+          value: "534"
+        - name: target-branch
+          value: master
+        - name: state-key
+          value: kde-mr-534
+        - name: state-configmap
+          value: kde-source-state
+        - name: force
+          value: "false"
+    workflowTemplateRef:
+      name: kde-source-tracker

@@ -1,0 +1,364 @@
+# GitLab-aware source tracker for KDE Linux MR !534.
+# Tracks the immutable MR head SHA while the MR is open and transitions to the
+# target branch (master) HEAD after the MR merges. Persists source state and a
+# bounded source-history log to a ConfigMap so downstream build/publish/QA
+# pipelines can consume an authoritative SHA without re-polling GitLab.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: kde-source-tracker
+  namespace: argo
+  annotations:
+    description: |
+      Polls invent.kde.org for KDE Linux MR !534. While the MR is open, the
+      effective source is the MR head SHA. After merge, the tracker switches to
+      the master branch HEAD. State is stored in the kde-source-state ConfigMap
+      and every changed source SHA is appended to the per-key history log.
+  labels:
+    app.kubernetes.io/component: source-tracker
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  serviceAccountName: argo
+  podGC:
+    strategy: OnWorkflowCompletion
+  ttlStrategy:
+    secondsAfterSuccess: 3600
+    secondsAfterFailure: 86400
+  activeDeadlineSeconds: 600
+  metrics:
+    prometheus:
+      - name: lab_build_workflow_completed_total
+        help: Completed lab build workflows by pipeline and status.
+        labels:
+          - key: pipeline
+            value: kde-source-tracker
+          - key: status
+            value: "{{workflow.status}}"
+        counter:
+          value: "1"
+      - name: lab_build_workflow_duration_seconds
+        help: Lab build workflow duration in seconds by pipeline and status.
+        labels:
+          - key: pipeline
+            value: kde-source-tracker
+          - key: status
+            value: "{{workflow.status}}"
+        histogram:
+          buckets: [60, 120, 180, 300, 600]
+          value: "{{workflow.duration}}"
+  entrypoint: track
+  arguments:
+    parameters:
+      - name: gitlab-host
+        value: invent.kde.org
+      - name: project
+        value: kde-linux/kde-linux
+      - name: mr-iid
+        value: "534"
+      - name: target-branch
+        value: master
+      - name: state-key
+        value: kde-mr-534
+      - name: state-configmap
+        value: kde-source-state
+      - name: history-limit
+        value: "100"
+      - name: force
+        value: "false"
+  templates:
+    - name: track
+      dag:
+        tasks:
+          - name: resolve-source
+            template: resolve-source
+          - name: update-state
+            depends: "resolve-source.Succeeded"
+            when: "{{tasks.resolve-source.outputs.parameters.changed}} == true"
+            template: update-state
+            arguments:
+              parameters:
+                - name: source-sha
+                  value: "{{tasks.resolve-source.outputs.parameters.source-sha}}"
+                - name: source-mode
+                  value: "{{tasks.resolve-source.outputs.parameters.source-mode}}"
+                - name: mr-state
+                  value: "{{tasks.resolve-source.outputs.parameters.mr-state}}"
+                - name: mr-url
+                  value: "{{tasks.resolve-source.outputs.parameters.mr-url}}"
+                - name: expected-sha
+                  value: "{{tasks.resolve-source.outputs.parameters.stored-sha}}"
+                - name: expected-mode
+                  value: "{{tasks.resolve-source.outputs.parameters.stored-mode}}"
+          - name: record-history
+            depends: "update-state.Succeeded"
+            template: record-history
+            arguments:
+              parameters:
+                - name: source-sha
+                  value: "{{tasks.resolve-source.outputs.parameters.source-sha}}"
+                - name: source-mode
+                  value: "{{tasks.resolve-source.outputs.parameters.source-mode}}"
+                - name: mr-state
+                  value: "{{tasks.resolve-source.outputs.parameters.mr-state}}"
+                - name: mr-url
+                  value: "{{tasks.resolve-source.outputs.parameters.mr-url}}"
+
+    - name: resolve-source
+      outputs:
+        parameters:
+          - name: changed
+            valueFrom:
+              path: /tmp/changed
+          - name: source-sha
+            valueFrom:
+              path: /tmp/source-sha
+          - name: source-mode
+            valueFrom:
+              path: /tmp/source-mode
+          - name: mr-state
+            valueFrom:
+              path: /tmp/mr-state
+          - name: mr-url
+            valueFrom:
+              path: /tmp/mr-url
+          - name: stored-sha
+            valueFrom:
+              path: /tmp/stored-sha
+          - name: stored-mode
+            valueFrom:
+              path: /tmp/stored-mode
+      metadata:
+        labels:
+          app.kubernetes.io/part-of: bluefin-test-suite
+          bluefin.io/step: resolve-source
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        env:
+          - name: GITLAB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: gitlab-token
+                key: token
+                optional: true
+        source: |
+          set -euo pipefail
+
+          GITLAB_HOST="{{workflow.parameters.gitlab-host}}"
+          PROJECT="{{workflow.parameters.project}}"
+          PROJECT_ENC=$(printf '%s' "$PROJECT" | jq -sRr @uri)
+          MR_IID="{{workflow.parameters.mr-iid}}"
+          TARGET_BRANCH="{{workflow.parameters.target-branch}}"
+          STATE_KEY="{{workflow.parameters.state-key}}"
+          STATE_CM="{{workflow.parameters.state-configmap}}"
+          FORCE="{{workflow.parameters.force}}"
+
+          MR_URL="https://${GITLAB_HOST}/${PROJECT}/-/merge_requests/${MR_IID}"
+          API_BASE="https://${GITLAB_HOST}/api/v4/projects/${PROJECT_ENC}"
+
+          AUTH=()
+          if [ -n "${GITLAB_TOKEN:-}" ]; then
+            AUTH=(-H "PRIVATE-TOKEN: ${GITLAB_TOKEN}")
+          fi
+
+          MR_JSON=$(curl -sf "${AUTH[@]}" "${API_BASE}/merge_requests/${MR_IID}" || echo '{}')
+          MR_STATE=$(echo "$MR_JSON" | jq -r '.state // "unknown"')
+          MR_SHA=$(echo "$MR_JSON" | jq -r '.sha // ""')
+          MR_URL_API=$(echo "$MR_JSON" | jq -r '.web_url // "'"$MR_URL"'"')
+
+          if ! [[ "$MR_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid MR head SHA from ${MR_URL_API}: '${MR_SHA}'" >&2
+            exit 1
+          fi
+
+          SOURCE_MODE=""
+          SOURCE_SHA=""
+          if [[ "$MR_STATE" == "merged" ]]; then
+            SOURCE_MODE="master-head"
+            BRANCH_JSON=$(curl -sf "${AUTH[@]}" "${API_BASE}/repository/branches/${TARGET_BRANCH}" || echo '{}')
+            SOURCE_SHA=$(echo "$BRANCH_JSON" | jq -r '.commit.id // ""')
+          else
+            SOURCE_MODE="mr-head"
+            SOURCE_SHA="$MR_SHA"
+          fi
+
+          if ! [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid effective source SHA (${SOURCE_MODE}): '${SOURCE_SHA}'" >&2
+            exit 1
+          fi
+
+          echo "MR state: ${MR_STATE}" >&2
+          echo "Effective source (${SOURCE_MODE}): ${SOURCE_SHA}" >&2
+
+          STORED=$(kubectl get configmap "$STATE_CM" -n argo \
+            -o jsonpath="{.data['${STATE_KEY}.sha']}" 2>/dev/null || true)
+          STORED_MODE=$(kubectl get configmap "$STATE_CM" -n argo \
+            -o jsonpath="{.data['${STATE_KEY}.mode']}" 2>/dev/null || true)
+          printf '%s' "$STORED" > /tmp/stored-sha
+          printf '%s' "$STORED_MODE" > /tmp/stored-mode
+
+          CHANGED="false"
+          if [[ "$FORCE" == "true" ]]; then
+            CHANGED="true"
+            echo "Forced source record requested" >&2
+          elif [[ "$SOURCE_SHA" != "$STORED" || "$SOURCE_MODE" != "$STORED_MODE" ]]; then
+            CHANGED="true"
+            echo "Source changed from ${STORED_MODE:-<none>}/${STORED:-<none>} to ${SOURCE_MODE}/${SOURCE_SHA}" >&2
+          else
+            echo "No source change" >&2
+          fi
+
+          printf '%s' "$SOURCE_SHA" > /tmp/source-sha
+          printf '%s' "$SOURCE_MODE" > /tmp/source-mode
+          printf '%s' "$MR_STATE" > /tmp/mr-state
+          printf '%s' "$MR_URL_API" > /tmp/mr-url
+          printf '%s' "$CHANGED" > /tmp/changed
+
+    - name: update-state
+      inputs:
+        parameters:
+          - name: source-sha
+          - name: source-mode
+          - name: mr-state
+          - name: mr-url
+          - name: expected-sha
+          - name: expected-mode
+      metadata:
+        labels:
+          app.kubernetes.io/part-of: bluefin-test-suite
+          bluefin.io/step: update-state
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        source: |
+          set -euo pipefail
+          CM="{{workflow.parameters.state-configmap}}"
+          KEY="{{workflow.parameters.state-key}}"
+          SHA="{{inputs.parameters.source-sha}}"
+          MODE="{{inputs.parameters.source-mode}}"
+          MR_STATE="{{inputs.parameters.mr-state}}"
+          MR_URL="{{inputs.parameters.mr-url}}"
+          EXPECTED_SHA="{{inputs.parameters.expected-sha}}"
+          EXPECTED_MODE="{{inputs.parameters.expected-mode}}"
+          RECORDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          STORED=$(kubectl get configmap "$CM" -n argo \
+            -o jsonpath="{.data['${KEY}.sha']}" 2>/dev/null || true)
+          STORED_MODE=$(kubectl get configmap "$CM" -n argo \
+            -o jsonpath="{.data['${KEY}.mode']}" 2>/dev/null || true)
+
+          if [[ "$STORED" != "$EXPECTED_SHA" || "$STORED_MODE" != "$EXPECTED_MODE" ]]; then
+            echo "State changed since admission (expected ${EXPECTED_MODE}/${EXPECTED_SHA}, found ${STORED_MODE}/${STORED}); skipping stale write" >&2
+            exit 0
+          fi
+
+          echo "Persisting ${KEY}: ${MODE} ${SHA} (${MR_STATE})" >&2
+
+          if ! kubectl get configmap "$CM" -n argo >/dev/null 2>&1; then
+            kubectl create configmap "$CM" -n argo --from-literal=placeholder=ignored
+          fi
+
+          PAYLOAD=$(jq -n \
+            --arg key "$KEY" \
+            --arg sha "$SHA" \
+            --arg mode "$MODE" \
+            --arg mr_state "$MR_STATE" \
+            --arg mr_url "$MR_URL" \
+            --arg recorded_at "$RECORDED_AT" \
+            '{
+              "data": {
+                "\($key).sha": $sha,
+                "\($key).mode": $mode,
+                "\($key).mr-state": $mr_state,
+                "\($key).mr-url": $mr_url,
+                "\($key).recorded-at": $recorded_at
+              }
+            }')
+
+          kubectl patch configmap "$CM" -n argo --type merge -p "$PAYLOAD"
+
+    - name: record-history
+      inputs:
+        parameters:
+          - name: source-sha
+          - name: source-mode
+          - name: mr-state
+          - name: mr-url
+      metadata:
+        labels:
+          app.kubernetes.io/part-of: bluefin-test-suite
+          bluefin.io/step: record-history
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        source: |
+          set -euo pipefail
+          CM="{{workflow.parameters.state-configmap}}"
+          KEY="{{workflow.parameters.state-key}}"
+          LIMIT="{{workflow.parameters.history-limit}}"
+          SHA="{{inputs.parameters.source-sha}}"
+          MODE="{{inputs.parameters.source-mode}}"
+          MR_STATE="{{inputs.parameters.mr-state}}"
+          MR_URL="{{inputs.parameters.mr-url}}"
+          PROJECT="{{workflow.parameters.project}}"
+          MR_IID="{{workflow.parameters.mr-iid}}"
+          TARGET_BRANCH="{{workflow.parameters.target-branch}}"
+          RECORDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          NEW_RECORD=$(jq -n \
+            --arg recorded_at "$RECORDED_AT" \
+            --arg source_sha "$SHA" \
+            --arg source_mode "$MODE" \
+            --arg mr_state "$MR_STATE" \
+            --arg mr_url "$MR_URL" \
+            --arg project "$PROJECT" \
+            --arg mr_iid "$MR_IID" \
+            --arg target_branch "$TARGET_BRANCH" \
+            '{
+              recorded_at: $recorded_at,
+              project: $project,
+              mr_iid: $mr_iid,
+              target_branch: $target_branch,
+              source_sha: $source_sha,
+              source_mode: $source_mode,
+              mr_state: $mr_state,
+              mr_url: $mr_url
+            }')
+
+          HISTORY=$(kubectl get configmap "$CM" -n argo \
+            -o jsonpath="{.data['${KEY}.history']}" 2>/dev/null || true)
+
+          if [[ -z "$HISTORY" ]]; then
+            UPDATED="$NEW_RECORD"
+          else
+            UPDATED=$(printf '%s\n%s\n' "$HISTORY" "$NEW_RECORD" | tail -n "$LIMIT")
+          fi
+
+          PAYLOAD=$(jq -n \
+            --arg key "$KEY" \
+            --arg history "$UPDATED" \
+            '{"data": {"\($key).history": $history}}')
+
+          echo "Appending source history for ${KEY} (keeping last ${LIMIT} records)" >&2
+          kubectl patch configmap "$CM" -n argo --type merge -p "$PAYLOAD"
