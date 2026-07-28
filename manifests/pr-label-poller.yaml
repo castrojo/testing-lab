@@ -18,6 +18,10 @@ spec:
   startingDeadlineSeconds: 60
   workflowSpec:
     serviceAccountName: argo
+    arguments:
+      parameters:
+        - name: refresh-existing
+          value: "false"
     podGC:
       strategy: OnWorkflowCompletion
     ttlStrategy:
