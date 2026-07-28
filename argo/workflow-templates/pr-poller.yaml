@@ -42,7 +42,7 @@ spec:
           - key: pipeline
             value: pr-poller
           - key: status
-            value: "{workflow.status}"
+            value: "{{workflow.status}}"
         counter:
           value: "1"
       - name: lab_build_workflow_duration_seconds
@@ -51,10 +51,10 @@ spec:
           - key: pipeline
             value: pr-poller
           - key: status
-            value: "{workflow.status}"
+            value: "{{workflow.status}}"
         histogram:
           buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
-          value: "{workflow.duration}"
+          value: "{{workflow.duration}}"
 
   entrypoint: poll-labeled-prs
   templates:
