@@ -36,3 +36,18 @@ description: >
 
 All images in `argo/` and `manifests/` must use a registry from the allowlist in `.github/workflows/lint.yaml`.
 
+## KDE lane integration pins
+
+KDE Linux source advancement (MR !534 → master on invent.kde.org) is owned by
+the `kde-source-tracker` CronWorkflow. Renovate covers only the integration
+pins the KDE lane shares with the rest of the lab:
+
+- `image-versions.kde.yaml` holds Renovate-managed workflow images such as
+  `ghcr.io/projectbluefin/lab-runner`.
+- `renovate.json` scopes the `kubernetes` manager to `kde-*.yaml` files and
+  excludes `bst2` (versioned by the KDE build agent) and any future
+  `invent.kde.org` image references.
+
+Do not add the moving KDE source image or BuildStream tooling versions to
+`image-versions.kde.yaml`; those stay with the source tracker and build agent.
+
