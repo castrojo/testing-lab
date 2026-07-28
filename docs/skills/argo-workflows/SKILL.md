@@ -120,6 +120,7 @@ The workflow authoring guidance is split by topic:
   braces at runtime (for example with `printf '\x7b\x7b'`) so the outer
   template does not consume them.
 - **PR approval gate bypass**: Routine labels such as `automerge` or `chore/deps` are not maintainer approval. PR-batch templates must stop before build/QA when `pr/needs-review` remains or live GitHub review data lacks a verified maintainer approval.
+- **Half-enrolled status reporting**: A repository-dispatch Check Run sender cannot create visible feedback unless the target repository also has its receiver workflow. For enrolled repositories without that receiver, use a direct commit-status reporter with a stable context instead of silently dropping lifecycle updates.
 - **Custom metric cardinality**: Never label workflow metrics with workflow
   names, UIDs, commit SHAs, refs, image digests, or build elements. Use only
   constant pipeline identifiers and bounded states. Workflow-level completion
@@ -158,5 +159,8 @@ Before marking any WorkflowTemplate change done:
 - [ ] After any disk wipe/registry migration/Zot cleanup, every affected containerDisk tag manually force-rebuilt rather than assuming a digest-comparison poller will self-heal
 - [ ] Custom metrics share identical help text and histogram buckets across
       templates, and labels are limited to low-cardinality constants/states
+- [ ] Every PR-gated repository has either a live repository-dispatch receiver
+      or an explicit direct commit-status fallback; verify the target workflow
+      exists on the repository's default branch before relying on dispatch
 - [ ] Registry workflows use a pinned image that actually contains every CLI
       invoked by the script, with flags valid for that exact version
