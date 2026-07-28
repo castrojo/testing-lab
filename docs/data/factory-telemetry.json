@@ -1,25 +1,25 @@
 {
   "schema_version": "v2",
   "snapshot": {
-    "generated_at": "2026-07-26T04:05:05Z",
+    "generated_at": "2026-07-27T23:59:45Z",
     "window": {
       "type": "rolling",
       "hours": 24
     },
-    "state": "fresh",
-    "age_minutes": 0,
+    "state": "degraded",
+    "age_minutes": 895,
     "threshold_minutes": 180
   },
   "lineage": {
     "collector": {
       "workflow": ".github/workflows/update-test-results.yml",
-      "run_id": null,
-      "run_url": "https://github.com/projectbluefin/lab/actions",
+      "run_id": "30370613612",
+      "run_url": "https://github.com/projectbluefin/lab/actions/runs/30370613612",
       "job": "update",
-      "commit_sha": "",
-      "commit_url": "https://github.com/projectbluefin/lab/commits/main"
+      "commit_sha": "99c70a6e761e6ac4c6e277e1f8c49a7e18810def",
+      "commit_url": "https://github.com/projectbluefin/lab/commit/99c70a6e761e6ac4c6e277e1f8c49a7e18810def"
     },
-    "inputs_digest_sha256": "sha256:6e4e7f0b470f69959015c9c514011a7cf39a25b3a153fca0e799dd9bdc904084",
+    "inputs_digest_sha256": "sha256:5288b8b2103bde567cc9c425027b7490d79e80d5bec39b5f1dec3bd197ee80b3",
     "inputs": [
       {
         "path": "docs/results/aurora-testing-developer.json",
@@ -71,7 +71,7 @@
       },
       {
         "path": "docs/results/dakota-testing-developer.json",
-        "sha256": "sha256:1f0235952f4f30da15ef0a303d9767f7ae351556d6a293a1f7b48b22e99bb4cf"
+        "sha256": "sha256:c1f0cbdef0b1d5534f2c438cff5c0b3cadcbc3e30a36d60fccc4acae77821f49"
       },
       {
         "path": "docs/results/dakota-testing-smoke.json",
@@ -128,29 +128,37 @@
       "formula": "passed_suite_runs / completed_suite_runs * 100",
       "window_hours": 24,
       "confidence": "high",
-      "state": "fresh",
+      "state": "degraded",
       "evidence": [
         {
           "kind": "collector-run",
-          "url": "https://github.com/projectbluefin/lab/actions"
+          "url": "https://github.com/projectbluefin/lab/actions/runs/30370613612"
+        },
+        {
+          "kind": "commit",
+          "url": "https://github.com/projectbluefin/lab/commit/99c70a6e761e6ac4c6e277e1f8c49a7e18810def"
         }
       ]
     },
     {
       "id": "scenario_pass_rate_24h",
       "label": "Scenario pass rate (24h)",
-      "value": 85.19,
+      "value": 85.15,
       "unit": "percent",
-      "numerator": 558,
-      "denominator": 655,
+      "numerator": 556,
+      "denominator": 653,
       "formula": "(scenarios_total - scenarios_failed) / scenarios_total * 100",
       "window_hours": 24,
       "confidence": "medium",
-      "state": "fresh",
+      "state": "degraded",
       "evidence": [
         {
           "kind": "collector-run",
-          "url": "https://github.com/projectbluefin/lab/actions"
+          "url": "https://github.com/projectbluefin/lab/actions/runs/30370613612"
+        },
+        {
+          "kind": "commit",
+          "url": "https://github.com/projectbluefin/lab/commit/99c70a6e761e6ac4c6e277e1f8c49a7e18810def"
         }
       ]
     },
@@ -164,14 +172,24 @@
       "formula": "count(runs where overall=running)",
       "window_hours": 1,
       "confidence": "high",
-      "state": "fresh",
+      "state": "degraded",
       "evidence": [
         {
           "kind": "collector-run",
-          "url": "https://github.com/projectbluefin/lab/actions"
+          "url": "https://github.com/projectbluefin/lab/actions/runs/30370613612"
+        },
+        {
+          "kind": "commit",
+          "url": "https://github.com/projectbluefin/lab/commit/99c70a6e761e6ac4c6e277e1f8c49a7e18810def"
         }
       ]
     }
   ],
-  "errors": []
+  "errors": [
+    {
+      "source": "live_cluster_snapshot",
+      "reason": "private endpoint unavailable or incomplete from GitHub-hosted runner",
+      "effect": "public telemetry downgraded to unknown/degraded"
+    }
+  ]
 }

@@ -3,36 +3,36 @@
   "_meta": {
     "page": "compliance",
     "description": "GitOps and running cluster compliance scorecard.",
-    "generated_at": "2026-07-26T04:05:08Z",
-    "live_snapshot_ok": true,
-    "git_manifests_scanned": 136,
-    "live_pods_scanned": 905
+    "generated_at": "2026-07-28T14:54:31Z",
+    "live_snapshot_ok": false,
+    "git_manifests_scanned": 141,
+    "live_pods_scanned": 0
   },
-  "score": 97.6,
+  "score": 80.9,
   "rules": [
     {
       "id": "registry_allowlist_git",
       "name": "Git Manifest Registry Allowlist",
       "description": "All container images in git-tracked manifests must reside on allowed registries.",
       "status": "failed",
-      "total_checked": 138,
+      "total_checked": 146,
       "violations_count": 7,
       "violations": [
         {
-          "source": "git:manifests/k3s-upgrade-plans.yaml",
-          "detail": "Banned registry for image 'rancher/k3s-upgrade'"
-        },
-        {
-          "source": "git:manifests/k3s-upgrade-plans.yaml",
-          "detail": "Banned registry for image 'rancher/k3s-upgrade'"
-        },
-        {
-          "source": "git:manifests/k3s-upgrade-plans.yaml",
-          "detail": "Banned registry for image 'rancher/k3s-upgrade'"
-        },
-        {
           "source": "git:manifests/system-upgrade-controller.yaml",
           "detail": "Banned registry for image 'rancher/system-upgrade-controller:v0.19.2'"
+        },
+        {
+          "source": "git:manifests/k3s-upgrade-plans.yaml",
+          "detail": "Banned registry for image 'rancher/k3s-upgrade'"
+        },
+        {
+          "source": "git:manifests/k3s-upgrade-plans.yaml",
+          "detail": "Banned registry for image 'rancher/k3s-upgrade'"
+        },
+        {
+          "source": "git:manifests/k3s-upgrade-plans.yaml",
+          "detail": "Banned registry for image 'rancher/k3s-upgrade'"
         },
         {
           "source": "git:manifests/catalog-apps/jellyfin/manifest.yaml",
@@ -52,71 +52,26 @@
       "id": "registry_allowlist_cluster",
       "name": "Live Cluster Registry Allowlist",
       "description": "All running container images in the cluster must reside on allowed registries.",
-      "status": "failed",
-      "total_checked": 2517,
-      "violations_count": 12,
-      "violations": [
-        {
-          "source": "cluster:argo/homelab-access-7ff9dddc95-dkd2c",
-          "detail": "Running image violates registry allowlist: 'python:3.12-slim'"
-        },
-        {
-          "source": "cluster:argocd/argocd-redis-5c6c67bb89-mlnbw",
-          "detail": "Running image violates registry allowlist: 'public.ecr.aws/docker/library/redis:8.2.3-alpine'"
-        },
-        {
-          "source": "cluster:buildbarn/exact-bootc-reapi-probe",
-          "detail": "Running image violates registry allowlist: 'python:3.12-slim'"
-        },
-        {
-          "source": "cluster:buildbarn/reapi-inspector",
-          "detail": "Running image violates registry allowlist: 'python:3.12-slim'"
-        },
-        {
-          "source": "cluster:buildbarn/reapi-rustc-probe",
-          "detail": "Running image violates registry allowlist: 'python:3.12-slim'"
-        },
-        {
-          "source": "cluster:buildbarn/reapi-tiny-root-probe",
-          "detail": "Running image violates registry allowlist: 'python:3.12-slim'"
-        },
-        {
-          "source": "cluster:catalog-jellyfin/jellyfin-68b47d76b5-2mwl8",
-          "detail": "Running image violates registry allowlist: 'lscr.io/linuxserver/jellyfin:latest'"
-        },
-        {
-          "source": "cluster:default/exo-probe-2",
-          "detail": "Running image violates registry allowlist: 'alpine'"
-        },
-        {
-          "source": "cluster:kube-system/coredns-8587755799-9vb6j",
-          "detail": "Running image violates registry allowlist: 'rancher/mirrored-coredns-coredns:1.14.4'"
-        },
-        {
-          "source": "cluster:kube-system/local-path-provisioner-cfcd64b69-dk52s",
-          "detail": "Running image violates registry allowlist: 'rancher/local-path-provisioner:v0.0.36'"
-        },
-        {
-          "source": "cluster:system-upgrade/system-upgrade-controller-79fc7f6f99-lplvh",
-          "detail": "Running image violates registry allowlist: 'rancher/system-upgrade-controller:v0.19.2'"
-        },
-        {
-          "source": "cluster:wds1-system/kube-apiserver-6b67cfb95f-8pjjt",
-          "detail": "Running image violates registry allowlist: 'rancher/kine:v0.11.4'"
-        }
-      ]
+      "status": "passed",
+      "total_checked": 0,
+      "violations_count": 0,
+      "violations": []
     },
     {
       "id": "no_root_storage_git",
       "name": "No Root Disk Storage Allocations",
       "description": "No hard hostPath volume mounts on root disks (must use PVCs or approved storage).",
       "status": "failed",
-      "total_checked": 25,
-      "violations_count": 20,
+      "total_checked": 24,
+      "violations_count": 18,
       "violations": [
         {
-          "source": "git:manifests/bst-cache-proxy.yaml",
-          "detail": "Potentially unauthorized hostPath allocation on root disk: '/var/tmp/bst-http-cache'"
+          "source": "git:manifests/buildbarn-worker.yaml",
+          "detail": "Potentially unauthorized hostPath allocation on root disk: '/dev/fuse'"
+        },
+        {
+          "source": "git:manifests/buildbarn-worker.yaml",
+          "detail": "Potentially unauthorized hostPath allocation on root disk: '/var/lib/buildbarn/worker'"
         },
         {
           "source": "git:manifests/system-upgrade-controller.yaml",
@@ -131,36 +86,12 @@
           "detail": "Potentially unauthorized hostPath allocation on root disk: '/etc/ca-certificates'"
         },
         {
-          "source": "git:manifests/buildbarn-worker.yaml",
-          "detail": "Potentially unauthorized hostPath allocation on root disk: '/dev/fuse'"
-        },
-        {
-          "source": "git:manifests/buildbarn-worker.yaml",
-          "detail": "Potentially unauthorized hostPath allocation on root disk: '/var/lib/buildbarn/worker'"
-        },
-        {
           "source": "git:manifests/registry-mirror-config.yaml",
           "detail": "Potentially unauthorized hostPath allocation on root disk: '/var/lib/rancher/k3s/agent/etc/containerd/certs.d'"
         },
         {
-          "source": "git:argo/workflow-templates/run-container-tests.yaml",
-          "detail": "Potentially unauthorized hostPath allocation on root disk: '/run/udev'"
-        },
-        {
-          "source": "git:argo/workflow-templates/dakota-build-pipeline.yaml",
-          "detail": "Potentially unauthorized hostPath allocation on root disk: '/dev/fuse'"
-        },
-        {
-          "source": "git:argo/workflow-templates/dakota-build-pipeline.yaml",
-          "detail": "Potentially unauthorized hostPath allocation on root disk: '/var/lib/dakota/buildstream-cache'"
-        },
-        {
-          "source": "git:argo/workflow-templates/dakota-build-pipeline.yaml",
-          "detail": "Potentially unauthorized hostPath allocation on root disk: '/dev/fuse'"
-        },
-        {
-          "source": "git:argo/workflow-templates/dakota-build-pipeline.yaml",
-          "detail": "Potentially unauthorized hostPath allocation on root disk: '/var/lib/dakota/buildstream-cache'"
+          "source": "git:manifests/bst-cache-proxy.yaml",
+          "detail": "Potentially unauthorized hostPath allocation on root disk: '/var/tmp/bst-http-cache'"
         },
         {
           "source": "git:argo/workflow-templates/build-bluefin-migration-containerdisk.yaml",
@@ -171,7 +102,27 @@
           "detail": "Potentially unauthorized hostPath allocation on root disk: '/run/udev'"
         },
         {
+          "source": "git:argo/workflow-templates/ghost-cleanup.yaml",
+          "detail": "Potentially unauthorized hostPath allocation on root disk: '/var/lib/containers/storage'"
+        },
+        {
+          "source": "git:argo/workflow-templates/iso-e2e-pipeline.yaml",
+          "detail": "Potentially unauthorized hostPath allocation on root disk: '/dev/kvm'"
+        },
+        {
           "source": "git:argo/workflow-templates/cosmic-build-pipeline.yaml",
+          "detail": "Potentially unauthorized hostPath allocation on root disk: '/dev/fuse'"
+        },
+        {
+          "source": "git:argo/workflow-templates/run-container-tests.yaml",
+          "detail": "Potentially unauthorized hostPath allocation on root disk: '/run/udev'"
+        },
+        {
+          "source": "git:argo/workflow-templates/iso-build-e2e-pipeline.yaml",
+          "detail": "Potentially unauthorized hostPath allocation on root disk: '/dev'"
+        },
+        {
+          "source": "git:argo/workflow-templates/bluefin-server-build-pipeline.yaml",
           "detail": "Potentially unauthorized hostPath allocation on root disk: '/dev/fuse'"
         },
         {
@@ -179,20 +130,12 @@
           "detail": "Potentially unauthorized hostPath allocation on root disk: '/dev/fuse'"
         },
         {
-          "source": "git:argo/workflow-templates/ghost-cleanup.yaml",
-          "detail": "Potentially unauthorized hostPath allocation on root disk: '/var/lib/containers/storage'"
-        },
-        {
-          "source": "git:argo/workflow-templates/iso-build-e2e-pipeline.yaml",
-          "detail": "Potentially unauthorized hostPath allocation on root disk: '/dev'"
-        },
-        {
-          "source": "git:argo/workflow-templates/iso-e2e-pipeline.yaml",
-          "detail": "Potentially unauthorized hostPath allocation on root disk: '/dev/kvm'"
-        },
-        {
-          "source": "git:argo/workflow-templates/bluefin-server-build-pipeline.yaml",
+          "source": "git:argo/workflow-templates/dakota-build-pipeline.yaml",
           "detail": "Potentially unauthorized hostPath allocation on root disk: '/dev/fuse'"
+        },
+        {
+          "source": "git:argo/workflow-templates/dakota-build-pipeline.yaml",
+          "detail": "Potentially unauthorized hostPath allocation on root disk: '/var/lib/dakota/buildstream-cache'"
         }
       ]
     },
@@ -201,15 +144,15 @@
       "name": "No Hard Node Selectors in Git",
       "description": "Workloads must not use hard nodeName or hostname nodeSelectors to bypass scheduler placement.",
       "status": "failed",
-      "total_checked": 17,
-      "violations_count": 10,
+      "total_checked": 18,
+      "violations_count": 11,
       "violations": [
         {
           "source": "git:manifests/orphan-pod-gc.yaml",
           "detail": "Hard node hostname selector pin found: 'kubernetes.io/hostname: ghost'"
         },
         {
-          "source": "git:manifests/orphan-vm-cleanup.yaml",
+          "source": "git:manifests/golden-disk-gc.yaml",
           "detail": "Hard node hostname selector pin found: 'kubernetes.io/hostname: ghost'"
         },
         {
@@ -225,15 +168,19 @@
           "detail": "Hard node hostname selector pin found: 'kubernetes.io/hostname: ghost'"
         },
         {
-          "source": "git:manifests/golden-disk-gc.yaml",
+          "source": "git:manifests/orphan-vm-cleanup.yaml",
           "detail": "Hard node hostname selector pin found: 'kubernetes.io/hostname: ghost'"
         },
         {
-          "source": "git:argo/workflow-templates/flatcar-kernel-build.yaml",
+          "source": "git:argo/workflow-templates/zot-candidate-lifecycle.yaml",
           "detail": "Hard node hostname selector pin found: 'kubernetes.io/hostname: ghost'"
         },
         {
           "source": "git:argo/workflow-templates/ghost-cleanup.yaml",
+          "detail": "Hard node hostname selector pin found: 'kubernetes.io/hostname: ghost'"
+        },
+        {
+          "source": "git:argo/workflow-templates/flatcar-kernel-build.yaml",
           "detail": "Hard node hostname selector pin found: 'kubernetes.io/hostname: ghost'"
         },
         {
@@ -250,71 +197,10 @@
       "id": "no_hard_node_pins_cluster",
       "name": "No Hard Node Selectors in Cluster",
       "description": "No active pods with hard node selector pinning (excluding approved infrastructure controllers).",
-      "status": "failed",
-      "total_checked": 21,
-      "violations_count": 15,
-      "violations": [
-        {
-          "source": "cluster:argo/argo-workflows-workflow-controller-58d994ccdd-f5gjd",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'ghost', 'kubernetes.io/os': 'linux'}"
-        },
-        {
-          "source": "cluster:argo/bst-cache-proxy-56f9bb6f5b-9zc88",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'ghost'}"
-        },
-        {
-          "source": "cluster:argo/check-zot-dir",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'ghost'}"
-        },
-        {
-          "source": "cluster:argo/dakota-build-pipeline-g9t4w-detect-build-mode-346799027",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'ghost'}"
-        },
-        {
-          "source": "cluster:argo/dakota-build-pipeline-mhm2n-detect-build-mode-3020541986",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'ghost'}"
-        },
-        {
-          "source": "cluster:argo/dakota-build-pipeline-skt44-detect-build-mode-3423664088",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'ghost'}"
-        },
-        {
-          "source": "cluster:argo/dakota-build-pipeline-vbzzp-detect-build-mode-318940846",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'ghost'}"
-        },
-        {
-          "source": "cluster:argo/dakota-build-pipeline-vr44w-detect-build-mode-3176255339",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'ghost'}"
-        },
-        {
-          "source": "cluster:argo/dakota-build-pipeline-w2nv9-detect-build-mode-2463658798",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'ghost'}"
-        },
-        {
-          "source": "cluster:argo/dakota-build-pipeline-z9k8d-detect-build-mode-1673528840",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'ghost'}"
-        },
-        {
-          "source": "cluster:argo/dakota-build-pipeline-zlv6s-detect-build-mode-2327597957",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'ghost'}"
-        },
-        {
-          "source": "cluster:argo/pr418-vm-test-bb5m4-install-disk-2630049099",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'ghost'}"
-        },
-        {
-          "source": "cluster:argocd/argocd-application-controller-0",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'ghost', 'kubernetes.io/os': 'linux'}"
-        },
-        {
-          "source": "cluster:default/exo-probe-2",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'exo-0'}"
-        },
-        {
-          "source": "cluster:local-registry/check-perms",
-          "detail": "Pod hard-pinned to node: {'kubernetes.io/hostname': 'ghost'}"
-        }
-      ]
+      "status": "passed",
+      "total_checked": 0,
+      "violations_count": 0,
+      "violations": []
     }
   ]
 }
