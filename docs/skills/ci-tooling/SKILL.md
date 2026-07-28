@@ -58,7 +58,10 @@ metadata:
 23. **Route maintainers to `/docs/ops/maintainer-onboarding.md` for runner access.** The org `ghost-runners` scale set is bound to `https://github.com/projectbluefin` and cannot serve personal repos. A maintainer who wants `ghost-runners` on a personal repo must install the `bluefin-ghost-arc` GitHub App on their personal account and create a second scale set (`ghost-runners-personal`) with a different `githubConfigUrl` and installation secret.
 24. **Accumulate run-level history as git-tracked rolling NDJSON** when a page needs trends over time. Store the file under `docs/data/history/<name>.ndjson`, one JSON object per line. Append only terminal runs, deduplicate by the producer's stable run identity (`workflow_name` for Argo; `(plane, run_id)` for generic collectors), prune lines older than the maintainer-chosen retention window, and keep the schema stable (include null placeholders for fields that sources do not yet export).
 25. **Required pull-request checks must also trigger on merge groups.** Add `merge_group: {types: [checks_requested]}` beside `pull_request` for every workflow named in a branch ruleset's `required_status_checks`; a `pull_request` trigger alone leaves queued entries waiting forever because merge-queue refs do not emit ordinary pull-request events. Source: `/websites/github_en_actions`.
-26. **Git-mutating workflow publishers must keep tokens out of URLs and argv.** Use a credential-free HTTPS remote plus `GIT_ASKPASS`/`GIT_TERMINAL_PROMPT=0`, with the token supplied only through the process environment. If an append-only history push loses a race, fetch/reset a disposable clone to the latest remote branch and replay the validated append before retrying; never force-push or resolve the NDJSON conflict with `-X ours`, because either can discard a concurrent record. Source: `/websites/git-scm`.
+26. **Publish generated data to a ruleset-protected branch with a repository deploy key, not `GITHUB_TOKEN` and not the merge queue.** `GITHUB_TOKEN` holds no ruleset bypass, so a direct push fails with `GH013: Repository rule violations found`. Routing the data through a pull request instead is a dead end, because `GITHUB_TOKEN` may not start workflows: the bot-opened PR gets no `pull_request` run of the required check, a `workflow_dispatch` run's check is not associated with the PR, and — terminally — a bot-enqueued merge group gets no `merge_group` run, so the entry sits at `AWAITING_CHECKS` until it times out. Only `OrganizationAdmin` and `DeployKey` are usable bypass actors here; the GitHub Actions app is rejected outright (`Actor GitHub Actions integration must be part of the ruleset source or owner organization`). Create a write deploy key, store its private half as a repo secret, and push over SSH. Record the key and the bypass actor in `docs/ops/merge-queue.md`.
+27. **Never let a private, in-cluster URL become public dashboard evidence.** Collector fallbacks that reach for an Argo run URL or a LAN address publish an unreachable link to every visitor. Gate evidence links on being publicly resolvable and emit an explicit unavailable state otherwise. This class of bug does not reproduce locally, because a developer PAT carries scopes (`read:packages`) that `GITHUB_TOKEN` lacks, so the public path succeeds on a workstation and silently falls back in CI.
+28. **Derive dataset expectations from the data, never hardcode counts.** Tests that assert a fixed number of lanes or cards break the whole ingestion workflow the moment a lane is added. Read the count from the source of truth (`docs/data/variant-publishers.json`).
+29. **Git-mutating workflow publishers must keep tokens out of URLs and argv.** Use a credential-free HTTPS remote plus `GIT_ASKPASS`/`GIT_TERMINAL_PROMPT=0`, with the token supplied only through the process environment. If an append-only history push loses a race, fetch/reset a disposable clone to the latest remote branch and replay the validated append before retrying; never force-push or resolve the NDJSON conflict with `-X ours`, because either can discard a concurrent record. Source: `/websites/git-scm`.
 
 ## Common Rationalizations
 
@@ -67,6 +70,9 @@ metadata:
 | "If live fetch fails, clearing fields is safer." | Clearing makes the dashboard lie by omission; preserve last known and mark freshness/state. |
 | "Custom `Cache-Control` headers are harmless." | They can trigger CORS preflight and block cross-origin GitHub API fetches. |
 | "Raw JSON looks right, so UI is fine." | JS/runtime errors can still break rendering; always validate in a browser. |
+| "The collector works on my machine, so CI will be fine." | A developer PAT carries scopes `GITHUB_TOKEN` lacks; the public code path succeeds locally and falls back to a private URL in CI. |
+| "Generated data should go through the merge queue like every other change." | `GITHUB_TOKEN` may not start workflows, so the bot's PR and its merge group never get the required check. Push with a deploy-key bypass instead. |
+| "A green `just lint` means the required `lint` check will pass." | CI's actionlint runs shellcheck; backticks or `$` inside single quotes trip SC2016. Run `actionlint` directly. |
 
 ## Red Flags
 
@@ -97,6 +103,10 @@ metadata:
 - A personal-repo scale set reuses the org's `githubConfigUrl: https://github.com/projectbluefin` or the org's installation secret.
 - A ruleset requires a check whose workflow has no `merge_group` trigger; queued PRs remain in `AWAITING_CHECKS` with no merge-group workflow run.
 - A workflow embeds a token in its clone URL/command arguments, force-pushes generated history, or uses `-X ours` on append-only NDJSON.
+- A publishing workflow fails with `GH013: Repository rule violations found` and the proposed fix is to grant `GITHUB_TOKEN` a bypass, or to route the data through a pull request.
+- A dashboard evidence link points at an Argo run URL or a LAN address.
+- A dataset test asserts a hardcoded number of lanes, variants, or cards.
+- A publishing workflow has been red for dozens of consecutive runs and nobody has checked whether a ruleset was created around the last green run (`gh api repos/<owner>/<repo>/rulesets`, compare `created_at` to the last success).
 
 ## Verification
 
@@ -108,6 +118,8 @@ metadata:
 - [ ] Production `https://factory.projectbluefin.io/` renders with real table/cluster content (no loading placeholders)
 - [ ] Render validation includes a real browser run (headless is fine) and captures evidence
 - [ ] Every `execSync`, `fetch`, or network call to private endpoints (`<lab-subnet>.x`, internal IPs) has an explicit timeout set
+- [ ] A publishing workflow was verified by an **unattended scheduled run**, not only a `workflow_dispatch`, and `main` actually advanced
+- [ ] `actionlint` was run directly (not only `just lint`) before opening the PR
 - [ ] Build-time test assertions accept both live-environment data AND fallback/degraded paths (never assert presence of unreachable data)
 - [ ] After fixing network timeouts or assertions, a CI run completed within 10 minutes with no hanging steps
 - [ ] Image-status cards derive age from GHCR package tag publish/update timestamps when available, otherwise release `published_at`, and link to exact evidence URLs.
