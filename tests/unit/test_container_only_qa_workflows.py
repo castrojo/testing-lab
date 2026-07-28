@@ -372,7 +372,10 @@ def test_pr_poller_carries_image_digest_into_dakota_qa_workflow():
     assert "- name: image-digest" in dakota_block
     # The inline child-workflow manifest escapes Argo expressions so they are
     # resolved by the child workflow, not the parent poller.
-    assert 'value: "{{{{workflow.parameters.image-digest}}}}"' in dakota_block
+    assert (
+        'value: "${ARGO_OPEN}workflow.parameters.image-digest${ARGO_CLOSE}"'
+        in dakota_block
+    )
     assert "dakota-qa-pipeline" in dakota_block
 
 
