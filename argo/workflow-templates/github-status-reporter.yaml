@@ -111,12 +111,29 @@ spec:
             *) echo "Invalid state: ${CHECK_STATE}" >&2; exit 1 ;;
           esac
 
+          # GitHub rejects commit-status descriptions longer than 140
+          # characters, so the composed title + summary is truncated as a
+          # whole. jq does the clipping because its string length and slicing
+          # are codepoint-based, while bash substring expansion is byte-based
+          # under a C locale and could emit invalid UTF-8.
+          if [[ -n "${CHECK_TITLE}" && -n "${CHECK_SUMMARY}" ]]; then
+            DESCRIPTION="${CHECK_TITLE}: ${CHECK_SUMMARY}"
+          else
+            DESCRIPTION="${CHECK_TITLE}${CHECK_SUMMARY}"
+          fi
+          [[ -n "${DESCRIPTION}" ]] || DESCRIPTION="Testsuite lab validation"
+
           PAYLOAD=$(jq -n \
             --arg state "${STATUS}" \
             --arg context "ghost-lab" \
-            --arg description "${CHECK_TITLE}: ${CHECK_SUMMARY:0:140}" \
+            --arg description "${DESCRIPTION}" \
             --arg target_url "${WORKFLOW_URL}" \
-            '{state: $state, context: $context, description: $description, target_url: $target_url}')
+            '{state: $state,
+              context: $context,
+              description: (if ($description | length) > 140
+                            then ($description[0:137] + "...")
+                            else $description end),
+              target_url: $target_url}')
           HTTP_CODE=$(curl -sS -o /tmp/github-response -w '%{http_code}' \
             -X POST \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
