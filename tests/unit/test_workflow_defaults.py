@@ -100,6 +100,21 @@ def test_no_standalone_cache_warming_buildstream_workflow_remains():
     ).exists()
 
 
+def test_testsuite_prs_use_direct_commit_status_reporting():
+    poller = (ROOT / "argo/workflow-templates/pr-poller.yaml").read_text(
+        encoding="utf-8"
+    )
+    reporter = (ROOT / "argo/workflow-templates/github-status-reporter.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"$REPO" == "projectbluefin/testsuite"' in poller
+    assert 'REPORTER="github-status-reporter"' in poller
+    assert 'name: ${REPORTER}' in poller
+    assert "statuses/${SHA}" in reporter
+    assert '--arg context "ghost-lab"' in reporter
+
+
 def test_dakota_runner_allows_native_chroot_input_root_execution():
     worker = (ROOT / "manifests/buildbarn-worker.yaml").read_text(encoding="utf-8")
     assert "name: runner" in worker
