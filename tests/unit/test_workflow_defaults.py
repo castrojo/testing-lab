@@ -115,6 +115,20 @@ def test_testsuite_prs_use_direct_commit_status_reporting():
     assert '--arg context "ghost-lab"' in reporter
 
 
+def test_ghost_lab_status_reporter_authenticates_with_the_github_token():
+    reporter = (ROOT / "argo/workflow-templates/github-status-reporter.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "name: GITHUB_TOKEN" in reporter
+    assert "name: github-token" in reporter
+    assert '-H "Authorization: Bearer ${GITHUB_TOKEN}"' in reporter
+    assert reporter.count("GITHUB_TOKEN") == 2
+    assert "set -x" not in reporter
+    assert "echo ${GITHUB_TOKEN}" not in reporter
+    assert 'echo "${GITHUB_TOKEN}"' not in reporter
+
+
 def test_dakota_runner_allows_native_chroot_input_root_execution():
     worker = (ROOT / "manifests/buildbarn-worker.yaml").read_text(encoding="utf-8")
     assert "name: runner" in worker
