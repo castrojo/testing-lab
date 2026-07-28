@@ -258,7 +258,7 @@ After rotation:
 
 1. Run the minimum required lab loop (`just run-tests-tag testing`; use `just run-tests-matrix` for high-risk work).
 2. Collect workflow names, behave summaries, and log excerpts via MCP.
-3. Keep PR comments minimal: report what ran, pass/fail, and blockers only. Do not duplicate GitHub UI state.
+3. Keep PR comments minimal: report what ran, pass/fail, and blockers only. Do not duplicate GitHub UI state. These are *manual reviewer comments* you write during PR-queue review — a separate channel from the automated `testing-lab / <repo>` Check Run the `pr-label-poller` posts (see [`/docs/reference/WORKFLOWS.md`](/docs/reference/WORKFLOWS.md) "Factory PR feedback"). Do not restate the automated check's result as a comment.
 4. Only then label / approve / queue.
 
 ---
