@@ -144,14 +144,12 @@ spec:
                 - url: https://cache.projectbluefin.io:11001
                   push: false
               source-caches:
-                override-project-caches: false
+                # The deployed bb-remote-asset endpoint cannot FetchBlob/FetchDirectory
+                # BuildStream URNs (it treats them as HTTP/URN and returns UNIMPLEMENTED /
+                # PERMISSION_DENIED). Override junction source-cache entries so no
+                # incompatible source-push server is inherited.
+                override-project-caches: true
                 servers:
-                - url: grpc://bb-remote-asset.buildbarn.svc.cluster.local:8984
-                  type: index
-                  push: true
-                - url: grpc://frontend.buildbarn.svc.cluster.local:8980
-                  type: storage
-                  push: true
                 - url: https://gbm.gnome.org:11003
                   push: false
                 - url: https://cache.projectbluefin.io:11001
