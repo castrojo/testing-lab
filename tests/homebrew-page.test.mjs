@@ -10,6 +10,18 @@ function html(file) {
   return readFileSync(path.join(repo, file), 'utf8');
 }
 
+// Lane coverage is derived from the same source of truth the generator uses, so adding a
+// variant or branch never requires editing a magic number here.
+function trackedLaneCount() {
+  const publishers = JSON.parse(
+    readFileSync(path.join(repo, 'docs/data/variant-publishers.json'), 'utf8'),
+  );
+  return Object.values(publishers.variants || {}).reduce(
+    (total, details) => total + (details.branches || []).length,
+    0,
+  );
+}
+
 test('homebrew page renders summary metrics, lane details, explicit unavailable states, and chart containers', () => {
   execFileSync('npm', ['run', 'build'], {
     cwd: repo,
@@ -156,7 +168,11 @@ test('homebrew-ecosystem.json contract satisfies the page model contract', () =>
   assert.ok(Array.isArray(dataset.taps), 'taps is an array');
   assert.ok(Array.isArray(dataset.rows), 'rows is an array');
 
-  assert.equal(dataset.rows.length, 13, 'homebrew dataset has 13 lane rows (one per variant-branch)');
+  assert.equal(
+    dataset.rows.length,
+    trackedLaneCount(),
+    'homebrew dataset has one lane row per tracked variant-branch in variant-publishers.json',
+  );
 
   const trackedMetric = dataset.summary_metrics.find((m) => m.id === 'tracked_image_lanes');
   const withDataMetric = dataset.summary_metrics.find((m) => m.id === 'lanes_with_brew_data');
