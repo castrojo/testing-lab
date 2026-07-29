@@ -85,6 +85,14 @@ qecore-headless --session-type wayland --session-desktop gnome <test-script>
 Both flags are required. `wayland` only — Xorg is not available. `gnome` session desktop
 matches the GNOME Shell environment Bluefin boots into.
 
+### 2a. Aurora/KDE capability probes
+
+Aurora uses Plasma Login Manager rather than SDDM. When probing an Aurora image,
+check `plasma-login-manager` and `plasmalogin.service`; the Wayland session entry
+is `/usr/share/wayland-sessions/plasma.desktop`, whose `Exec` launches
+`startplasma-wayland`. Do not assume the `plasmawayland.desktop` filename or an
+SDDM configuration path.
+
 ### 3. AT-SPI tree traversal — findChildren vs findChild
 
 ```python
