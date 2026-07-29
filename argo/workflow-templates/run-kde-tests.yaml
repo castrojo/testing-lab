@@ -1,0 +1,127 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: run-kde-tests
+  namespace: argo
+  annotations:
+    description: |
+      Runs testsuite's kde-smoke suite against a KDE Linux KubeVirt VM.
+      SSH and WebDriver are forwarded through virtctl; the ISO already ships
+      selenium-webdriver-at-spi, so no prebake or in-VM source build is needed.
+spec:
+  serviceAccountName: argo
+  templates:
+  - name: run-kde-tests
+    inputs:
+      parameters:
+      - name: vm-name
+      - name: vm-namespace
+        value: "kde-test"
+      - name: testsuite-branch
+        value: "main"
+    activeDeadlineSeconds: 3600
+    initContainers:
+    - name: git-sync
+      image: ghcr.io/projectbluefin/lab-runner:latest
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      env:
+      - name: BRANCH
+        value: "{{inputs.parameters.testsuite-branch}}"
+      command: [bash, -c]
+      args:
+      - |
+        set -euo pipefail
+        git clone --depth 1 --branch "${BRANCH}" \
+          https://github.com/projectbluefin/testsuite /workspace/testsuite
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+    container:
+      image: ghcr.io/projectbluefin/lab-runner:latest
+      resources:
+        requests:
+          cpu: "1"
+          memory: 1Gi
+        limits:
+          cpu: "2"
+          memory: 2Gi
+      env:
+      - name: VM_NAME
+        value: "{{inputs.parameters.vm-name}}"
+      - name: VM_NS
+        value: "{{inputs.parameters.vm-namespace}}"
+      - name: SSH_KEY
+        value: /etc/ssh/test-key/id_ed25519
+      - name: VM_USER
+        value: bluefin-test
+      - name: IMAGE
+        value: kde-linux
+      - name: VM_HOST
+        value: 127.0.0.1
+      - name: SSH_PORT
+        value: "2222"
+      - name: KDE_WEBDRIVER_URL
+        value: http://127.0.0.1:4723
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+        readOnly: true
+      - name: results
+        mountPath: /results
+      - name: results-store
+        mountPath: /var/mnt/ghost-data/test-results
+      - name: ssh-key
+        mountPath: /etc/ssh/test-key
+        readOnly: true
+      command: [bash, -c]
+      args:
+      - |
+        set -euo pipefail
+        VIRTCTL=/usr/local/bin/virtctl
+        if [[ ! -x "${VIRTCTL}" ]]; then
+          curl --fail --location --retry 3 --output "${VIRTCTL}" \
+            https://github.com/kubevirt/kubevirt/releases/download/v1.8.2/virtctl-v1.8.2-linux-amd64
+          chmod +x "${VIRTCTL}"
+        fi
+        "${VIRTCTL}" port-forward -n "${VM_NS}" "vmi/${VM_NAME}" 2222:22 4723:4723 &
+        PF_PID=$!
+        trap 'kill "${PF_PID}" 2>/dev/null || true' EXIT
+        timeout 600 bash -c '
+          until ssh -i "${SSH_KEY}" -p 2222 -o StrictHostKeyChecking=no
+              -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10
+              "${VM_USER}@127.0.0.1" true 2>/dev/null; do sleep 5; done'
+        ssh -i "${SSH_KEY}" -p 2222 -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null "${VM_USER}@127.0.0.1" \
+          'command -v selenium-webdriver-at-spi-run && \
+           nohup selenium-webdriver-at-spi-run \
+             >/tmp/selenium-webdriver-at-spi.log 2>&1 </dev/null &'
+        timeout 120 bash -c 'until curl --fail --silent "${KDE_WEBDRIVER_URL}/status" >/dev/null; do sleep 2; done'
+        cd /workspace/testsuite
+        python3 -m pip install --quiet selenium behave
+        export PYTHONPATH=/workspace/testsuite
+        python3 -m behave tests/kde-smoke/features \
+          --format json.pretty --outfile /results/results.json --no-capture \
+          --tags ~@wip
+        mkdir -p /var/mnt/ghost-data/test-results/"{{workflow.name}}"/kde-smoke
+        cp /results/results.json \
+          /var/mnt/ghost-data/test-results/"{{workflow.name}}"/kde-smoke/
+    volumes:
+    - name: workspace
+      emptyDir:
+        sizeLimit: 2Gi
+    - name: ssh-key
+      secret:
+        secretName: bluefin-test-ssh-key
+    - name: results
+      emptyDir:
+        sizeLimit: 1Gi
+    - name: results-store
+      hostPath:
+        path: /var/mnt/ghost-data/test-results
+        type: DirectoryOrCreate

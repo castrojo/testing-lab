@@ -136,6 +136,12 @@ run-flatcar-smoke:
         -n {{ argo_ns }} \
         --watch
 
+# Run the pinned KDE Linux native OVMF lane.
+run-kde-linux:
+    argo submit argo/kde-linux-qa.yaml \
+        -n {{ argo_ns }} \
+        --watch
+
 # ── Observation ─────────────────────────────────────────────────────────────
 
 # List all test workflows
