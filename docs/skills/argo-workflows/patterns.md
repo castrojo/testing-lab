@@ -147,6 +147,29 @@ However, for complex updates (such as parsing BDD/behave test results, merging w
         fi
 ```
 
+#### KDE GUI runner: persist guest artifacts before re-raising failures
+
+KDE GUI tests run through a WebDriver service inside the VM, so screenshots and
+`faillog_*` diagnostics are written in the guest session. Set the shared
+results directory in both environments, copy it back with `scp` after Behave
+returns (including non-zero returns), archive each failure directory, then copy
+the complete directory to the runner's `/var/mnt/ghost-data/test-results`
+hostPath. Re-raise the saved Behave status only after persistence and
+best-effort publication complete.
+
+When a PNG is present and registry credentials are available, publish the
+in-guest screenshot with the ORAS CLI's `path:media-type` syntax (verified
+against Context7 `/oras-project/oras`):
+
+```bash
+oras push "${SCREENSHOT_IMAGE}:${PUSH_TAG}" \
+  --annotation "io.github.projectbluefin.caller_repo=projectbluefin/lab" \
+  "${SHOT}:image/png"
+```
+
+Use guest-side screenshots for KubeVirt. `virt-launcher` does not expose a
+QEMU monitor, so QEMU-level screendump helpers are not a valid fallback.
+
 **Contents API Pattern (for simple single-file writes, verified against Context7 `/websites/github_en_rest`):**
 ```bash
 # GET current file sha (required for updates)
