@@ -163,6 +163,9 @@ The workflow authoring guidance is split by topic:
   runner must source a generated session environment containing D-Bus,
   Wayland, AT-SPI, `XDG_SESSION_DESKTOP=kde`, and its WebDriver URL before
   starting Selenium.
+- KDE runner and teardown containers must use the repository-approved
+  digest-pinned `lab-runner` and shell-capable `kubectl` references; never
+  reintroduce floating `:latest` or `:latest-dev` tags in those workflows.
 
 ## Verification
 
