@@ -252,6 +252,11 @@ existing KDE runner. It has a one-hour `activeDeadlineSeconds`, holds the
 from its `onExit: teardown` handler. The template is GitOps-managed; live lab
 evidence may require a run after the change is merged and reconciled.
 
+Before submitting a live run, confirm that both `aurora-qa-pipeline` and
+`run-kde-tests` exist in the `argo` namespace. If either template is absent,
+wait for ArgoCD reconciliation; local lint and merged Git history are not live
+lab evidence.
+
 KDE soak evidence is a rolling window, not a consecutive streak. The publisher
 retains the newest 30 runs and records `failure_class` (`test` or `infra`) plus
 the filed issue URL for infrastructure flakes. `BEHAVE_RETRIES=2` is enforced
