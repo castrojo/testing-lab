@@ -220,8 +220,12 @@ Adapts the GNOME runner contract for Aurora/KDE VMs. It clones the selected
 testsuite branch, forwards SSH and WebDriver port 4723 through `virtctl`,
 starts the VM's `selenium-webdriver-at-spi-run` service, waits for its
 `/status` endpoint, and runs `tests/kde-smoke/features` with Behave. Results
-are persisted under the standard ghost test-results host path and published
-when the optional GitHub token is available.
+and in-guest PNG screenshots are copied back even when Behave fails, then
+persisted under the standard ghost test-results host path. `faillog_*`
+directories are retained alongside `.tar.gz` bundles, and the first screenshot
+is pushed as the stable `desktop-screenshot` OCI artifact when the optional
+GitHub token is available. QEMU-level screendumps are not used because
+KubeVirt's `virt-launcher` does not expose a QEMU monitor.
 
 ### `aurora-qa-pipeline` (template: `aurora-qa`)
 

@@ -282,6 +282,21 @@ def test_kde_runner_adapts_gnome_runner_contract_for_webdriver():
     assert "gnome-ponytail-daemon" not in kde
 
 
+def test_kde_runner_persists_failure_artifacts_and_pushes_guest_screenshots():
+    kde = (ROOT / "argo/workflow-templates/run-kde-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "faillog_" in kde
+    assert "tar -czf" in kde
+    assert "scp" in kde
+    assert "BEHAVE_RC=0" in kde
+    assert "SCREENSHOT_IMAGE=" in kde
+    assert "oras push" in kde
+    assert "TESTSUITE_RESULTS_DIR" in kde
+    assert "qemu_screendump" not in kde
+
+
 def test_kde_workflow_calls_runner_with_current_contract():
     workflow = (ROOT / "argo/kde-linux-qa.yaml").read_text(encoding="utf-8")
     provision = (

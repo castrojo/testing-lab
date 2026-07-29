@@ -109,6 +109,7 @@ spec:
       args:
       - |
         set -euo pipefail
+        mkdir -p /tmp/results
         VIRTCTL=/usr/local/bin/virtctl
         if [[ ! -x "${VIRTCTL}" ]]; then
           curl --fail --location --retry 3 --output "${VIRTCTL}" \
@@ -144,7 +145,9 @@ spec:
             "export XDG_SESSION_TYPE=wayland" \
             "export XDG_SESSION_DESKTOP=kde" \
             "export KDE_WEBDRIVER_URL=${KDE_WEBDRIVER_URL}" \
+            "export TESTSUITE_RESULTS_DIR=/tmp/results" \
             > /tmp/session.env
+          mkdir -p /tmp/results
           source /tmp/session.env
           command -v selenium-webdriver-at-spi-run
           nohup selenium-webdriver-at-spi-run \
@@ -154,22 +157,75 @@ spec:
         cd /workspace/testsuite
         python3 -m pip install --quiet selenium behave
         export PYTHONPATH=/workspace/testsuite
+        export TESTSUITE_RESULTS_DIR=/tmp/results
         TAGS_ARG="--tags ~@wip"
         if [[ -n "${BEHAVE_TAGS}" ]]; then
           TAGS_ARG="${BEHAVE_TAGS}"
         fi
+        BEHAVE_RC=0
         python3 -m behave "tests/${SUITE}/features" \
           --format json.pretty --outfile /results/results.json --no-capture \
-          ${TAGS_ARG}
+          ${TAGS_ARG} || BEHAVE_RC=$?
+
+        # KDE's failure hook writes screenshots and diagnostic directories inside
+        # the guest session. Copy them back even when Behave reports failures.
+        scp -i "${SSH_KEY}" -P 2222 -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null -r \
+          "${VM_USER}@127.0.0.1:/tmp/results/." /tmp/results/ || \
+          echo "Warning: failed to collect in-guest KDE artifacts" >&2
+
+        # Keep both the directory and a portable tarball for each kde_faillog
+        # bundle produced by the testsuite failure hook.
+        while IFS= read -r -d '' bundle; do
+          tar -czf "${bundle}.tar.gz" -C "$(dirname "${bundle}")" \
+            "$(basename "${bundle}")" || \
+            echo "Warning: failed to archive ${bundle}" >&2
+        done < <(find /tmp/results -type d -name 'faillog_*' -print0)
+
         RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}/${SUITE}"
         mkdir -p "${RESULT_DIR}"
-        cp /results/results.json \
-          "${RESULT_DIR}/"
-        if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-          IMG_SLUG="${VARIANT}"
-          if [[ "${VARIANT}" == "aurora" && -n "{{inputs.parameters.containerdisk-tag}}" ]]; then
-            IMG_SLUG="aurora-${{inputs.parameters.containerdisk-tag}}"
+        cp -r /tmp/results/. "${RESULT_DIR}/" 2>/dev/null || true
+        if [[ -f /results/results.json ]]; then
+          cp /results/results.json "${RESULT_DIR}/"
+        fi
+        echo "Results and KDE artifacts saved to ${RESULT_DIR}" >&2
+
+        IMG_SLUG="${VARIANT}"
+        if [[ "${VARIANT}" == "aurora" && -n "{{inputs.parameters.containerdisk-tag}}" ]]; then
+          IMG_SLUG="aurora-${{inputs.parameters.containerdisk-tag}}"
+        fi
+
+        # Push the first in-guest screenshot as the stable OCI artifact used by
+        # the dashboard. KubeVirt's virt-launcher exposes no QEMU monitor, so
+        # QEMU-level screendumps are intentionally not part of this workflow.
+        SHOT=$(find /tmp/results -type f -name '*.png' -print -quit)
+        if [[ -n "${SHOT}" && -f "${SHOT}" && -n "${GITHUB_TOKEN:-}" ]]; then
+          ORAS_BIN=/workspace/oras-bin/oras
+          if [[ ! -x "${ORAS_BIN}" ]]; then
+            mkdir -p "$(dirname "${ORAS_BIN}")"
+            curl --fail --silent --show-error --location \
+              "https://github.com/oras-project/oras/releases/download/v1.2.3/oras_1.2.3_linux_amd64.tar.gz" |
+              tar -xz -C "$(dirname "${ORAS_BIN}")" oras || \
+              echo "Warning: failed to install oras" >&2
           fi
+          if [[ -x "${ORAS_BIN}" ]]; then
+            export PATH="$(dirname "${ORAS_BIN}"):${PATH}"
+            SCREENSHOT_IMAGE="ghcr.io/projectbluefin/testsuite/desktop-screenshot"
+            PUSH_TAG="${IMG_SLUG}-${SUITE}-latest"
+            echo "${GITHUB_TOKEN}" | oras login ghcr.io \
+              -u github-actions --password-stdin || \
+              echo "Warning: failed to authenticate oras to GHCR" >&2
+            oras push "${SCREENSHOT_IMAGE}:${PUSH_TAG}" \
+              --annotation "org.opencontainers.image.description=Bluefin KDE desktop screenshot from lab e2e suite: ${SUITE}" \
+              --annotation "io.github.projectbluefin.caller_repo=projectbluefin/lab" \
+              "${SHOT}:image/png" || \
+              echo "Warning: failed to push KDE screenshot" >&2
+          fi
+        elif [[ -z "${GITHUB_TOKEN:-}" ]]; then
+          echo "No GITHUB_TOKEN - skipping GHCR screenshot push" >&2
+        fi
+
+        if [[ -n "${GITHUB_TOKEN:-}" ]]; then
           rm -rf /workspace/lab-code
           git clone --depth 1 \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/projectbluefin/lab.git" \
@@ -178,7 +234,11 @@ spec:
             /results/results.json "${IMG_SLUG}" "${SUITE}" \
             "{{workflow.name}}" "${GITHUB_TOKEN}" || \
             echo "Warning: failed to publish test results" >&2
+        else
+          echo "No GITHUB_TOKEN - skipping test results publication" >&2
         fi
+
+        exit "${BEHAVE_RC}"
     volumes:
     - name: workspace
       emptyDir:
