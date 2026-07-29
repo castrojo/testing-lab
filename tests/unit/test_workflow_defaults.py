@@ -155,6 +155,29 @@ def test_buildbarn_runner_uses_stable_tmpdir_after_chroot():
     assert "filePool:" not in config
 
 
+def test_aurora_containerdisk_builder_isolated_and_prebaked():
+    builder = (
+        ROOT / "argo/workflow-templates/build-bluefin-migration-containerdisk.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert "- name: containerdisk-repo" in builder
+    assert 'value: "bluefin-containerdisk"' in builder
+    assert "- name: prebake-kde-webdriver" in builder
+    assert "selenium-webdriver-at-spi.git" in builder
+    assert "d45a21e8f1b3591dc921f0be85f1ecd834cbe413" in builder
+    assert "selenium-webdriver-at-spi-inputsynth" in builder
+    assert "192.168.1.102:30500/{{inputs.parameters.containerdisk-repo}}:${TAG}" in builder
+
+    aurora = (ROOT / "argo/workflow-templates/aurora-containerdisk-test.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "value: aurora-test" in aurora
+    assert "value: 30G" in aurora
+    assert "value: aurora-containerdisk" in aurora
+    assert 'value: "true"' in aurora
+    assert "key: migration-containerdisk-build" in aurora
+
+
 def test_cache_only_diagnostic_disables_remote_execution_explicitly():
     config = (ROOT / "manifests/buildstream-remote-cache-config.yaml").read_text(encoding="utf-8")
     assert "remote-execution: {}" not in config
