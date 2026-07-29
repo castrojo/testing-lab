@@ -79,6 +79,12 @@ The workflow authoring guidance is split by topic:
 - `registry.k8s.io/kubectl` used as a shell-capable image — it is distroless, has no bash, nc, or any shell utilities. Use `cgr.dev/chainguard/kubectl:latest-dev` when you need kubectl + bash together
 - `ghcr.io/projectbluefin/lab-runner:latest` assumed to contain `skopeo` or `oras` — the live image can omit both. Use pinned `quay.io/skopeo/stable` and bootstrap pinned ORAS when registry referrers are required.
 - A WorkflowTemplate file name that doesn't match its `metadata.name` (confuses ArgoCD tracking)
+- A shared containerDisk builder that hard-codes its output repository — pass the
+  destination repository through check, build, and push templates whenever
+  multiple image families share the builder, or one family can clobber another.
+- Prebaking a DUT-specific KDE automation binary without pinning the source
+  commit and validating the installed server and `inputsynth` paths during the
+  image build.
 - Templates annotated `DEPRECATED` that haven't been deleted from git
 - Two CronWorkflows with the same schedule covering overlapping namespaces
 - A `steps` template with the same `when` condition on 3+ sequential steps (convert to `dag` + `depends` chain)
