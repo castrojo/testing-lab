@@ -172,6 +172,9 @@ The workflow authoring guidance is split by topic:
   Argo output parameters use `valueFrom.path` and are consumed as
   `{{steps.<step>.outputs.parameters.<name>}}` (source:
   `/argoproj/argo-workflows`).
+- A Dakota PR-poller call omits the `registry` argument — local PR builds must
+  receive the NodePort registry address explicitly or the workflow can stall
+  before its build child starts.
 
 ## Verification
 
@@ -217,6 +220,8 @@ Before marking any WorkflowTemplate change done:
 - [ ] Every PR-gated repository has either a live repository-dispatch receiver
       or an explicit direct commit-status fallback; verify the target workflow
       exists on the repository's default branch before relying on dispatch
+- [ ] Dakota PR-poller submissions pass the local registry NodePort explicitly,
+      and the live `pr-poller` template is re-checked after ArgoCD reconciliation
 - [ ] Registry workflows use a pinned image that actually contains every CLI
       invoked by the script, with flags valid for that exact version
 - [ ] KDE GUI runners preserve the GNOME runner's parameter/result contract,
