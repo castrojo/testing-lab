@@ -1,0 +1,149 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: aurora-qa-pipeline
+  namespace: argo
+  labels:
+    app.kubernetes.io/component: qa-pipeline
+    app.kubernetes.io/part-of: aurora-test-suite
+  annotations:
+    description: |
+      VM-based Aurora/KDE QA pipeline: build an Aurora containerDisk, provision
+      a KubeVirt VM, run KDE GUI tests, collect VM logs, and always tear down
+      the VM when the workflow completes.
+spec:
+  serviceAccountName: argo
+  entrypoint: aurora-qa
+  onExit: teardown
+  activeDeadlineSeconds: 3600
+  volumeClaimGC:
+    strategy: OnWorkflowCompletion
+  volumeClaimTemplates:
+    - metadata:
+        name: staging
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 100Gi
+  arguments:
+    parameters:
+      - name: image-tag
+        value: testing
+      - name: vm-name
+        value: aurora-qa-{{workflow.uid}}
+      - name: namespace
+        value: aurora-test
+      - name: containerdisk-repo
+        value: aurora-containerdisk
+      - name: disk-size
+        value: 30G
+      - name: suite
+        value: kde-smoke
+      - name: branch
+        value: main
+      - name: ssh-user
+        value: bluefin-test
+      - name: ssh-key-secret
+        value: bluefin-test-ssh-key
+  templates:
+    - name: aurora-qa
+      synchronization:
+        semaphores:
+          - configMapKeyRef:
+              name: workflow-semaphores
+              key: aurora-vm-qa
+      dag:
+        tasks:
+          - name: build-aurora-containerdisk
+            templateRef:
+              name: build-bluefin-migration-containerdisk
+              template: build-containerdisk
+            arguments:
+              parameters:
+                - name: image
+                  value: ghcr.io/ublue-os/aurora
+                - name: image-tag
+                  value: "{{workflow.parameters.image-tag}}"
+                - name: containerdisk-tag
+                  value: "{{workflow.parameters.image-tag}}"
+                - name: disk-size
+                  value: "{{workflow.parameters.disk-size}}"
+                - name: containerdisk-repo
+                  value: "{{workflow.parameters.containerdisk-repo}}"
+                - name: prebake-kde-webdriver
+                  value: "true"
+                - name: force
+                  value: "true"
+          - name: provision-containerdisk-vm
+            depends: build-aurora-containerdisk.Succeeded
+            templateRef:
+              name: provision-containerdisk-vm
+              template: provision-vm
+            arguments:
+              parameters:
+                - name: image-tag
+                  value: "{{workflow.parameters.image-tag}}"
+                - name: vm-name
+                  value: "{{workflow.parameters.vm-name}}"
+                - name: namespace
+                  value: "{{workflow.parameters.namespace}}"
+                - name: containerdisk-repo
+                  value: "{{workflow.parameters.containerdisk-repo}}"
+                - name: app-label
+                  value: aurora-test
+                - name: label-prefix
+                  value: aurora.io
+          - name: run-kde-tests
+            depends: provision-containerdisk-vm.Succeeded
+            templateRef:
+              name: run-kde-tests
+              template: run-kde-tests
+            arguments:
+              parameters:
+                - name: vm-name
+                  value: "{{workflow.parameters.vm-name}}"
+                - name: vm-namespace
+                  value: "{{workflow.parameters.namespace}}"
+                - name: suite
+                  value: "{{workflow.parameters.suite}}"
+                - name: variant
+                  value: aurora
+                - name: ssh-user
+                  value: "{{workflow.parameters.ssh-user}}"
+                - name: ssh-key-secret
+                  value: "{{workflow.parameters.ssh-key-secret}}"
+                - name: branch
+                  value: "{{workflow.parameters.branch}}"
+                - name: containerdisk-tag
+                  value: "{{workflow.parameters.image-tag}}"
+          - name: collect-logs
+            depends: "(run-kde-tests.Succeeded || run-kde-tests.Failed)"
+            templateRef:
+              name: collect-vm-logs
+              template: collect-vm-logs
+            arguments:
+              parameters:
+                - name: vm-ip
+                  value: "{{tasks.provision-containerdisk-vm.outputs.parameters.vm-ip}}"
+                - name: variant
+                  value: aurora:testing
+                - name: ssh-key-secret
+                  value: "{{workflow.parameters.ssh-key-secret}}"
+                - name: ssh-user
+                  value: "{{workflow.parameters.ssh-user}}"
+    - name: teardown
+      script:
+        image: cgr.dev/chainguard/kubectl:latest-dev
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        source: |
+          set -e
+          kubectl delete vm "{{workflow.parameters.vm-name}}" \
+            -n "{{workflow.parameters.namespace}}" --ignore-not-found

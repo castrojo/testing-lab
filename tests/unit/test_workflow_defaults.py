@@ -183,6 +183,58 @@ def test_aurora_containerdisk_builder_isolated_and_prebaked():
     assert "storage: 100Gi" in aurora
 
 
+def test_aurora_qa_pipeline_is_vm_based_and_serialized():
+    pipeline_path = ROOT / "argo/workflow-templates/aurora-qa-pipeline.yaml"
+    assert pipeline_path.exists()
+    pipeline = yaml.safe_load(pipeline_path.read_text(encoding="utf-8"))
+    spec = pipeline["spec"]
+
+    assert pipeline["metadata"]["name"] == "aurora-qa-pipeline"
+    assert spec["entrypoint"] == "aurora-qa"
+    assert spec["onExit"] == "teardown"
+    assert spec["activeDeadlineSeconds"] == 3600
+    assert spec["templates"][0]["name"] == "aurora-qa"
+    assert spec["templates"][0]["synchronization"]["semaphores"][0]["configMapKeyRef"] == {
+        "name": "workflow-semaphores",
+        "key": "aurora-vm-qa",
+    }
+
+    tasks = spec["templates"][0]["dag"]["tasks"]
+    assert [task["name"] for task in tasks] == [
+        "build-aurora-containerdisk",
+        "provision-containerdisk-vm",
+        "run-kde-tests",
+        "collect-logs",
+    ]
+    assert tasks[0]["templateRef"] == {
+        "name": "build-bluefin-migration-containerdisk",
+        "template": "build-containerdisk",
+    }
+    assert tasks[1]["templateRef"] == {
+        "name": "provision-containerdisk-vm",
+        "template": "provision-vm",
+    }
+    assert tasks[2]["templateRef"] == {
+        "name": "run-kde-tests",
+        "template": "run-kde-tests",
+    }
+    assert tasks[3]["templateRef"] == {
+        "name": "collect-vm-logs",
+        "template": "collect-vm-logs",
+    }
+
+    content = pipeline_path.read_text(encoding="utf-8")
+    assert "containerdisk-repo" in content
+    assert "value: aurora-containerdisk" in content
+    assert "value: aurora-test" in content
+    assert "value: 30G" in content
+
+    semaphores = yaml.safe_load(
+        (ROOT / "manifests/workflow-semaphores.yaml").read_text(encoding="utf-8")
+    )
+    assert semaphores["data"]["aurora-vm-qa"] == "1"
+
+
 def test_kde_runner_adapts_gnome_runner_contract_for_webdriver():
     gnome = (ROOT / "argo/workflow-templates/run-gnome-tests.yaml").read_text(
         encoding="utf-8"

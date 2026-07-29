@@ -223,6 +223,24 @@ starts the VM's `selenium-webdriver-at-spi-run` service, waits for its
 are persisted under the standard ghost test-results host path and published
 when the optional GitHub token is available.
 
+### `aurora-qa-pipeline` (template: `aurora-qa`)
+
+Runs the Aurora/KDE GUI suite against a KubeVirt VM in `aurora-test`:
+
+```text
+build Aurora containerDisk
+  → provision VM
+    → run-kde-tests
+      → collect-vm-logs
+```
+
+The pipeline builds `ghcr.io/ublue-os/aurora` into the
+`aurora-containerdisk` repository with a 30G disk, then passes the VM to the
+existing KDE runner. It has a one-hour `activeDeadlineSeconds`, holds the
+`aurora-vm-qa` ConfigMap semaphore for the full run, and always deletes the VM
+from its `onExit: teardown` handler. The template is GitOps-managed; live lab
+evidence may require a run after the change is merged and reconciled.
+
 ### `run-flatcar-tests` (template: `run-flatcar-tests`)
 
 Same shape for Flatcar; uses `core` as the SSH user and runs pytest+dogtail

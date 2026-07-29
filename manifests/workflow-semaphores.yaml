@@ -23,6 +23,9 @@
 #                        while preserving enough parallelism for the suite fan-out.
 #                        VMs are still scheduled natively and must not use this
 #                        semaphore (see docs/skills/argo-workflows/patterns.md).
+#   aurora-vm-qa       — Serializes Aurora/KDE VM pipelines. Each VM requests 8Gi
+#                        plus virt-launcher overhead and a runner pod, so one
+#                        workflow at a time avoids contention with container QA.
 #   dakota-publish      — Serializes Zot-to-GHCR Dakota publication workflows
 #                        while both image lanes run independently inside one slot.
 apiVersion: v1
@@ -37,4 +40,5 @@ data:
   bst-cache-warm: "1"
   migration-containerdisk-build: "1"
   ghost-container-qa: "6"
+  aurora-vm-qa: "1"
   dakota-publish: "1"

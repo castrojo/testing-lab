@@ -54,7 +54,11 @@ The workflow authoring guidance is split by topic:
 - `synchronization.semaphore:` (singular) in any pipeline — deprecated, rejected by ArgoCD schema. Use `synchronization.semaphores:` (list with `- configMapKeyRef:` item)
 - `spec.schedule:` (singular) on a CronWorkflow — field does not exist in CRD schema; use `spec.schedules:` (array)
 - A pipeline with VMs and no `spec.activeDeadlineSeconds` — a stuck VM holds its semaphore slot forever
-- A pipeline with VMs that adds `spec.synchronization.semaphores` — semaphores are removed; k8s scheduler handles concurrency via virt-launcher memory requests
+- A VM pipeline that adds a semaphore without a documented cross-workflow
+  capacity need — ordinary VM concurrency is handled by virt-launcher memory
+  requests and does not need a lock
+- A memory-constrained VM pipeline that omits a documented template-level
+  semaphore — concurrent virt-launcher and runner pods can exhaust node memory
 - A template that consumes a scarce, node-pinned resource relying only on
   workflow `parallelism` — that limit does not cover simultaneous workflows.
   Put a template-level `synchronization.semaphores` reference on the shared
@@ -166,12 +170,15 @@ Before marking any WorkflowTemplate change done:
 - [ ] Pipeline has `onExit: cleanup` handler
 - [ ] All pod-running templates have `resources:` requests and limits
 - [ ] Every node-pinned, high-memory shared template has a ConfigMap-backed
-      template-level semaphore sized to the node's allocatable capacity; VM
-      pipelines remain scheduler-managed
+      template-level semaphore sized to the node's allocatable capacity
+- [ ] VM pipelines are scheduler-managed by default; if cross-workflow memory
+      contention requires serialization, use a documented template-level
+      ConfigMap semaphore with an explicit capacity
 - [ ] Change is committed and pushed — not manually applied to cluster
 - [ ] `description:` annotation present on the new/modified template
 - [ ] File name matches `metadata.name` (e.g. `provision-containerdisk-vm.yaml` for `name: provision-containerdisk-vm`)
-- [ ] VM pipeline spec has NO `synchronization.semaphores` block — k8s scheduler handles VM concurrency
+- [ ] Any VM pipeline semaphore is justified by documented cross-workflow
+      memory contention and is attached at template level, not workflow scope
 - [ ] VM pipeline spec has `activeDeadlineSeconds` (1h or 2h) so stuck VMs self-evict
 - [ ] No `nodeSelector: kubernetes.io/hostname: ghost` in VM specs — VMs float to any KubeVirt-capable node
 - [ ] GitHub Contents API write-backs use curl+jq, not inline Python; output is
