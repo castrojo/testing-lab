@@ -152,10 +152,11 @@ However, for complex updates (such as parsing BDD/behave test results, merging w
 KDE GUI tests run through a WebDriver service inside the VM, so screenshots and
 `faillog_*` diagnostics are written in the guest session. Set the shared
 results directory in both environments, copy it back with `scp` after Behave
-returns (including non-zero returns), archive each failure directory, then copy
-the complete directory to the runner's `/var/mnt/ghost-data/test-results`
-hostPath. Re-raise the saved Behave status only after persistence and
-best-effort publication complete.
+returns (including non-zero returns), archive each failure directory with
+`python3 -m tarfile` (the runner has no `tar`), then copy the complete directory
+to the runner's `/var/mnt/ghost-data/test-results` hostPath. Surface archive
+failures after persistence and publication instead of silently dropping them;
+re-raise the saved Behave status only after that cleanup.
 
 When a PNG is present and registry credentials are available, publish the
 in-guest screenshot with the ORAS CLI's `path:media-type` syntax (verified

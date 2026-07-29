@@ -288,7 +288,10 @@ def test_kde_runner_persists_failure_artifacts_and_pushes_guest_screenshots():
     )
 
     assert "faillog_" in kde
-    assert "tar -czf" in kde
+    assert "python3 -m tarfile -c" in kde
+    assert "tar -czf" not in kde
+    assert "ARTIFACT_RC=1" in kde
+    assert "could not be archived" in kde
     assert "scp" in kde
     assert "BEHAVE_RC=0" in kde
     assert "SCREENSHOT_IMAGE=" in kde

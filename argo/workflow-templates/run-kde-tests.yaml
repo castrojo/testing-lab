@@ -175,11 +175,17 @@ spec:
           echo "Warning: failed to collect in-guest KDE artifacts" >&2
 
         # Keep both the directory and a portable tarball for each kde_faillog
-        # bundle produced by the testsuite failure hook.
+        # bundle produced by the testsuite failure hook. lab-runner does not
+        # provide tar, so use the guaranteed Python standard library tool.
+        ARTIFACT_RC=0
         while IFS= read -r -d '' bundle; do
-          tar -czf "${bundle}.tar.gz" -C "$(dirname "${bundle}")" \
-            "$(basename "${bundle}")" || \
-            echo "Warning: failed to archive ${bundle}" >&2
+          if ! (
+            cd "$(dirname "${bundle}")" &&
+            python3 -m tarfile -c "${bundle}.tar.gz" "$(basename "${bundle}")"
+          ); then
+            echo "ERROR: failed to archive KDE failure bundle ${bundle}" >&2
+            ARTIFACT_RC=1
+          fi
         done < <(find /tmp/results -type d -name 'faillog_*' -print0)
 
         RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}/${SUITE}"
@@ -238,6 +244,10 @@ spec:
           echo "No GITHUB_TOKEN - skipping test results publication" >&2
         fi
 
+        if [[ "${ARTIFACT_RC}" -ne 0 ]]; then
+          echo "ERROR: one or more KDE failure bundles could not be archived" >&2
+          exit "${ARTIFACT_RC}"
+        fi
         exit "${BEHAVE_RC}"
     volumes:
     - name: workspace
