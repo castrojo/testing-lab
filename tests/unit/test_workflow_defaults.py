@@ -246,6 +246,29 @@ def test_aurora_qa_pipeline_is_vm_based_and_serialized():
     assert semaphores["data"]["aurora-vm-qa"] == "1"
 
 
+def test_nightly_kde_cron_uses_aurora_pipeline_and_shared_semaphore():
+    cron_path = ROOT / "manifests/nightly-kde.yaml"
+    cron = yaml.safe_load(cron_path.read_text(encoding="utf-8"))
+    spec = cron["spec"]
+    workflow_spec = spec["workflowSpec"]
+
+    assert cron["metadata"]["name"] == "nightly-kde"
+    assert spec["schedules"] == ["0 4 * * *"]
+    assert spec["concurrencyPolicy"] == "Forbid"
+    assert workflow_spec["activeDeadlineSeconds"] == 5400
+    assert workflow_spec["workflowTemplateRef"] == {"name": "aurora-qa-pipeline"}
+    assert {
+        parameter["name"]: parameter["value"]
+        for parameter in workflow_spec["arguments"]["parameters"]
+    }["namespace"] == "aurora-test"
+
+    semaphore = yaml.safe_load(
+        (ROOT / "manifests/workflow-semaphores.yaml").read_text(encoding="utf-8")
+    )
+    assert semaphore["data"]["aurora-vm-qa"] == "1"
+    assert "semaphore" in cron_path.read_text(encoding="utf-8")
+
+
 def test_aurora_qa_pipeline_exposes_safe_kde_sabotage_modes():
     pipeline_path = ROOT / "argo/workflow-templates/aurora-qa-pipeline.yaml"
     pipeline = yaml.safe_load(pipeline_path.read_text(encoding="utf-8"))

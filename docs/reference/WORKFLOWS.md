@@ -268,6 +268,23 @@ unqualified window. Qualification is evidence only; promotion to CI gating
 remains a human decision, and each infrastructure flake must have a separate
 filed issue.
 
+### `nightly-kde`
+
+The `nightly-kde` CronWorkflow schedules the `aurora-qa-pipeline` at 04:00 UTC.
+The schedule is only a trigger: the pipeline's `aurora-vm-qa` key in the
+GitOps-managed `workflow-semaphores` ConfigMap is the serialization guard, so
+the soak remains safe if another nightly schedule is enabled or delayed.
+The CronWorkflow sets a 90-minute deadline, uses `Forbid` for duplicate
+triggers, and retains failed workflows for seven days.
+
+Each live run must publish the structured result and screenshot through
+`run-kde-tests`, and persist the result/artifact bundle before teardown. A
+qualified 30-run window is evidence only: retain the Argo workflow URL, the
+published `docs/results/aurora-testing-smoke.json` history, screenshot URL,
+and any filed issue URL for every classified infrastructure flake. Live-run
+evidence is required after ArgoCD reconciles the Git change; local lint cannot
+substitute for that evidence.
+
 ### `aurora-kde-sabotage`
 
 Runs the mandatory red-path proof in the isolated `aurora-test` namespace. It

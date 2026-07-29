@@ -1,0 +1,52 @@
+# CronWorkflow: run the Aurora/KDE soak suite nightly at 04:00 UTC.
+#
+# The referenced pipeline owns the VM lifecycle, result publication, and the
+# aurora-vm-qa ConfigMap semaphore. The semaphore, not this schedule, is the
+# cross-workflow serialization guard.
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: nightly-kde
+  namespace: argo
+  labels:
+    app.kubernetes.io/part-of: lab
+spec:
+  suspend: false
+  schedules:
+    - "0 4 * * *"
+  timezone: "UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  workflowMetadata:
+    labels:
+      app.kubernetes.io/part-of: aurora-test-suite
+      bluefin.io/trigger: nightly
+      bluefin.io/suite: kde-soak
+  workflowSpec:
+    serviceAccountName: argo
+    activeDeadlineSeconds: 5400
+    podGC:
+      strategy: OnWorkflowCompletion
+    ttlStrategy:
+      secondsAfterSuccess: 86400
+      secondsAfterFailure: 604800
+    workflowTemplateRef:
+      name: aurora-qa-pipeline
+    arguments:
+      parameters:
+        - name: image-tag
+          value: "testing"
+        - name: vm-name
+          value: "aurora-kde-{{workflow.uid}}"
+        - name: namespace
+          value: "aurora-test"
+        - name: containerdisk-repo
+          value: "aurora-containerdisk"
+        - name: suite
+          value: "kde-smoke"
+        - name: branch
+          value: "main"
+        - name: ssh-user
+          value: "bluefin-test"
+        - name: ssh-key-secret
+          value: "bluefin-test-ssh-key"
