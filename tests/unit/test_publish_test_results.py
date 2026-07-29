@@ -137,6 +137,11 @@ def test_kde_soak_allows_two_classified_infrastructure_flakes():
         {
             "status": "failed" if index < 2 else "passed",
             "failure_class": "infra" if index < 2 else "none",
+            "failure_issue_url": (
+                "https://github.com/projectbluefin/lab/issues/466"
+                if index < 2
+                else None
+            ),
         }
         for index in range(30)
     ]
@@ -167,6 +172,37 @@ def test_kde_soak_rejects_two_test_failures():
     ]
 
     assert evaluate_kde_soak(history)["state"] == "unqualified"
+
+
+def test_kde_soak_does_not_accept_infra_flakes_without_issue_urls():
+    history = [
+        {
+            "status": "failed" if index < 2 else "passed",
+            "failure_class": "infra" if index < 2 else "none",
+            "failure_issue_url": None,
+        }
+        for index in range(30)
+    ]
+
+    assert evaluate_kde_soak(history)["state"] == "unqualified"
+
+
+def test_kde_soak_keeps_fixed_two_flake_budget():
+    history = [
+        {
+            "status": "failed" if index < 3 else "passed",
+            "failure_class": "infra" if index < 3 else "none",
+            "failure_issue_url": "https://github.com/projectbluefin/lab/issues/466"
+            if index < 3
+            else None,
+        }
+        for index in range(30)
+    ]
+
+    summary = evaluate_kde_soak(history)
+
+    assert summary["state"] == "unqualified"
+    assert summary["max_infra_flakes"] == 2
 
 
 def test_kde_soak_is_pending_before_thirty_runs():

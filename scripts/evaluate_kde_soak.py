@@ -17,7 +17,6 @@ def evaluate_kde_soak(
     history: list[dict[str, Any]],
     *,
     window_size: int = WINDOW_SIZE,
-    max_infra_flakes: int = MAX_INFRA_FLAKES,
 ) -> dict[str, Any]:
     window = history[:window_size]
     passed = sum(entry.get("status") == "passed" for entry in window)
@@ -25,6 +24,7 @@ def evaluate_kde_soak(
     infra_flakes = sum(
         entry.get("status") == "failed"
         and entry.get("failure_class", "test") == "infra"
+        and bool(entry.get("failure_issue_url"))
         for entry in window
     )
     test_failures = failed - infra_flakes
@@ -34,7 +34,7 @@ def evaluate_kde_soak(
         or (
             passed >= window_size - 2
             and failed == infra_flakes
-            and infra_flakes <= max_infra_flakes
+            and infra_flakes <= MAX_INFRA_FLAKES
         )
     )
 
@@ -54,7 +54,7 @@ def evaluate_kde_soak(
         "infra_flakes": infra_flakes,
         "test_failures": test_failures,
         "pass_rate": round(pass_rate, 2) if pass_rate is not None else None,
-        "max_infra_flakes": max_infra_flakes,
+        "max_infra_flakes": MAX_INFRA_FLAKES,
         "human_approval_required": qualified,
     }
 
@@ -63,14 +63,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results_file", type=Path)
     parser.add_argument("--window-size", type=int, default=WINDOW_SIZE)
-    parser.add_argument("--max-infra-flakes", type=int, default=MAX_INFRA_FLAKES)
     args = parser.parse_args()
 
     data = json.loads(args.results_file.read_text(encoding="utf-8"))
     summary = evaluate_kde_soak(
         data.get("history", []),
         window_size=args.window_size,
-        max_infra_flakes=args.max_infra_flakes,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0 if summary["state"] == "qualified" else 1

@@ -256,8 +256,8 @@ KDE soak evidence is a rolling window, not a consecutive streak. The publisher
 retains the newest 30 runs and records `failure_class` (`test` or `infra`) plus
 the filed issue URL for infrastructure flakes. `BEHAVE_RETRIES=2` is enforced
 for every run. The window is qualified only after 30 runs with either at least
-29 passes, or at least 28 passes and no more than two classified infrastructure
-flakes:
+29 passes, or at least 28 passes and no more than two infrastructure flakes that
+each have a filed issue URL. The two-flake budget is fixed and not configurable:
 
 ```bash
 just evaluate-kde-soak
