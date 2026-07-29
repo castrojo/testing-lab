@@ -135,6 +135,10 @@ The workflow authoring guidance is split by topic:
   constant pipeline identifiers and bounded states. Workflow-level completion
   metrics are safe only when the workflow status truthfully represents the
   publish result; non-blocking or transitional DAG branches must be fixed first.
+- A KDE GUI runner that copies the GNOME runner without replacing
+  `qecore-headless` and the GNOME daemon — use the VM's
+  `selenium-webdriver-at-spi-run`, forward port 4723, and gate test start on
+  its `/status` endpoint.
 
 ## Verification
 
@@ -173,3 +177,6 @@ Before marking any WorkflowTemplate change done:
       exists on the repository's default branch before relying on dispatch
 - [ ] Registry workflows use a pinned image that actually contains every CLI
       invoked by the script, with flags valid for that exact version
+- [ ] KDE GUI runners preserve the GNOME runner's parameter/result contract,
+      use `selenium-webdriver-at-spi-run`, forward `4723:4723`, and wait for
+      WebDriver readiness before Behave execution
