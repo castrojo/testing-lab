@@ -149,6 +149,11 @@ The workflow authoring guidance is split by topic:
   `qecore-headless` and the GNOME daemon — use the VM's
   `selenium-webdriver-at-spi-run`, forward port 4723, and gate test start on
   its `/status` endpoint.
+- KDE QA callers must pass the runner's `branch` parameter (not the removed
+  `testsuite-branch`) and use the established `aurora-test` namespace. The
+  runner must source a generated session environment containing D-Bus,
+  Wayland, AT-SPI, `XDG_SESSION_DESKTOP=kde`, and its WebDriver URL before
+  starting Selenium.
 
 ## Verification
 
