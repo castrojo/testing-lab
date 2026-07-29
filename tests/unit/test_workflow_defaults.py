@@ -322,6 +322,9 @@ def test_kde_runner_adapts_gnome_runner_contract_for_webdriver():
     assert "- name: behave-retries" in kde
     assert 'value: "2"' in kde
     assert "BEHAVE_RETRIES=2" in kde
+    assert "Required credential is missing: GITHUB_TOKEN" in kde
+    assert "optional: true" not in kde
+    assert "ERROR: failed to publish KDE test results" in kde
     assert "qecore-headless" not in kde
     assert "gnome-ponytail-daemon" not in kde
 
@@ -335,11 +338,13 @@ def test_kde_runner_persists_failure_artifacts_and_pushes_guest_screenshots():
     assert "python3 -m tarfile -c" in kde
     assert "tar -czf" not in kde
     assert "ARTIFACT_RC=1" in kde
-    assert "could not be archived" in kde
+    assert "evidence artifacts were not fully retained" in kde
     assert "scp" in kde
     assert "BEHAVE_RC=0" in kde
     assert "SCREENSHOT_IMAGE=" in kde
     assert "oras push" in kde
+    assert "ERROR: failed to publish KDE screenshot artifact" in kde
+    assert "Warning: failed" not in kde
     assert "TESTSUITE_RESULTS_DIR" in kde
     assert "qemu_screendump" not in kde
 

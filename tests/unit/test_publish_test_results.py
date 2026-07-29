@@ -1,4 +1,5 @@
 import sys
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -194,6 +195,29 @@ def test_infrastructure_failure_requires_a_filed_issue():
             suite="smoke",
             failure_class="infra",
         )
+
+
+def test_publication_input_failures_are_nonzero():
+    script = scripts_path / "publish_test_results.py"
+    missing = scripts_path / "does-not-exist.json"
+
+    missing_token = subprocess.run(
+        [sys.executable, str(script), str(missing), "aurora", "smoke", "wf", ""],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    missing_results = subprocess.run(
+        [sys.executable, str(script), str(missing), "aurora", "smoke", "wf", "token"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert missing_token.returncode != 0
+    assert missing_results.returncode != 0
+    assert "Skipping" not in missing_token.stderr
+    assert "Skipping" not in missing_results.stderr
 
 def test_parse_real_sample_results():
     import json

@@ -223,8 +223,10 @@ starts the VM's `selenium-webdriver-at-spi-run` service, waits for its
 and in-guest PNG screenshots are copied back even when Behave fails, then
 persisted under the standard ghost test-results host path. `faillog_*`
 directories are retained alongside `.tar.gz` bundles, and the first screenshot
-is pushed as the stable `desktop-screenshot` OCI artifact when the optional
-GitHub token is available. QEMU-level screendumps are not used because
+is pushed as the stable `desktop-screenshot` OCI artifact. The GitHub
+credential, ORAS tool, screenshot, artifact persistence, and result publication
+are required and fail the runner when unavailable. QEMU-level screendumps are
+not used because
 KubeVirt's `virt-launcher` does not expose a QEMU monitor.
 
 The runner accepts `failure-class: test|infra` and `failure-issue-url`

@@ -158,9 +158,10 @@ to the runner's `/var/mnt/ghost-data/test-results` hostPath. Surface archive
 failures after persistence and publication instead of silently dropping them;
 re-raise the saved Behave status only after that cleanup.
 
-When a PNG is present and registry credentials are available, publish the
-in-guest screenshot with the ORAS CLI's `path:media-type` syntax (verified
-against Context7 `/oras-project/oras`):
+Require the GitHub credential, screenshot, and ORAS CLI. Publish the in-guest
+screenshot with the ORAS CLI's `path:media-type` syntax (verified against
+Context7 `/oras-project/oras`); missing inputs or a failed upload must fail the
+runner after artifact persistence:
 
 ```bash
 oras push "${SCREENSHOT_IMAGE}:${PUSH_TAG}" \
@@ -218,7 +219,8 @@ systemd starts.
 1. Install tooling if it is missing: `command -v skopeo >/dev/null || dnf install -y skopeo` and `command -v git >/dev/null || dnf install -y git-core`.
 2. Resolve the digest of `{{inputs.parameters.image}}:{{inputs.parameters.image-tag}}` with `skopeo inspect --no-tags --format '{{.Digest}}' "docker://${IMAGE}"`. Treat a missing digest as a non-fatal warning.
 3. Compute the image slug as `IMG_SLUG="${VARIANT}-${IMAGE_TAG}"` so the result file name matches the contract used by `run-gnome-tests` (e.g. `bluefin-stable-smoke.json`).
-4. Perform the git push-back in a best-effort block: log a warning if `git clone` or `publish_test_results.py` fails, but do not let a publication error fail the test workflow.
+4. Treat the git clone and `publish_test_results.py` as required evidence
+   publication. Their failures must fail the test workflow after cleanup.
 5. Pass the resolved digest as the optional sixth positional argument to `publish_test_results.py` so the collector can match QA evidence to the currently published image digest.
 
 

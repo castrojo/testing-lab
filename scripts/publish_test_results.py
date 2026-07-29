@@ -2,6 +2,7 @@
 import sys
 import os
 import json
+import re
 import subprocess
 import shutil
 import urllib.request
@@ -55,7 +56,11 @@ def resolve_digest_for_slug(img_slug):
     return None
 
 def run_cmd(cmd, cwd=None, env=None, check=True):
-    print(f"Running command: {' '.join(cmd)}")
+    safe_cmd = [
+        re.sub(r"(https://x-access-token:)[^@]+@", r"\1***@", arg)
+        for arg in cmd
+    ]
+    print(f"Running command: {' '.join(safe_cmd)}")
     result = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
     if check and result.returncode != 0:
         print(f"Command failed with exit code {result.returncode}")
@@ -187,7 +192,7 @@ def parse_results_and_build_update(
 
 def main():
     if len(sys.argv) < 6:
-        print("Usage: publish_test_results.py <results_json_path> <img_slug> <suite> <workflow_name> <github_token> [digest]")
+        print("Usage: publish_test_results.py <results_json_path> <img_slug> <suite> <workflow_name> <github_token> [digest] [failure_class] [failure_issue_url]")
         sys.exit(1)
 
     results_json_path = sys.argv[1]
@@ -208,12 +213,12 @@ def main():
             print("Digest resolution skipped or failed.")
 
     if not github_token:
-        print("ERROR: github_token is empty. Skipping publication.")
-        sys.exit(0)
+        print("ERROR: github_token is empty.", file=sys.stderr)
+        sys.exit(2)
 
     if not os.path.exists(results_json_path):
-        print(f"WARNING: {results_json_path} not found. Skipping publication.")
-        sys.exit(0)
+        print(f"ERROR: {results_json_path} not found.", file=sys.stderr)
+        sys.exit(2)
 
     # 1. Parse behave results.json
     try:
@@ -221,12 +226,12 @@ def main():
             data = json.load(f)
     except Exception as e:
         print(f"ERROR: Failed to parse {results_json_path}: {e}")
-        sys.exit(0)
+        sys.exit(2)
 
     current_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # 2. Clone projectbluefin/lab to a temporary directory
-    temp_dir = "/tmp/lab-repo-clone"
+    temp_dir = os.path.join(os.getcwd(), ".lab-repo-clone")
     if os.path.exists(temp_dir):
         shutil.rmtree(temp_dir)
 
@@ -245,7 +250,8 @@ def main():
             with open(result_filepath, 'r') as f:
                 existing_data = json.load(f)
         except Exception as e:
-            print(f"WARNING: Failed to parse existing results file {result_filepath}: {e}")
+            print(f"ERROR: Failed to parse existing results file {result_filepath}: {e}", file=sys.stderr)
+            sys.exit(2)
 
     updated_data = parse_results_and_build_update(
         data=data,

@@ -133,12 +133,15 @@ spec:
         value: http://127.0.0.1:4723
       - name: SABOTAGE_MODE
         value: "{{inputs.parameters.sabotage-mode}}"
+      - name: FAILURE_CLASS
+        value: "{{inputs.parameters.failure-class}}"
+      - name: FAILURE_ISSUE_URL
+        value: "{{inputs.parameters.failure-issue-url}}"
       - name: GITHUB_TOKEN
         valueFrom:
           secretKeyRef:
             name: github-token
             key: token
-            optional: true
       volumeMounts:
       - name: workspace
         mountPath: /workspace
@@ -154,6 +157,12 @@ spec:
       args:
       - |
         set -euo pipefail
+        for tool in bash curl find git python3 scp ssh timeout; do
+          command -v "${tool}" >/dev/null ||
+            { echo "Required tool is missing: ${tool}" >&2; exit 2; }
+        done
+        [[ -n "${GITHUB_TOKEN:-}" ]] ||
+          { echo "Required credential is missing: GITHUB_TOKEN" >&2; exit 2; }
         mkdir -p /tmp/results
         VIRTCTL=/usr/local/bin/virtctl
         if [[ ! -x "${VIRTCTL}" ]]; then
@@ -236,15 +245,17 @@ spec:
 
         # KDE's failure hook writes screenshots and diagnostic directories inside
         # the guest session. Copy them back even when Behave reports failures.
-        scp -i "${SSH_KEY}" -P 2222 -o StrictHostKeyChecking=no \
+        ARTIFACT_RC=0
+        if ! scp -i "${SSH_KEY}" -P 2222 -o StrictHostKeyChecking=no \
           -o UserKnownHostsFile=/dev/null -r \
-          "${VM_USER}@127.0.0.1:/tmp/results/." /tmp/results/ || \
-          echo "Warning: failed to collect in-guest KDE artifacts" >&2
+          "${VM_USER}@127.0.0.1:/tmp/results/." /tmp/results/; then
+          echo "ERROR: failed to collect in-guest KDE artifacts" >&2
+          ARTIFACT_RC=1
+        fi
 
         # Keep both the directory and a portable tarball for each kde_faillog
         # bundle produced by the testsuite failure hook. lab-runner does not
         # provide tar, so use the guaranteed Python standard library tool.
-        ARTIFACT_RC=0
         while IFS= read -r -d '' bundle; do
           if ! (
             cd "$(dirname "${bundle}")" &&
@@ -257,9 +268,18 @@ spec:
 
         RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}/${SUITE}"
         mkdir -p "${RESULT_DIR}"
-        cp -r /tmp/results/. "${RESULT_DIR}/" 2>/dev/null || true
+        if ! cp -r /tmp/results/. "${RESULT_DIR}/"; then
+          echo "ERROR: failed to persist KDE results to ${RESULT_DIR}" >&2
+          ARTIFACT_RC=1
+        fi
         if [[ -f /results/results.json ]]; then
-          cp /results/results.json "${RESULT_DIR}/"
+          if ! cp /results/results.json "${RESULT_DIR}/"; then
+            echo "ERROR: failed to persist results.json to ${RESULT_DIR}" >&2
+            ARTIFACT_RC=1
+          fi
+        else
+          echo "ERROR: Behave did not produce /results/results.json" >&2
+          ARTIFACT_RC=1
         fi
         echo "Results and KDE artifacts saved to ${RESULT_DIR}" >&2
 
@@ -272,33 +292,42 @@ spec:
         # the dashboard. KubeVirt's virt-launcher exposes no QEMU monitor, so
         # QEMU-level screendumps are intentionally not part of this workflow.
         SHOT=$(find /tmp/results -type f -name '*.png' -print -quit)
-        if [[ -n "${SHOT}" && -f "${SHOT}" && -n "${GITHUB_TOKEN:-}" ]]; then
+        if [[ -z "${SHOT}" || ! -f "${SHOT}" ]]; then
+          echo "ERROR: KDE test did not produce a screenshot artifact" >&2
+          ARTIFACT_RC=1
+        else
           ORAS_BIN=/workspace/oras-bin/oras
           if [[ ! -x "${ORAS_BIN}" ]]; then
             mkdir -p "$(dirname "${ORAS_BIN}")"
+            ORAS_ARCHIVE=/workspace/oras-bin/oras.tar.gz
             curl --fail --silent --show-error --location \
-              "https://github.com/oras-project/oras/releases/download/v1.2.3/oras_1.2.3_linux_amd64.tar.gz" |
-              tar -xz -C "$(dirname "${ORAS_BIN}")" oras || \
-              echo "Warning: failed to install oras" >&2
+              --output "${ORAS_ARCHIVE}" \
+              "https://github.com/oras-project/oras/releases/download/v1.2.3/oras_1.2.3_linux_amd64.tar.gz"
+            python3 -m tarfile -e "${ORAS_ARCHIVE}" "$(dirname "${ORAS_BIN}")"
+            rm -f "${ORAS_ARCHIVE}"
           fi
-          if [[ -x "${ORAS_BIN}" ]]; then
+          if ! {
+            if [[ ! -x "${ORAS_BIN}" ]]; then
+              echo "Required tool is unavailable: ${ORAS_BIN}" >&2
+              false
+            fi
             export PATH="$(dirname "${ORAS_BIN}"):${PATH}"
             SCREENSHOT_IMAGE="ghcr.io/projectbluefin/testsuite/desktop-screenshot"
             PUSH_TAG="${IMG_SLUG}-${SUITE}-latest"
             echo "${GITHUB_TOKEN}" | oras login ghcr.io \
-              -u github-actions --password-stdin || \
-              echo "Warning: failed to authenticate oras to GHCR" >&2
+              -u github-actions --password-stdin
             oras push "${SCREENSHOT_IMAGE}:${PUSH_TAG}" \
               --annotation "org.opencontainers.image.description=Bluefin KDE desktop screenshot from lab e2e suite: ${SUITE}" \
               --annotation "io.github.projectbluefin.caller_repo=projectbluefin/lab" \
-              "${SHOT}:image/png" || \
-              echo "Warning: failed to push KDE screenshot" >&2
+              "${SHOT}:image/png"
+          }; then
+            echo "ERROR: failed to publish KDE screenshot artifact" >&2
+            ARTIFACT_RC=1
           fi
-        elif [[ -z "${GITHUB_TOKEN:-}" ]]; then
-          echo "No GITHUB_TOKEN - skipping GHCR screenshot push" >&2
         fi
 
-        if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        PUBLISH_RC=0
+        if ! {
           rm -rf /workspace/lab-code
           git clone --depth 1 \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/projectbluefin/lab.git" \
@@ -306,15 +335,18 @@ spec:
           python3 /workspace/lab-code/scripts/publish_test_results.py \
             /results/results.json "${IMG_SLUG}" "${SUITE}" \
             "{{workflow.name}}" "${GITHUB_TOKEN}" "" \
-            "${FAILURE_CLASS}" "${FAILURE_ISSUE_URL}" || \
-            echo "Warning: failed to publish test results" >&2
-        else
-          echo "No GITHUB_TOKEN - skipping test results publication" >&2
+            "${FAILURE_CLASS}" "${FAILURE_ISSUE_URL}"
+        }; then
+          echo "ERROR: failed to publish KDE test results" >&2
+          PUBLISH_RC=1
         fi
 
         if [[ "${ARTIFACT_RC}" -ne 0 ]]; then
-          echo "ERROR: one or more KDE failure bundles could not be archived" >&2
+          echo "ERROR: KDE evidence artifacts were not fully retained" >&2
           exit "${ARTIFACT_RC}"
+        fi
+        if [[ "${PUBLISH_RC}" -ne 0 ]]; then
+          exit "${PUBLISH_RC}"
         fi
         if [[ "${SABOTAGE_MODE}" != "none" && "${BEHAVE_RC}" -eq 0 ]]; then
           echo "SABOTAGE FAILURE: ${SABOTAGE_MODE} unexpectedly passed" >&2
