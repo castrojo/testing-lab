@@ -166,6 +166,12 @@ The workflow authoring guidance is split by topic:
 - KDE runner and teardown containers must use the repository-approved
   digest-pinned `lab-runner` and shell-capable `kubectl` references; never
   reintroduce floating `:latest` or `:latest-dev` tags in those workflows.
+- When a workflow builds a containerDisk at runtime, publish it under a
+  workflow-unique tag, write the pushed digest to an output-parameter file, and
+  pass that output into the VM manifest as an `image@sha256:...` reference.
+  Argo output parameters use `valueFrom.path` and are consumed as
+  `{{steps.<step>.outputs.parameters.<name>}}` (source:
+  `/argoproj/argo-workflows`).
 
 ## Verification
 
