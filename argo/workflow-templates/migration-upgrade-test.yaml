@@ -13,6 +13,8 @@ spec:
   activeDeadlineSeconds: 86400
   entrypoint: migration-upgrade
   onExit: teardown
+  volumeClaimGC:
+    strategy: OnWorkflowCompletion
   arguments:
     parameters:
       - name: legacy-image
@@ -74,6 +76,10 @@ spec:
                   value: "{{workflow.parameters.vm-name}}"
                 - name: namespace
                   value: "{{workflow.parameters.namespace}}"
+                - name: golden-root
+                  value: "{{workflow.parameters.golden-root}}"
+                - name: test-root
+                  value: "{{workflow.parameters.test-root}}"
         - - name: migration
             templateRef:
               name: bluefin-migration-test
@@ -111,3 +117,5 @@ spec:
                   value: "{{workflow.parameters.vm-name}}"
                 - name: namespace
                   value: "{{workflow.parameters.namespace}}"
+                - name: test-root
+                  value: "{{workflow.parameters.test-root}}"

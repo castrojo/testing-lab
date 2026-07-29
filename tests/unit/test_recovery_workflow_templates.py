@@ -38,6 +38,7 @@ def test_toggle_testing_rebase_is_gitops_managed_and_covers_both_directions():
         "ssh-key-secret",
     } <= parameter_names(template)
     assert template["spec"]["onExit"] == "teardown"
+    assert template["spec"]["volumeClaimGC"]["strategy"] == "OnWorkflowCompletion"
     assert {
         "run-toggle-testing",
         "reboot-and-wait",
@@ -57,6 +58,12 @@ def test_toggle_testing_rebase_is_gitops_managed_and_covers_both_directions():
         "reboot-back",
         "verify-back",
     ]
+    content = (ROOT / "argo" / "workflow-templates" / "toggle-testing-rebase.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "bootc switch" not in content
+    assert content.count("workflow.parameters.disk-image") >= 2
+    assert content.count("workflow.parameters.test-root") >= 3
 
 
 def test_migration_upgrade_wraps_migration_sequence_with_disk_build():
@@ -76,6 +83,7 @@ def test_migration_upgrade_wraps_migration_sequence_with_disk_build():
         "ssh-key-secret",
     } <= parameter_names(template)
     assert template["spec"]["onExit"] == "teardown"
+    assert template["spec"]["volumeClaimGC"]["strategy"] == "OnWorkflowCompletion"
     steps = template["spec"]["templates"][0]["steps"]
     assert [group[0]["name"] for group in steps] == [
         "ensure-disk",
@@ -84,3 +92,8 @@ def test_migration_upgrade_wraps_migration_sequence_with_disk_build():
     ]
     assert steps[-1][0]["templateRef"]["name"] == "bluefin-migration-test"
     assert steps[-1][0]["templateRef"]["template"] == "migration-sequence"
+    content = (ROOT / "argo" / "workflow-templates" / "migration-upgrade-test.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert content.count("workflow.parameters.golden-root") >= 1
+    assert content.count("workflow.parameters.test-root") >= 2

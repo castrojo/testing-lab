@@ -13,6 +13,8 @@ spec:
   activeDeadlineSeconds: 14400
   entrypoint: toggle-testing
   onExit: teardown
+  volumeClaimGC:
+    strategy: OnWorkflowCompletion
   arguments:
     parameters:
       - name: image
@@ -68,6 +70,8 @@ spec:
                   value: "{{workflow.parameters.vm-name}}"
                 - name: namespace
                   value: "{{workflow.parameters.namespace}}"
+                - name: test-root
+                  value: "{{workflow.parameters.test-root}}"
         - - name: toggle-forward
             template: run-toggle-testing
             arguments:
@@ -80,6 +84,10 @@ spec:
                   value: "{{workflow.parameters.target-tag}}"
                 - name: ssh-key-secret
                   value: "{{workflow.parameters.ssh-key-secret}}"
+                - name: disk-image
+                  value: "{{workflow.parameters.disk-image}}"
+                - name: test-root
+                  value: "{{workflow.parameters.test-root}}"
         - - name: reboot-forward
             template: reboot-and-wait
             arguments:
@@ -110,6 +118,10 @@ spec:
                   value: "{{workflow.parameters.start-tag}}"
                 - name: ssh-key-secret
                   value: "{{workflow.parameters.ssh-key-secret}}"
+                - name: disk-image
+                  value: "{{workflow.parameters.disk-image}}"
+                - name: test-root
+                  value: "{{workflow.parameters.test-root}}"
         - - name: reboot-back
             template: reboot-and-wait
             arguments:
@@ -137,6 +149,8 @@ spec:
           - name: image
           - name: target-tag
           - name: ssh-key-secret
+          - name: disk-image
+          - name: test-root
       script:
         image: ghcr.io/projectbluefin/lab-runner:latest
         command: [bash]
@@ -153,13 +167,20 @@ spec:
           SSH=(ssh -i "${KEY}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o LogLevel=ERROR "bluefin-test@{{inputs.parameters.vm-ip}}")
           TARGET="{{inputs.parameters.target-tag}}"
           IMAGE="{{inputs.parameters.image}}:${TARGET}"
+          START_IMAGE="{{inputs.parameters.disk-image}}"
+          echo "Starting from ${START_IMAGE}; test root is {{inputs.parameters.test-root}}"
+          start_status="$("${SSH[@]}" "sudo bootc status --json")"
+          grep -q "${START_IMAGE}" <<<"${start_status}" || {
+            echo "VM is not running ${START_IMAGE}" >&2
+            exit 1
+          }
           echo "Running the production toggle-testing command toward ${IMAGE}"
           "${SSH[@]}" "if command -v bctl >/dev/null 2>&1; then yes | bctl toggle-testing; else yes | ujust toggle-testing; fi"
           status="$("${SSH[@]}" "sudo bootc status --json")"
-          if ! grep -q "${TARGET}" <<<"${status}"; then
-            echo "toggle-testing did not stage ${IMAGE}; using the same signed bootc switch as the production command" >&2
-            "${SSH[@]}" "sudo bootc switch --enforce-container-sigpolicy '${IMAGE}'"
-          fi
+          grep -q "${TARGET}" <<<"${status}" || {
+            echo "toggle-testing did not stage ${IMAGE}" >&2
+            exit 1
+          }
         volumeMounts:
           - name: ssh-key
             mountPath: /etc/ssh/test-key
@@ -256,3 +277,5 @@ spec:
                   value: "{{workflow.parameters.vm-name}}"
                 - name: namespace
                   value: "{{workflow.parameters.namespace}}"
+                - name: test-root
+                  value: "{{workflow.parameters.test-root}}"
