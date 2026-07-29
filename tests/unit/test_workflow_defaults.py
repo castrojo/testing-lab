@@ -398,6 +398,7 @@ def test_kde_workflow_images_are_digest_pinned():
         content = path.read_text(encoding="utf-8")
         assert "ghcr.io/projectbluefin/lab-runner:latest" not in content
         assert "cgr.dev/chainguard/kubectl:latest-dev" not in content
+        assert "kde-linux-containerdisk:latest" not in content
 
     provision = yaml.safe_load(
         (ROOT / "argo/workflow-templates/provision-kde-linux-vm.yaml").read_text(
@@ -414,6 +415,29 @@ def test_kde_workflow_images_are_digest_pinned():
         "fe097bb3b85a126b9a16093fbc498b4b6fb7b24e0f74162ad3d91a402dcfa940"
     )
     assert wait_for_vm["script"]["command"] == ["bash"]
+    prepare_disk = next(
+        template
+        for template in provision["spec"]["templates"]
+        if template["name"] == "prepare-disk"
+    )
+    assert prepare_disk["script"]["image"] == (
+        "quay.io/buildah/stable@sha256:"
+        "7bb110e1d8b761d08e87d004ea4086e295a52319f3ea70ecef65da6dff7ceef0"
+    )
+    assert "outputs" in prepare_disk
+    assert "containerdisk-digest" in {
+        output["name"] for output in prepare_disk["outputs"]["parameters"]
+    }
+    create_vm = next(
+        template
+        for template in provision["spec"]["templates"]
+        if template["name"] == "create-vm"
+    )
+    assert (
+        "image: 192.168.1.102:30500/kde-linux-containerdisk@"
+        "{{inputs.parameters.containerdisk-digest}}"
+        in create_vm["resource"]["manifest"]
+    )
 
 
 def test_kde_runner_sources_complete_session_environment():

@@ -42,6 +42,8 @@ spec:
             value: "{{inputs.parameters.vm-name}}"
           - name: namespace
             value: "{{inputs.parameters.namespace}}"
+          - name: containerdisk-digest
+            value: "{{steps.prepare-disk.outputs.parameters.containerdisk-digest}}"
     - - name: wait-for-vm
         template: wait-for-vm
         arguments:
@@ -56,12 +58,17 @@ spec:
       parameters:
       - name: image-url
       - name: image-sha256
+    outputs:
+      parameters:
+      - name: containerdisk-digest
+        valueFrom:
+          path: /mnt/work/containerdisk-digest.txt
     volumes:
     - name: work
       emptyDir:
         sizeLimit: 12Gi
     script:
-      image: quay.io/buildah/stable:latest
+      image: quay.io/buildah/stable@sha256:7bb110e1d8b761d08e87d004ea4086e295a52319f3ea70ecef65da6dff7ceef0
       command: [bash]
       securityContext:
         privileged: true
@@ -82,7 +89,7 @@ spec:
         SHA="{{inputs.parameters.image-sha256}}"
         WORK=/mnt/work
         IMAGE="${WORK}/kde-linux.iso"
-        CONTAINERDISK="192.168.1.102:30500/kde-linux-containerdisk:latest"
+        CONTAINERDISK="192.168.1.102:30500/kde-linux-containerdisk:{{workflow.uid}}"
 
         [[ "${SHA}" =~ ^[[:xdigit:]]{64}$ ]] || {
           echo "image-sha256 must be a 64-character hexadecimal digest" >&2
@@ -100,13 +107,15 @@ spec:
           > "${WORK}/containerDisk.json"
         buildah copy "${ctr}" "${WORK}/containerDisk.json" /containerDisk.json
         buildah commit "${ctr}" "${CONTAINERDISK}"
-        buildah push --tls-verify=false "${CONTAINERDISK}"
+        buildah push --tls-verify=false \
+          --digestfile "${WORK}/containerdisk-digest.txt" "${CONTAINERDISK}"
 
   - name: create-vm
     inputs:
       parameters:
       - name: vm-name
       - name: namespace
+      - name: containerdisk-digest
     resource:
       action: apply
       manifest: |
@@ -155,7 +164,7 @@ spec:
               volumes:
               - name: rootdisk
                 containerDisk:
-                  image: 192.168.1.102:30500/kde-linux-containerdisk:latest
+                  image: 192.168.1.102:30500/kde-linux-containerdisk@{{inputs.parameters.containerdisk-digest}}
               - name: cloudinit
                 cloudInitNoCloud:
                   userData: |
