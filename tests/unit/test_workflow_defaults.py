@@ -399,6 +399,22 @@ def test_kde_workflow_images_are_digest_pinned():
         assert "ghcr.io/projectbluefin/lab-runner:latest" not in content
         assert "cgr.dev/chainguard/kubectl:latest-dev" not in content
 
+    provision = yaml.safe_load(
+        (ROOT / "argo/workflow-templates/provision-kde-linux-vm.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    wait_for_vm = next(
+        template
+        for template in provision["spec"]["templates"]
+        if template["name"] == "wait-for-vm"
+    )
+    assert wait_for_vm["script"]["image"] == (
+        "ghcr.io/projectbluefin/lab-runner@sha256:"
+        "fe097bb3b85a126b9a16093fbc498b4b6fb7b24e0f74162ad3d91a402dcfa940"
+    )
+    assert wait_for_vm["script"]["command"] == ["bash"]
+
 
 def test_kde_runner_sources_complete_session_environment():
     kde = (ROOT / "argo/workflow-templates/run-kde-tests.yaml").read_text(
