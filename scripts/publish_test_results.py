@@ -7,6 +7,11 @@ import shutil
 import urllib.request
 from datetime import datetime, timezone
 
+from evaluate_kde_soak import evaluate_kde_soak
+
+
+VALID_FAILURE_CLASSES = {"test", "infra"}
+
 def ghcr_digest(repository, tag):
     """Resolve a public GHCR tag to its manifest digest anonymously."""
     try:
@@ -59,7 +64,20 @@ def run_cmd(cmd, cwd=None, env=None, check=True):
         sys.exit(result.returncode)
     return result
 
-def parse_results_and_build_update(data, existing_data, current_utc, workflow_name, img_slug, suite, digest=None):
+def parse_results_and_build_update(
+    data,
+    existing_data,
+    current_utc,
+    workflow_name,
+    img_slug,
+    suite,
+    digest=None,
+    failure_class="test",
+    failure_issue_url=None,
+):
+    if failure_class not in VALID_FAILURE_CLASSES:
+        raise ValueError(f"failure_class must be one of {sorted(VALID_FAILURE_CLASSES)}")
+
     failed_scenarios = []
     failed_scenarios_detailed = []
     scenarios_total = 0
@@ -107,6 +125,11 @@ def parse_results_and_build_update(data, existing_data, current_utc, workflow_na
                     })
 
     status = "passed" if scenarios_failed == 0 else "failed"
+    if status == "passed":
+        failure_class = "none"
+        failure_issue_url = None
+    elif failure_class == "infra" and not failure_issue_url:
+        raise ValueError("failure_issue_url is required for an infra failure")
 
     history = []
     if existing_data:
@@ -125,13 +148,21 @@ def parse_results_and_build_update(data, existing_data, current_utc, workflow_na
         new_history_entry["digest"] = digest
         
     history.insert(0, new_history_entry)
-    # Keep history capped to last 15 runs
-    history = history[:15]
+    # Keep the complete soak window; the evaluator uses the newest 30 entries.
+    history = history[:30]
 
     # Ensure all pre-existing entries in history also have a "duration_seconds" key (default to 0.0 if not present)
     for entry in history:
         if "duration_seconds" not in entry:
             entry["duration_seconds"] = 0.0
+        if entry.get("status") == "passed":
+            entry.setdefault("failure_class", "none")
+        else:
+            entry.setdefault("failure_class", "test")
+        entry.setdefault("failure_issue_url", None)
+
+    new_history_entry["failure_class"] = failure_class
+    new_history_entry["failure_issue_url"] = failure_issue_url
 
     # Construct updated structure
     screenshot_url = f"https://projectbluefin.github.io/lab/screenshots/{img_slug}-{suite}-latest.png"
@@ -149,6 +180,7 @@ def parse_results_and_build_update(data, existing_data, current_utc, workflow_na
         "screenshot_url": screenshot_url,
         "history": history
     }
+    updated_data["soak"] = evaluate_kde_soak(history)
     if digest:
         updated_data["digest"] = digest
     return updated_data
@@ -164,6 +196,8 @@ def main():
     workflow_name = sys.argv[4]
     github_token = sys.argv[5]
     digest = sys.argv[6] if len(sys.argv) > 6 else None
+    failure_class = sys.argv[7] if len(sys.argv) > 7 else "test"
+    failure_issue_url = sys.argv[8] if len(sys.argv) > 8 else None
 
     if not digest:
         print(f"No digest provided. Attempting anonymous resolution for slug {img_slug}...")
@@ -220,7 +254,9 @@ def main():
         workflow_name=workflow_name,
         img_slug=img_slug,
         suite=suite,
-        digest=digest
+        digest=digest,
+        failure_class=failure_class,
+        failure_issue_url=failure_issue_url,
     )
 
     with open(result_filepath, 'w') as f:

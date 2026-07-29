@@ -38,6 +38,10 @@ spec:
         value: aurora-containerdisk
       - name: sabotage-mode
         value: none
+      - name: failure-class
+        value: test
+      - name: failure-issue-url
+        value: ""
       - name: disk-size
         value: 30G
       - name: suite
@@ -103,6 +107,10 @@ spec:
                   value: "{{workflow.parameters.image-tag}}"
                 - name: sabotage-mode
                   value: "{{workflow.parameters.sabotage-mode}}"
+                - name: failure-class
+                  value: "{{workflow.parameters.failure-class}}"
+                - name: failure-issue-url
+                  value: "{{workflow.parameters.failure-issue-url}}"
           - name: collect-logs
             depends: "(run-kde-tests.Succeeded || run-kde-tests.Failed || run-kde-tests.Errored)"
             templateRef:

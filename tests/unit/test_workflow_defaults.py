@@ -317,6 +317,11 @@ def test_kde_runner_adapts_gnome_runner_contract_for_webdriver():
     assert "/status" in kde
     assert "publish_test_results.py" in kde
     assert "/var/mnt/ghost-data/test-results" in kde
+    assert "- name: failure-class" in kde
+    assert "- name: failure-issue-url" in kde
+    assert "- name: behave-retries" in kde
+    assert 'value: "2"' in kde
+    assert "BEHAVE_RETRIES=2" in kde
     assert "qecore-headless" not in kde
     assert "gnome-ponytail-daemon" not in kde
 

@@ -213,3 +213,6 @@ Before marking any WorkflowTemplate change done:
       exercise both the nonexistent-binary and killed-`plasmashell` red paths;
       failure results and `kde_faillog` artifacts must be retained before
       teardown
+- [ ] KDE soak evidence uses the newest 30 persisted runs and a two-flake
+      infrastructure budget, never a consecutive-green streak; promotion
+      remains a human decision

@@ -35,6 +35,12 @@ spec:
         value: ""
       - name: sabotage-mode
         value: "none"
+      - name: failure-class
+        value: "test"
+      - name: failure-issue-url
+        value: ""
+      - name: behave-retries
+        value: "2"
     activeDeadlineSeconds: 3600
     initContainers:
     - name: git-sync
@@ -51,10 +57,29 @@ spec:
         value: "{{inputs.parameters.branch}}"
       - name: SABOTAGE_MODE
         value: "{{inputs.parameters.sabotage-mode}}"
+      - name: BEHAVE_RETRIES
+        value: "{{inputs.parameters.behave-retries}}"
+      - name: FAILURE_CLASS
+        value: "{{inputs.parameters.failure-class}}"
+      - name: FAILURE_ISSUE_URL
+        value: "{{inputs.parameters.failure-issue-url}}"
       command: [bash, -c]
       args:
       - |
         set -euo pipefail
+        case "${FAILURE_CLASS}" in
+          test) ;;
+          infra)
+            [[ -n "${FAILURE_ISSUE_URL}" ]] ||
+              { echo "Infra failures require a filed issue URL" >&2; exit 2; }
+            ;;
+          *)
+            echo "Unsupported failure class: ${FAILURE_CLASS}" >&2
+            exit 2
+            ;;
+        esac
+        [[ "${BEHAVE_RETRIES}" == "2" ]] ||
+          { echo "KDE soak runs require BEHAVE_RETRIES=2" >&2; exit 2; }
         git clone --depth 1 --branch "${BRANCH}" \
           https://github.com/projectbluefin/testsuite /workspace/testsuite
         case "${SABOTAGE_MODE}" in
@@ -178,6 +203,7 @@ spec:
         python3 -m pip install --quiet selenium behave
         export PYTHONPATH=/workspace/testsuite
         export TESTSUITE_RESULTS_DIR=/tmp/results
+        export BEHAVE_RETRIES=2
         case "${SABOTAGE_MODE}" in
           none) ;;
           missing-binary)
@@ -279,7 +305,8 @@ spec:
             /workspace/lab-code
           python3 /workspace/lab-code/scripts/publish_test_results.py \
             /results/results.json "${IMG_SLUG}" "${SUITE}" \
-            "{{workflow.name}}" "${GITHUB_TOKEN}" || \
+            "{{workflow.name}}" "${GITHUB_TOKEN}" "" \
+            "${FAILURE_CLASS}" "${FAILURE_ISSUE_URL}" || \
             echo "Warning: failed to publish test results" >&2
         else
           echo "No GITHUB_TOKEN - skipping test results publication" >&2
