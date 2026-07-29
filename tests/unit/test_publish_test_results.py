@@ -1,11 +1,14 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add scripts directory to path to import publish_test_results
 scripts_path = Path(__file__).parent.parent.parent / "scripts"
 sys.path.insert(0, str(scripts_path))
 
 from publish_test_results import parse_results_and_build_update  # noqa: E402
+from evaluate_kde_soak import evaluate_kde_soak  # noqa: E402
 
 def test_parse_results_and_build_update():
     # Sample behave JSON
@@ -124,6 +127,73 @@ def test_parse_results_and_build_update():
     old_entry = updated["history"][1]
     assert old_entry["workflow_name"] == "previous-workflow"
     assert old_entry["duration_seconds"] == 0.0
+    assert new_entry["failure_class"] == "test"
+    assert updated["soak"]["state"] == "pending"
+
+
+def test_kde_soak_allows_two_classified_infrastructure_flakes():
+    history = [
+        {
+            "status": "failed" if index < 2 else "passed",
+            "failure_class": "infra" if index < 2 else "none",
+        }
+        for index in range(30)
+    ]
+
+    summary = evaluate_kde_soak(history)
+
+    assert summary == {
+        "state": "qualified",
+        "window_size": 30,
+        "runs_recorded": 30,
+        "passed_runs": 28,
+        "failed_runs": 2,
+        "infra_flakes": 2,
+        "test_failures": 0,
+        "pass_rate": 93.33,
+        "max_infra_flakes": 2,
+        "human_approval_required": True,
+    }
+
+
+def test_kde_soak_rejects_two_test_failures():
+    history = [
+        {
+            "status": "failed" if index < 2 else "passed",
+            "failure_class": "test" if index < 2 else "none",
+        }
+        for index in range(30)
+    ]
+
+    assert evaluate_kde_soak(history)["state"] == "unqualified"
+
+
+def test_kde_soak_is_pending_before_thirty_runs():
+    assert evaluate_kde_soak([{"status": "passed"}] * 29)["state"] == "pending"
+
+
+def test_infrastructure_failure_requires_a_filed_issue():
+    with pytest.raises(ValueError, match="failure_issue_url"):
+        parse_results_and_build_update(
+            data=[
+                {
+                    "elements": [
+                        {
+                            "type": "scenario",
+                            "status": "failed",
+                            "name": "infra failure",
+                            "steps": [],
+                        }
+                    ]
+                }
+            ],
+            existing_data=None,
+            current_utc="2026-07-10T01:00:00Z",
+            workflow_name="infra-workflow",
+            img_slug="aurora-testing",
+            suite="smoke",
+            failure_class="infra",
+        )
 
 def test_parse_real_sample_results():
     import json
@@ -157,4 +227,3 @@ def test_parse_real_sample_results():
         assert isinstance(item["error_message"], str)
         assert len(item["failing_step"]) > 0
         assert len(item["error_message"]) > 0
-

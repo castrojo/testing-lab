@@ -183,6 +183,198 @@ def test_aurora_containerdisk_builder_isolated_and_prebaked():
     assert "storage: 100Gi" in aurora
 
 
+def test_aurora_qa_pipeline_is_vm_based_and_serialized():
+    pipeline_path = ROOT / "argo/workflow-templates/aurora-qa-pipeline.yaml"
+    assert pipeline_path.exists()
+    pipeline = yaml.safe_load(pipeline_path.read_text(encoding="utf-8"))
+    spec = pipeline["spec"]
+
+    assert pipeline["metadata"]["name"] == "aurora-qa-pipeline"
+    assert spec["entrypoint"] == "aurora-qa"
+    assert spec["onExit"] == "teardown"
+    assert spec["activeDeadlineSeconds"] == 3600
+    assert spec["templates"][0]["name"] == "aurora-qa"
+    assert spec["templates"][0]["synchronization"]["semaphores"][0]["configMapKeyRef"] == {
+        "name": "workflow-semaphores",
+        "key": "aurora-vm-qa",
+    }
+
+    tasks = spec["templates"][0]["dag"]["tasks"]
+    assert [task["name"] for task in tasks] == [
+        "build-aurora-containerdisk",
+        "provision-containerdisk-vm",
+        "run-kde-tests",
+        "collect-logs",
+    ]
+    assert tasks[0]["template"] == "build-aurora-containerdisk"
+    build_template = next(
+        template
+        for template in spec["templates"]
+        if template["name"] == "build-aurora-containerdisk"
+    )
+    assert build_template["synchronization"]["semaphores"][0]["configMapKeyRef"] == {
+        "name": "workflow-semaphores",
+        "key": "migration-containerdisk-build",
+    }
+    assert build_template["steps"][0][0]["templateRef"] == {
+        "name": "build-bluefin-migration-containerdisk",
+        "template": "build-containerdisk",
+    }
+    assert tasks[1]["templateRef"] == {
+        "name": "provision-containerdisk-vm",
+        "template": "provision-vm",
+    }
+    assert tasks[2]["templateRef"] == {
+        "name": "run-kde-tests",
+        "template": "run-kde-tests",
+    }
+    assert tasks[3]["templateRef"] == {
+        "name": "collect-vm-logs",
+        "template": "collect-vm-logs",
+    }
+
+    content = pipeline_path.read_text(encoding="utf-8")
+    assert "containerdisk-repo" in content
+    assert "value: aurora-containerdisk" in content
+    assert "value: aurora-test" in content
+    assert "value: 30G" in content
+    assert "run-kde-tests.Errored" in content
+
+    semaphores = yaml.safe_load(
+        (ROOT / "manifests/workflow-semaphores.yaml").read_text(encoding="utf-8")
+    )
+    assert semaphores["data"]["aurora-vm-qa"] == "1"
+
+
+def test_aurora_qa_pipeline_exposes_safe_kde_sabotage_modes():
+    pipeline_path = ROOT / "argo/workflow-templates/aurora-qa-pipeline.yaml"
+    pipeline = yaml.safe_load(pipeline_path.read_text(encoding="utf-8"))
+    parameters = {
+        parameter["name"]: parameter.get("value")
+        for parameter in pipeline["spec"]["arguments"]["parameters"]
+    }
+    assert parameters["sabotage-mode"] == "none"
+    assert "sabotage-mode" in pipeline_path.read_text(encoding="utf-8")
+
+    runner = (ROOT / "argo/workflow-templates/run-kde-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "missing-binary" in runner
+    assert "kill-plasmashell" in runner
+    assert "this-does-not-exist" in runner
+    assert "pkill -x plasmashell" in runner
+    assert "unexpectedly passed" in runner
+    assert "aurora-test" in runner
+
+
+def test_aurora_kde_sabotage_workflow_runs_both_controlled_failures():
+    path = ROOT / "argo/aurora-kde-sabotage.yaml"
+    workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert workflow["spec"]["onExit"] == "cleanup"
+    tasks = workflow["spec"]["templates"][0]["dag"]["tasks"]
+    sabotage_tasks = [
+        task for task in tasks if task["name"] in {"missing-binary", "kill-plasmashell"}
+    ]
+    assert [task["name"] for task in sabotage_tasks] == [
+        "missing-binary",
+        "kill-plasmashell",
+    ]
+    content = path.read_text(encoding="utf-8")
+    assert "sabotage-mode" in content
+    assert "aurora-test" in content
+    assert "delete vm" in content.lower()
+
+
+def test_kde_runner_adapts_gnome_runner_contract_for_webdriver():
+    gnome = (ROOT / "argo/workflow-templates/run-gnome-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+    kde = (ROOT / "argo/workflow-templates/run-kde-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    for parameter in (
+        "vm-name",
+        "vm-namespace",
+        "suite",
+        "variant",
+        "ssh-user",
+        "ssh-key-secret",
+        "issue-title",
+        "behave-tags",
+        "branch",
+        "containerdisk-tag",
+    ):
+        assert f"- name: {parameter}" in gnome
+        assert f"- name: {parameter}" in kde
+
+    assert 'value: "aurora-test"' in kde
+    assert 'value: "kde-smoke"' in kde
+    assert "4723:4723" in kde
+    assert "selenium-webdriver-at-spi-run" in kde
+    assert "KDE_WEBDRIVER_URL" in kde
+    assert "XDG_SESSION_DESKTOP=kde" in kde
+    assert "/status" in kde
+    assert "publish_test_results.py" in kde
+    assert "/var/mnt/ghost-data/test-results" in kde
+    assert "- name: failure-class" in kde
+    assert "- name: failure-issue-url" in kde
+    assert "- name: behave-retries" in kde
+    assert 'value: "2"' in kde
+    assert "BEHAVE_RETRIES=2" in kde
+    assert "qecore-headless" not in kde
+    assert "gnome-ponytail-daemon" not in kde
+
+
+def test_kde_runner_persists_failure_artifacts_and_pushes_guest_screenshots():
+    kde = (ROOT / "argo/workflow-templates/run-kde-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "faillog_" in kde
+    assert "python3 -m tarfile -c" in kde
+    assert "tar -czf" not in kde
+    assert "ARTIFACT_RC=1" in kde
+    assert "could not be archived" in kde
+    assert "scp" in kde
+    assert "BEHAVE_RC=0" in kde
+    assert "SCREENSHOT_IMAGE=" in kde
+    assert "oras push" in kde
+    assert "TESTSUITE_RESULTS_DIR" in kde
+    assert "qemu_screendump" not in kde
+
+
+def test_kde_workflow_calls_runner_with_current_contract():
+    workflow = (ROOT / "argo/kde-linux-qa.yaml").read_text(encoding="utf-8")
+    provision = (
+        ROOT / "argo/workflow-templates/provision-kde-linux-vm.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert 'value: "aurora-test"' in workflow
+    assert "- name: branch" in workflow
+    assert "workflow.parameters.branch" in workflow
+    assert "testsuite-branch" not in workflow
+    assert 'value: "aurora-test"' in provision
+    assert "kde-test-namespace" not in workflow
+
+
+def test_kde_runner_sources_complete_session_environment():
+    kde = (ROOT / "argo/workflow-templates/run-kde-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    for variable in (
+        "DBUS_SESSION_BUS_ADDRESS",
+        "WAYLAND_DISPLAY",
+        "XDG_RUNTIME_DIR",
+        "AT_SPI_BUS_ADDRESS",
+        "XDG_SESSION_DESKTOP",
+        "KDE_WEBDRIVER_URL",
+    ):
+        assert variable in kde
+    assert "source /tmp/session.env" in kde
+
+
 def test_cache_only_diagnostic_disables_remote_execution_explicitly():
     config = (ROOT / "manifests/buildstream-remote-cache-config.yaml").read_text(encoding="utf-8")
     assert "remote-execution: {}" not in config

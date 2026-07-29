@@ -214,6 +214,71 @@ captures `results.json` to pod stdout (Loki + `argo logs`).
 Resource limits and `hostNetwork: true` are set on the pod (KubeVirt
 masquerade only routes from host netns).
 
+### `run-kde-tests` (template: `run-kde-tests`)
+
+Adapts the GNOME runner contract for Aurora/KDE VMs. It clones the selected
+testsuite branch, forwards SSH and WebDriver port 4723 through `virtctl`,
+starts the VM's `selenium-webdriver-at-spi-run` service, waits for its
+`/status` endpoint, and runs `tests/kde-smoke/features` with Behave. Results
+and in-guest PNG screenshots are copied back even when Behave fails, then
+persisted under the standard ghost test-results host path. `faillog_*`
+directories are retained alongside `.tar.gz` bundles, and the first screenshot
+is pushed as the stable `desktop-screenshot` OCI artifact when the optional
+GitHub token is available. QEMU-level screendumps are not used because
+KubeVirt's `virt-launcher` does not expose a QEMU monitor.
+
+The runner accepts `failure-class: test|infra` and `failure-issue-url`
+parameters. A failed run classified as infrastructure must include the URL of
+its separate tracking issue; otherwise it is counted as a test failure. Every
+run rejects a retry setting other than `BEHAVE_RETRIES=2`.
+
+### `aurora-qa-pipeline` (template: `aurora-qa`)
+
+Runs the Aurora/KDE GUI suite against a KubeVirt VM in `aurora-test`:
+
+```text
+build Aurora containerDisk
+  → provision VM
+    → run-kde-tests
+      → collect-vm-logs
+```
+
+The pipeline builds `ghcr.io/ublue-os/aurora` into the
+`aurora-containerdisk` repository with a 30G disk, then passes the VM to the
+existing KDE runner. It has a one-hour `activeDeadlineSeconds`, holds the
+`aurora-vm-qa` ConfigMap semaphore for the full run, and always deletes the VM
+from its `onExit: teardown` handler. The template is GitOps-managed; live lab
+evidence may require a run after the change is merged and reconciled.
+
+KDE soak evidence is a rolling window, not a consecutive streak. The publisher
+retains the newest 30 runs and records `failure_class` (`test` or `infra`) plus
+the filed issue URL for infrastructure flakes. `BEHAVE_RETRIES=2` is enforced
+for every run. The window is qualified only after 30 runs with either at least
+29 passes, or at least 28 passes and no more than two classified infrastructure
+flakes:
+
+```bash
+just evaluate-kde-soak
+```
+
+The command reports `pending` until 30 runs exist and exits non-zero for an
+unqualified window. Qualification is evidence only; promotion to CI gating
+remains a human decision, and each infrastructure flake must have a separate
+filed issue.
+
+### `aurora-kde-sabotage`
+
+Runs the mandatory red-path proof in the isolated `aurora-test` namespace. It
+reuses the real VM and KDE runner, first replacing one launch target with
+`/usr/bin/this-does-not-exist`, then killing `plasmashell`. Both runs must
+fail, publish failed results, retain `kde_faillog` bundles, and leave no VM
+after `onExit` cleanup. Normal Aurora runs default to `sabotage-mode: none`;
+the runner rejects sabotage modes outside `aurora-test`.
+
+```bash
+just run-aurora-kde-sabotage
+```
+
 ### `run-flatcar-tests` (template: `run-flatcar-tests`)
 
 Same shape for Flatcar; uses `core` as the SSH user and runs pytest+dogtail

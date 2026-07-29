@@ -5,9 +5,9 @@ metadata:
   namespace: argo
   annotations:
     description: |
-      Runs testsuite's kde-smoke suite against a KDE Linux KubeVirt VM.
-      SSH and WebDriver are forwarded through virtctl; the ISO already ships
-      selenium-webdriver-at-spi, so no prebake or in-VM source build is needed.
+      Runs a testsuite KDE suite against an Aurora/KDE KubeVirt VM by adapting
+      the GNOME runner's clone, SSH, result persistence, and publication
+      contract to selenium-webdriver-at-spi.
 spec:
   serviceAccountName: argo
   templates:
@@ -16,9 +16,31 @@ spec:
       parameters:
       - name: vm-name
       - name: vm-namespace
-        value: "kde-test"
-      - name: testsuite-branch
+        value: "aurora-test"
+      - name: suite
+        value: "kde-smoke"
+      - name: variant
+        value: "aurora"
+      - name: ssh-user
+        value: "bluefin-test"
+      - name: ssh-key-secret
+        value: "bluefin-test-ssh-key"
+      - name: issue-title
+        value: "manual"
+      - name: behave-tags
+        value: ""
+      - name: branch
         value: "main"
+      - name: containerdisk-tag
+        value: ""
+      - name: sabotage-mode
+        value: "none"
+      - name: failure-class
+        value: "test"
+      - name: failure-issue-url
+        value: ""
+      - name: behave-retries
+        value: "2"
     activeDeadlineSeconds: 3600
     initContainers:
     - name: git-sync
@@ -32,13 +54,48 @@ spec:
           memory: 512Mi
       env:
       - name: BRANCH
-        value: "{{inputs.parameters.testsuite-branch}}"
+        value: "{{inputs.parameters.branch}}"
+      - name: SABOTAGE_MODE
+        value: "{{inputs.parameters.sabotage-mode}}"
+      - name: BEHAVE_RETRIES
+        value: "{{inputs.parameters.behave-retries}}"
+      - name: FAILURE_CLASS
+        value: "{{inputs.parameters.failure-class}}"
+      - name: FAILURE_ISSUE_URL
+        value: "{{inputs.parameters.failure-issue-url}}"
       command: [bash, -c]
       args:
       - |
         set -euo pipefail
+        case "${FAILURE_CLASS}" in
+          test) ;;
+          infra)
+            [[ -n "${FAILURE_ISSUE_URL}" ]] ||
+              { echo "Infra failures require a filed issue URL" >&2; exit 2; }
+            ;;
+          *)
+            echo "Unsupported failure class: ${FAILURE_CLASS}" >&2
+            exit 2
+            ;;
+        esac
+        [[ "${BEHAVE_RETRIES}" == "2" ]] ||
+          { echo "KDE soak runs require BEHAVE_RETRIES=2" >&2; exit 2; }
         git clone --depth 1 --branch "${BRANCH}" \
           https://github.com/projectbluefin/testsuite /workspace/testsuite
+        case "${SABOTAGE_MODE}" in
+          none) ;;
+          missing-binary)
+            sed -i '0,/Launch "kcmshell6 kcm_autostart"/s//Launch "\/usr\/bin\/this-does-not-exist kcm_autostart"/' \
+              /workspace/testsuite/tests/kde-smoke/features/kde_smoke.feature
+            grep -q '/usr/bin/this-does-not-exist' \
+              /workspace/testsuite/tests/kde-smoke/features/kde_smoke.feature
+            ;;
+          kill-plasmashell) ;;
+          *)
+            echo "Unsupported sabotage mode: ${SABOTAGE_MODE}" >&2
+            exit 2
+            ;;
+        esac
       volumeMounts:
       - name: workspace
         mountPath: /workspace
@@ -59,7 +116,13 @@ spec:
       - name: SSH_KEY
         value: /etc/ssh/test-key/id_ed25519
       - name: VM_USER
-        value: bluefin-test
+        value: "{{inputs.parameters.ssh-user}}"
+      - name: SUITE
+        value: "{{inputs.parameters.suite}}"
+      - name: VARIANT
+        value: "{{inputs.parameters.variant}}"
+      - name: BEHAVE_TAGS
+        value: "{{inputs.parameters.behave-tags}}"
       - name: IMAGE
         value: kde-linux
       - name: VM_HOST
@@ -68,6 +131,14 @@ spec:
         value: "2222"
       - name: KDE_WEBDRIVER_URL
         value: http://127.0.0.1:4723
+      - name: SABOTAGE_MODE
+        value: "{{inputs.parameters.sabotage-mode}}"
+      - name: GITHUB_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: github-token
+            key: token
+            optional: true
       volumeMounts:
       - name: workspace
         mountPath: /workspace
@@ -83,6 +154,7 @@ spec:
       args:
       - |
         set -euo pipefail
+        mkdir -p /tmp/results
         VIRTCTL=/usr/local/bin/virtctl
         if [[ ! -x "${VIRTCTL}" ]]; then
           curl --fail --location --retry 3 --output "${VIRTCTL}" \
@@ -98,26 +170,165 @@ spec:
               "${VM_USER}@127.0.0.1" true 2>/dev/null; do sleep 5; done'
         ssh -i "${SSH_KEY}" -p 2222 -o StrictHostKeyChecking=no \
           -o UserKnownHostsFile=/dev/null "${VM_USER}@127.0.0.1" \
-          'command -v selenium-webdriver-at-spi-run && \
-           nohup selenium-webdriver-at-spi-run \
-             >/tmp/selenium-webdriver-at-spi.log 2>&1 </dev/null &'
+          '
+          set -e
+          export XDG_RUNTIME_DIR=/run/user/$(id -u)
+          SESSION_BUS=$(systemctl --user show-environment 2>/dev/null |
+            sed -n "s/^DBUS_SESSION_BUS_ADDRESS=//p" | head -1)
+          if [ -z "${SESSION_BUS}" ] && [ -S "${XDG_RUNTIME_DIR}/bus" ]; then
+            SESSION_BUS="unix:path=${XDG_RUNTIME_DIR}/bus"
+          fi
+          WAYLAND_DISPLAY=$(find "${XDG_RUNTIME_DIR}" -maxdepth 1 \
+            -name "wayland-*" -printf "%f\n" 2>/dev/null | head -1)
+          AT_SPI_BUS_ADDRESS="${SESSION_BUS}"
+          KDE_WEBDRIVER_URL=http://127.0.0.1:4723
+          printf "%s\n" \
+            "export DBUS_SESSION_BUS_ADDRESS=${SESSION_BUS}" \
+            "export WAYLAND_DISPLAY=${WAYLAND_DISPLAY}" \
+            "export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}" \
+            "export AT_SPI_BUS_ADDRESS=${AT_SPI_BUS_ADDRESS}" \
+            "export XDG_SESSION_TYPE=wayland" \
+            "export XDG_SESSION_DESKTOP=kde" \
+            "export KDE_WEBDRIVER_URL=${KDE_WEBDRIVER_URL}" \
+            "export TESTSUITE_RESULTS_DIR=/tmp/results" \
+            > /tmp/session.env
+          mkdir -p /tmp/results
+          source /tmp/session.env
+          command -v selenium-webdriver-at-spi-run
+          nohup selenium-webdriver-at-spi-run \
+            >/tmp/selenium-webdriver-at-spi.log 2>&1 </dev/null &
+          '
         timeout 120 bash -c 'until curl --fail --silent "${KDE_WEBDRIVER_URL}/status" >/dev/null; do sleep 2; done'
         cd /workspace/testsuite
         python3 -m pip install --quiet selenium behave
         export PYTHONPATH=/workspace/testsuite
-        python3 -m behave tests/kde-smoke/features \
+        export TESTSUITE_RESULTS_DIR=/tmp/results
+        export BEHAVE_RETRIES=2
+        case "${SABOTAGE_MODE}" in
+          none) ;;
+          missing-binary)
+            [[ "${VM_NS}" == "aurora-test" ]] ||
+              { echo "Refusing sabotage outside aurora-test" >&2; exit 2; }
+            ;;
+          kill-plasmashell)
+            [[ "${VM_NS}" == "aurora-test" ]] ||
+              { echo "Refusing sabotage outside aurora-test" >&2; exit 2; }
+            ssh -i "${SSH_KEY}" -p 2222 -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null "${VM_USER}@127.0.0.1" \
+              'pgrep -x plasmashell'
+            ssh -i "${SSH_KEY}" -p 2222 -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null "${VM_USER}@127.0.0.1" \
+              'pkill -x plasmashell'
+            ;;
+          *)
+            echo "Unsupported sabotage mode: ${SABOTAGE_MODE}" >&2
+            exit 2
+            ;;
+        esac
+        TAGS_ARG="--tags ~@wip"
+        if [[ -n "${BEHAVE_TAGS}" ]]; then
+          TAGS_ARG="${BEHAVE_TAGS}"
+        fi
+        BEHAVE_RC=0
+        python3 -m behave "tests/${SUITE}/features" \
           --format json.pretty --outfile /results/results.json --no-capture \
-          --tags ~@wip
-        mkdir -p /var/mnt/ghost-data/test-results/"{{workflow.name}}"/kde-smoke
-        cp /results/results.json \
-          /var/mnt/ghost-data/test-results/"{{workflow.name}}"/kde-smoke/
+          ${TAGS_ARG} || BEHAVE_RC=$?
+
+        # KDE's failure hook writes screenshots and diagnostic directories inside
+        # the guest session. Copy them back even when Behave reports failures.
+        scp -i "${SSH_KEY}" -P 2222 -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null -r \
+          "${VM_USER}@127.0.0.1:/tmp/results/." /tmp/results/ || \
+          echo "Warning: failed to collect in-guest KDE artifacts" >&2
+
+        # Keep both the directory and a portable tarball for each kde_faillog
+        # bundle produced by the testsuite failure hook. lab-runner does not
+        # provide tar, so use the guaranteed Python standard library tool.
+        ARTIFACT_RC=0
+        while IFS= read -r -d '' bundle; do
+          if ! (
+            cd "$(dirname "${bundle}")" &&
+            python3 -m tarfile -c "${bundle}.tar.gz" "$(basename "${bundle}")"
+          ); then
+            echo "ERROR: failed to archive KDE failure bundle ${bundle}" >&2
+            ARTIFACT_RC=1
+          fi
+        done < <(find /tmp/results -type d -name 'faillog_*' -print0)
+
+        RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}/${SUITE}"
+        mkdir -p "${RESULT_DIR}"
+        cp -r /tmp/results/. "${RESULT_DIR}/" 2>/dev/null || true
+        if [[ -f /results/results.json ]]; then
+          cp /results/results.json "${RESULT_DIR}/"
+        fi
+        echo "Results and KDE artifacts saved to ${RESULT_DIR}" >&2
+
+        IMG_SLUG="${VARIANT}"
+        if [[ "${VARIANT}" == "aurora" && -n "{{inputs.parameters.containerdisk-tag}}" ]]; then
+          IMG_SLUG="aurora-${{inputs.parameters.containerdisk-tag}}"
+        fi
+
+        # Push the first in-guest screenshot as the stable OCI artifact used by
+        # the dashboard. KubeVirt's virt-launcher exposes no QEMU monitor, so
+        # QEMU-level screendumps are intentionally not part of this workflow.
+        SHOT=$(find /tmp/results -type f -name '*.png' -print -quit)
+        if [[ -n "${SHOT}" && -f "${SHOT}" && -n "${GITHUB_TOKEN:-}" ]]; then
+          ORAS_BIN=/workspace/oras-bin/oras
+          if [[ ! -x "${ORAS_BIN}" ]]; then
+            mkdir -p "$(dirname "${ORAS_BIN}")"
+            curl --fail --silent --show-error --location \
+              "https://github.com/oras-project/oras/releases/download/v1.2.3/oras_1.2.3_linux_amd64.tar.gz" |
+              tar -xz -C "$(dirname "${ORAS_BIN}")" oras || \
+              echo "Warning: failed to install oras" >&2
+          fi
+          if [[ -x "${ORAS_BIN}" ]]; then
+            export PATH="$(dirname "${ORAS_BIN}"):${PATH}"
+            SCREENSHOT_IMAGE="ghcr.io/projectbluefin/testsuite/desktop-screenshot"
+            PUSH_TAG="${IMG_SLUG}-${SUITE}-latest"
+            echo "${GITHUB_TOKEN}" | oras login ghcr.io \
+              -u github-actions --password-stdin || \
+              echo "Warning: failed to authenticate oras to GHCR" >&2
+            oras push "${SCREENSHOT_IMAGE}:${PUSH_TAG}" \
+              --annotation "org.opencontainers.image.description=Bluefin KDE desktop screenshot from lab e2e suite: ${SUITE}" \
+              --annotation "io.github.projectbluefin.caller_repo=projectbluefin/lab" \
+              "${SHOT}:image/png" || \
+              echo "Warning: failed to push KDE screenshot" >&2
+          fi
+        elif [[ -z "${GITHUB_TOKEN:-}" ]]; then
+          echo "No GITHUB_TOKEN - skipping GHCR screenshot push" >&2
+        fi
+
+        if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+          rm -rf /workspace/lab-code
+          git clone --depth 1 \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/projectbluefin/lab.git" \
+            /workspace/lab-code
+          python3 /workspace/lab-code/scripts/publish_test_results.py \
+            /results/results.json "${IMG_SLUG}" "${SUITE}" \
+            "{{workflow.name}}" "${GITHUB_TOKEN}" "" \
+            "${FAILURE_CLASS}" "${FAILURE_ISSUE_URL}" || \
+            echo "Warning: failed to publish test results" >&2
+        else
+          echo "No GITHUB_TOKEN - skipping test results publication" >&2
+        fi
+
+        if [[ "${ARTIFACT_RC}" -ne 0 ]]; then
+          echo "ERROR: one or more KDE failure bundles could not be archived" >&2
+          exit "${ARTIFACT_RC}"
+        fi
+        if [[ "${SABOTAGE_MODE}" != "none" && "${BEHAVE_RC}" -eq 0 ]]; then
+          echo "SABOTAGE FAILURE: ${SABOTAGE_MODE} unexpectedly passed" >&2
+          exit 1
+        fi
+        exit "${BEHAVE_RC}"
     volumes:
     - name: workspace
       emptyDir:
         sizeLimit: 2Gi
     - name: ssh-key
       secret:
-        secretName: bluefin-test-ssh-key
+        secretName: "{{inputs.parameters.ssh-key-secret}}"
+        defaultMode: 0400
     - name: results
       emptyDir:
         sizeLimit: 1Gi

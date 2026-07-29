@@ -54,11 +54,19 @@ The workflow authoring guidance is split by topic:
 - `synchronization.semaphore:` (singular) in any pipeline — deprecated, rejected by ArgoCD schema. Use `synchronization.semaphores:` (list with `- configMapKeyRef:` item)
 - `spec.schedule:` (singular) on a CronWorkflow — field does not exist in CRD schema; use `spec.schedules:` (array)
 - A pipeline with VMs and no `spec.activeDeadlineSeconds` — a stuck VM holds its semaphore slot forever
-- A pipeline with VMs that adds `spec.synchronization.semaphores` — semaphores are removed; k8s scheduler handles concurrency via virt-launcher memory requests
+- A VM pipeline that adds a semaphore without a documented cross-workflow
+  capacity need — ordinary VM concurrency is handled by virt-launcher memory
+  requests and does not need a lock
+- A memory-constrained VM pipeline that omits a documented template-level
+  semaphore — concurrent virt-launcher and runner pods can exhaust node memory
 - A template that consumes a scarce, node-pinned resource relying only on
   workflow `parallelism` — that limit does not cover simultaneous workflows.
   Put a template-level `synchronization.semaphores` reference on the shared
   template and define its capacity in the GitOps-managed ConfigMap.
+- A `synchronization` block placed directly on a `dag.tasks[]` entry — Argo's
+  schema rejects it. Wrap the `templateRef` in a local `steps` template and put
+  the ConfigMap-backed semaphore on that wrapper when only one DAG task needs
+  cross-workflow serialization.
 - A `steps` or `dag` task calling a sub-template without `arguments:`
 - `{{steps.X.outputs...}}` or `{{tasks.X.outputs...}}` used as an input
   parameter *default inside a leaf template* — that scope only exists at
@@ -145,6 +153,15 @@ The workflow authoring guidance is split by topic:
   constant pipeline identifiers and bounded states. Workflow-level completion
   metrics are safe only when the workflow status truthfully represents the
   publish result; non-blocking or transitional DAG branches must be fixed first.
+- A KDE GUI runner that copies the GNOME runner without replacing
+  `qecore-headless` and the GNOME daemon — use the VM's
+  `selenium-webdriver-at-spi-run`, forward port 4723, and gate test start on
+  its `/status` endpoint.
+- KDE QA callers must pass the runner's `branch` parameter (not the removed
+  `testsuite-branch`) and use the established `aurora-test` namespace. The
+  runner must source a generated session environment containing D-Bus,
+  Wayland, AT-SPI, `XDG_SESSION_DESKTOP=kde`, and its WebDriver URL before
+  starting Selenium.
 
 ## Verification
 
@@ -157,12 +174,18 @@ Before marking any WorkflowTemplate change done:
 - [ ] Pipeline has `onExit: cleanup` handler
 - [ ] All pod-running templates have `resources:` requests and limits
 - [ ] Every node-pinned, high-memory shared template has a ConfigMap-backed
-      template-level semaphore sized to the node's allocatable capacity; VM
-      pipelines remain scheduler-managed
+      template-level semaphore sized to the node's allocatable capacity
+- [ ] Any semaphore intended for one DAG task is attached to a wrapper template,
+      not directly to `dag.tasks[]`; the wrapper's `steps` call the external
+      `templateRef`
+- [ ] VM pipelines are scheduler-managed by default; if cross-workflow memory
+      contention requires serialization, use a documented template-level
+      ConfigMap semaphore with an explicit capacity
 - [ ] Change is committed and pushed — not manually applied to cluster
 - [ ] `description:` annotation present on the new/modified template
 - [ ] File name matches `metadata.name` (e.g. `provision-containerdisk-vm.yaml` for `name: provision-containerdisk-vm`)
-- [ ] VM pipeline spec has NO `synchronization.semaphores` block — k8s scheduler handles VM concurrency
+- [ ] Any VM pipeline semaphore is justified by documented cross-workflow
+      memory contention and is attached at template level, not workflow scope
 - [ ] VM pipeline spec has `activeDeadlineSeconds` (1h or 2h) so stuck VMs self-evict
 - [ ] No `nodeSelector: kubernetes.io/hostname: ghost` in VM specs — VMs float to any KubeVirt-capable node
 - [ ] GitHub Contents API write-backs use curl+jq, not inline Python; output is
@@ -183,3 +206,13 @@ Before marking any WorkflowTemplate change done:
       exists on the repository's default branch before relying on dispatch
 - [ ] Registry workflows use a pinned image that actually contains every CLI
       invoked by the script, with flags valid for that exact version
+- [ ] KDE GUI runners preserve the GNOME runner's parameter/result contract,
+      use `selenium-webdriver-at-spi-run`, forward `4723:4723`, and wait for
+      WebDriver readiness before Behave execution
+- [ ] Aurora/KDE sabotage runs are explicit, restricted to `aurora-test`, and
+      exercise both the nonexistent-binary and killed-`plasmashell` red paths;
+      failure results and `kde_faillog` artifacts must be retained before
+      teardown
+- [ ] KDE soak evidence uses the newest 30 persisted runs and a two-flake
+      infrastructure budget, never a consecutive-green streak; promotion
+      remains a human decision
