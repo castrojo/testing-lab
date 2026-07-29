@@ -56,25 +56,7 @@ spec:
       dag:
         tasks:
           - name: build-aurora-containerdisk
-            templateRef:
-              name: build-bluefin-migration-containerdisk
-              template: build-containerdisk
-            arguments:
-              parameters:
-                - name: image
-                  value: ghcr.io/ublue-os/aurora
-                - name: image-tag
-                  value: "{{workflow.parameters.image-tag}}"
-                - name: containerdisk-tag
-                  value: "{{workflow.parameters.image-tag}}"
-                - name: disk-size
-                  value: "{{workflow.parameters.disk-size}}"
-                - name: containerdisk-repo
-                  value: "{{workflow.parameters.containerdisk-repo}}"
-                - name: prebake-kde-webdriver
-                  value: "true"
-                - name: force
-                  value: "true"
+            template: build-aurora-containerdisk
           - name: provision-containerdisk-vm
             depends: build-aurora-containerdisk.Succeeded
             templateRef:
@@ -118,7 +100,7 @@ spec:
                 - name: containerdisk-tag
                   value: "{{workflow.parameters.image-tag}}"
           - name: collect-logs
-            depends: "(run-kde-tests.Succeeded || run-kde-tests.Failed)"
+            depends: "(run-kde-tests.Succeeded || run-kde-tests.Failed || run-kde-tests.Errored)"
             templateRef:
               name: collect-vm-logs
               template: collect-vm-logs
@@ -132,6 +114,33 @@ spec:
                   value: "{{workflow.parameters.ssh-key-secret}}"
                 - name: ssh-user
                   value: "{{workflow.parameters.ssh-user}}"
+    - name: build-aurora-containerdisk
+      synchronization:
+        semaphores:
+          - configMapKeyRef:
+              name: workflow-semaphores
+              key: migration-containerdisk-build
+      steps:
+        - - name: build
+            templateRef:
+              name: build-bluefin-migration-containerdisk
+              template: build-containerdisk
+            arguments:
+              parameters:
+                - name: image
+                  value: ghcr.io/ublue-os/aurora
+                - name: image-tag
+                  value: "{{workflow.parameters.image-tag}}"
+                - name: containerdisk-tag
+                  value: "{{workflow.parameters.image-tag}}"
+                - name: disk-size
+                  value: "{{workflow.parameters.disk-size}}"
+                - name: containerdisk-repo
+                  value: "{{workflow.parameters.containerdisk-repo}}"
+                - name: prebake-kde-webdriver
+                  value: "true"
+                - name: force
+                  value: "true"
     - name: teardown
       script:
         image: cgr.dev/chainguard/kubectl:latest-dev

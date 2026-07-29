@@ -206,7 +206,17 @@ def test_aurora_qa_pipeline_is_vm_based_and_serialized():
         "run-kde-tests",
         "collect-logs",
     ]
-    assert tasks[0]["templateRef"] == {
+    assert tasks[0]["template"] == "build-aurora-containerdisk"
+    build_template = next(
+        template
+        for template in spec["templates"]
+        if template["name"] == "build-aurora-containerdisk"
+    )
+    assert build_template["synchronization"]["semaphores"][0]["configMapKeyRef"] == {
+        "name": "workflow-semaphores",
+        "key": "migration-containerdisk-build",
+    }
+    assert build_template["steps"][0][0]["templateRef"] == {
         "name": "build-bluefin-migration-containerdisk",
         "template": "build-containerdisk",
     }
@@ -228,6 +238,7 @@ def test_aurora_qa_pipeline_is_vm_based_and_serialized():
     assert "value: aurora-containerdisk" in content
     assert "value: aurora-test" in content
     assert "value: 30G" in content
+    assert "run-kde-tests.Errored" in content
 
     semaphores = yaml.safe_load(
         (ROOT / "manifests/workflow-semaphores.yaml").read_text(encoding="utf-8")
