@@ -1,0 +1,281 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: toggle-testing-rebase
+  namespace: argo
+  annotations:
+    description: |
+      Starts a Bluefin VM from a stable or testing image, exercises the
+      production toggle-testing flow in both directions, reboots after each
+      switch, and verifies the booted image with bootc status.
+spec:
+  serviceAccountName: argo
+  activeDeadlineSeconds: 14400
+  entrypoint: toggle-testing
+  onExit: teardown
+  volumeClaimGC:
+    strategy: OnWorkflowCompletion
+  arguments:
+    parameters:
+      - name: image
+        value: ghcr.io/projectbluefin/bluefin
+      - name: disk-image
+        value: ghcr.io/projectbluefin/bluefin:stable
+      - name: start-tag
+        value: stable
+      - name: target-tag
+        value: testing
+      - name: namespace
+        value: bluefin-test
+      - name: test-root
+        value: /var/mnt/ghost-data/bluefin-test
+      - name: ssh-key-secret
+        value: bluefin-test-ssh-key
+      - name: vm-name
+        value: toggle-testing-{{workflow.uid}}
+  volumeClaimTemplates:
+    - metadata:
+        name: staging
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 100Gi
+  templates:
+    - name: toggle-testing
+      steps:
+        - - name: ensure-disk
+            templateRef:
+              name: build-bluefin-migration-containerdisk
+              template: build-containerdisk
+            arguments:
+              parameters:
+                - name: image
+                  value: "{{workflow.parameters.image}}"
+                - name: image-tag
+                  value: "{{workflow.parameters.start-tag}}"
+                - name: containerdisk-tag
+                  value: "{{workflow.parameters.start-tag}}"
+                - name: force
+                  value: "false"
+        - - name: provision
+            templateRef:
+              name: provision-containerdisk-vm
+              template: provision-vm
+            arguments:
+              parameters:
+                - name: image-tag
+                  value: "{{workflow.parameters.start-tag}}"
+                - name: vm-name
+                  value: "{{workflow.parameters.vm-name}}"
+                - name: namespace
+                  value: "{{workflow.parameters.namespace}}"
+                - name: test-root
+                  value: "{{workflow.parameters.test-root}}"
+        - - name: toggle-forward
+            template: run-toggle-testing
+            arguments:
+              parameters:
+                - name: vm-ip
+                  value: "{{steps.provision.outputs.parameters.vm-ip}}"
+                - name: image
+                  value: "{{workflow.parameters.image}}"
+                - name: target-tag
+                  value: "{{workflow.parameters.target-tag}}"
+                - name: ssh-key-secret
+                  value: "{{workflow.parameters.ssh-key-secret}}"
+                - name: disk-image
+                  value: "{{workflow.parameters.disk-image}}"
+                - name: test-root
+                  value: "{{workflow.parameters.test-root}}"
+        - - name: reboot-forward
+            template: reboot-and-wait
+            arguments:
+              parameters:
+                - name: vm-ip
+                  value: "{{steps.provision.outputs.parameters.vm-ip}}"
+                - name: ssh-key-secret
+                  value: "{{workflow.parameters.ssh-key-secret}}"
+        - - name: verify-forward
+            template: verify-bootc-state
+            arguments:
+              parameters:
+                - name: vm-ip
+                  value: "{{steps.provision.outputs.parameters.vm-ip}}"
+                - name: expected-tag
+                  value: "{{workflow.parameters.target-tag}}"
+                - name: ssh-key-secret
+                  value: "{{workflow.parameters.ssh-key-secret}}"
+        - - name: toggle-back
+            template: run-toggle-testing
+            arguments:
+              parameters:
+                - name: vm-ip
+                  value: "{{steps.provision.outputs.parameters.vm-ip}}"
+                - name: image
+                  value: "{{workflow.parameters.image}}"
+                - name: target-tag
+                  value: "{{workflow.parameters.start-tag}}"
+                - name: ssh-key-secret
+                  value: "{{workflow.parameters.ssh-key-secret}}"
+                - name: disk-image
+                  value: "{{workflow.parameters.disk-image}}"
+                - name: test-root
+                  value: "{{workflow.parameters.test-root}}"
+        - - name: reboot-back
+            template: reboot-and-wait
+            arguments:
+              parameters:
+                - name: vm-ip
+                  value: "{{steps.provision.outputs.parameters.vm-ip}}"
+                - name: ssh-key-secret
+                  value: "{{workflow.parameters.ssh-key-secret}}"
+        - - name: verify-back
+            template: verify-bootc-state
+            arguments:
+              parameters:
+                - name: vm-ip
+                  value: "{{steps.provision.outputs.parameters.vm-ip}}"
+                - name: expected-tag
+                  value: "{{workflow.parameters.start-tag}}"
+                - name: ssh-key-secret
+                  value: "{{workflow.parameters.ssh-key-secret}}"
+
+    - name: run-toggle-testing
+      activeDeadlineSeconds: 1800
+      inputs:
+        parameters:
+          - name: vm-ip
+          - name: image
+          - name: target-tag
+          - name: ssh-key-secret
+          - name: disk-image
+          - name: test-root
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 1
+            memory: 1Gi
+        source: |
+          set -euo pipefail
+          KEY=/etc/ssh/test-key/id_ed25519
+          SSH=(ssh -i "${KEY}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o LogLevel=ERROR "bluefin-test@{{inputs.parameters.vm-ip}}")
+          TARGET="{{inputs.parameters.target-tag}}"
+          IMAGE="{{inputs.parameters.image}}:${TARGET}"
+          START_IMAGE="{{inputs.parameters.disk-image}}"
+          echo "Starting from ${START_IMAGE}; test root is {{inputs.parameters.test-root}}"
+          start_status="$("${SSH[@]}" "sudo bootc status --json")"
+          grep -q "${START_IMAGE}" <<<"${start_status}" || {
+            echo "VM is not running ${START_IMAGE}" >&2
+            exit 1
+          }
+          echo "Running the production toggle-testing command toward ${IMAGE}"
+          "${SSH[@]}" "if command -v bctl >/dev/null 2>&1; then yes | bctl toggle-testing; else yes | ujust toggle-testing; fi"
+          status="$("${SSH[@]}" "sudo bootc status --json")"
+          grep -q "${TARGET}" <<<"${status}" || {
+            echo "toggle-testing did not stage ${IMAGE}" >&2
+            exit 1
+          }
+        volumeMounts:
+          - name: ssh-key
+            mountPath: /etc/ssh/test-key
+            readOnly: true
+      volumes:
+        - name: ssh-key
+          secret:
+            secretName: "{{inputs.parameters.ssh-key-secret}}"
+
+    - name: reboot-and-wait
+      activeDeadlineSeconds: 900
+      inputs:
+        parameters:
+          - name: vm-ip
+          - name: ssh-key-secret
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        source: |
+          set -euo pipefail
+          KEY=/etc/ssh/test-key/id_ed25519
+          SSH=(ssh -i "${KEY}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR "bluefin-test@{{inputs.parameters.vm-ip}}")
+          set +e
+          "${SSH[@]}" sudo reboot >/dev/null 2>&1
+          set -e
+          for _ in $(seq 1 24); do
+            if ! "${SSH[@]}" true >/dev/null 2>&1; then break; fi
+            sleep 5
+          done
+          for _ in $(seq 1 72); do
+            if "${SSH[@]}" true >/dev/null 2>&1; then exit 0; fi
+            sleep 5
+          done
+          echo "Timed out waiting for SSH after reboot" >&2
+          exit 1
+        volumeMounts:
+          - name: ssh-key
+            mountPath: /etc/ssh/test-key
+            readOnly: true
+      volumes:
+        - name: ssh-key
+          secret:
+            secretName: "{{inputs.parameters.ssh-key-secret}}"
+
+    - name: verify-bootc-state
+      activeDeadlineSeconds: 900
+      inputs:
+        parameters:
+          - name: vm-ip
+          - name: expected-tag
+          - name: ssh-key-secret
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        source: |
+          set -euo pipefail
+          KEY=/etc/ssh/test-key/id_ed25519
+          SSH=(ssh -i "${KEY}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o LogLevel=ERROR "bluefin-test@{{inputs.parameters.vm-ip}}")
+          status="$("${SSH[@]}" "sudo bootc status --json")"
+          echo "${status}"
+          grep -q "{{inputs.parameters.expected-tag}}" <<<"${status}"
+        volumeMounts:
+          - name: ssh-key
+            mountPath: /etc/ssh/test-key
+            readOnly: true
+      volumes:
+        - name: ssh-key
+          secret:
+            secretName: "{{inputs.parameters.ssh-key-secret}}"
+
+    - name: teardown
+      steps:
+        - - name: delete-vm
+            templateRef:
+              name: teardown-vm
+              template: teardown-vm
+            arguments:
+              parameters:
+                - name: vm-name
+                  value: "{{workflow.parameters.vm-name}}"
+                - name: namespace
+                  value: "{{workflow.parameters.namespace}}"
+                - name: test-root
+                  value: "{{workflow.parameters.test-root}}"
