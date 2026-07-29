@@ -372,7 +372,7 @@ def test_kde_runner_persists_failure_artifacts_and_pushes_guest_screenshots():
     assert "qemu_screendump" not in kde
 
 
-def test_kde_workflow_calls_runner_with_current_contract():
+def test_kde_linux_workflow_calls_native_runner_with_current_contract():
     workflow = (ROOT / "argo/kde-linux-qa.yaml").read_text(encoding="utf-8")
     provision = (
         ROOT / "argo/workflow-templates/provision-kde-linux-vm.yaml"
@@ -384,6 +384,20 @@ def test_kde_workflow_calls_runner_with_current_contract():
     assert "testsuite-branch" not in workflow
     assert 'value: "aurora-test"' in provision
     assert "kde-test-namespace" not in workflow
+
+
+def test_kde_workflow_images_are_digest_pinned():
+    paths = (
+        ROOT / "argo/kde-linux-qa.yaml",
+        ROOT / "argo/aurora-kde-sabotage.yaml",
+        ROOT / "argo/workflow-templates/aurora-qa-pipeline.yaml",
+        ROOT / "argo/workflow-templates/provision-kde-linux-vm.yaml",
+        ROOT / "argo/workflow-templates/run-kde-tests.yaml",
+    )
+    for path in paths:
+        content = path.read_text(encoding="utf-8")
+        assert "ghcr.io/projectbluefin/lab-runner:latest" not in content
+        assert "cgr.dev/chainguard/kubectl:latest-dev" not in content
 
 
 def test_kde_runner_sources_complete_session_environment():

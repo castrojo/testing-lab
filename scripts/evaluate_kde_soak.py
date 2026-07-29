@@ -7,10 +7,35 @@ import argparse
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+import re
 
 
 WINDOW_SIZE = 30
 MAX_INFRA_FLAKES = 2
+GITHUB_ISSUE_PATH = re.compile(
+    r"^/[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/issues/[1-9][0-9]*/?$"
+)
+
+
+def is_trusted_github_issue_url(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname == "github.com"
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.port is None
+        and not parsed.query
+        and not parsed.fragment
+        and bool(GITHUB_ISSUE_PATH.fullmatch(parsed.path))
+    )
 
 
 def evaluate_kde_soak(
@@ -24,7 +49,7 @@ def evaluate_kde_soak(
     infra_flakes = sum(
         entry.get("status") == "failed"
         and entry.get("failure_class", "test") == "infra"
-        and bool(entry.get("failure_issue_url"))
+        and is_trusted_github_issue_url(entry.get("failure_issue_url"))
         for entry in window
     )
     test_failures = failed - infra_flakes

@@ -8,7 +8,7 @@ import shutil
 import urllib.request
 from datetime import datetime, timezone
 
-from evaluate_kde_soak import evaluate_kde_soak
+from evaluate_kde_soak import evaluate_kde_soak, is_trusted_github_issue_url
 
 
 VALID_FAILURE_CLASSES = {"test", "infra"}
@@ -133,8 +133,8 @@ def parse_results_and_build_update(
     if status == "passed":
         failure_class = "none"
         failure_issue_url = None
-    elif failure_class == "infra" and not failure_issue_url:
-        raise ValueError("failure_issue_url is required for an infra failure")
+    elif failure_class == "infra" and not is_trusted_github_issue_url(failure_issue_url):
+        raise ValueError("failure_issue_url must be a trusted GitHub issue URL for an infra failure")
 
     history = []
     if existing_data:

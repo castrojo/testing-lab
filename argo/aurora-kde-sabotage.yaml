@@ -1,0 +1,127 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: aurora-kde-sabotage-
+  namespace: argo
+  annotations:
+    description: |
+      Mandatory Aurora/KDE gate proof. Runs the real kde-smoke suite twice,
+      first with a nonexistent launch binary and then with plasmashell killed.
+      Both runs must fail, publish red results, retain KDE faillogs, and clean
+      up the ephemeral VM.
+spec:
+  entrypoint: pipeline
+  serviceAccountName: argo
+  activeDeadlineSeconds: 5400
+  onExit: cleanup
+  arguments:
+    parameters:
+    - name: vm-name
+      value: "aurora-kde-sabotage-{{workflow.uid}}"
+    - name: namespace
+      value: "aurora-test"
+    - name: image-tag
+      value: "testing"
+    - name: branch
+      value: "main"
+  templates:
+  - name: pipeline
+    synchronization:
+      semaphores:
+      - configMapKeyRef:
+          name: workflow-semaphores
+          key: aurora-vm-qa
+    dag:
+      tasks:
+      - name: build
+        templateRef:
+          name: build-bluefin-migration-containerdisk
+          template: build-containerdisk
+        arguments:
+          parameters:
+          - name: image
+            value: ghcr.io/ublue-os/aurora
+          - name: image-tag
+            value: "{{workflow.parameters.image-tag}}"
+          - name: containerdisk-tag
+            value: "{{workflow.parameters.image-tag}}"
+          - name: disk-size
+            value: 30G
+          - name: containerdisk-repo
+            value: aurora-containerdisk
+          - name: prebake-kde-webdriver
+            value: "true"
+          - name: force
+            value: "true"
+      - name: provision
+        depends: build.Succeeded
+        templateRef:
+          name: provision-containerdisk-vm
+          template: provision-vm
+        arguments:
+          parameters:
+          - name: image-tag
+            value: "{{workflow.parameters.image-tag}}"
+          - name: vm-name
+            value: "{{workflow.parameters.vm-name}}"
+          - name: namespace
+            value: "{{workflow.parameters.namespace}}"
+          - name: containerdisk-repo
+            value: aurora-containerdisk
+          - name: app-label
+            value: aurora-test
+          - name: label-prefix
+            value: aurora.io
+      - name: missing-binary
+        depends: provision.Succeeded
+        templateRef:
+          name: run-kde-tests
+          template: run-kde-tests
+        arguments:
+          parameters:
+          - name: vm-name
+            value: "{{workflow.parameters.vm-name}}"
+          - name: vm-namespace
+            value: "{{workflow.parameters.namespace}}"
+          - name: variant
+            value: aurora
+          - name: branch
+            value: "{{workflow.parameters.branch}}"
+          - name: containerdisk-tag
+            value: "{{workflow.parameters.image-tag}}"
+          - name: sabotage-mode
+            value: missing-binary
+      - name: kill-plasmashell
+        depends: "(missing-binary.Succeeded || missing-binary.Failed || missing-binary.Errored)"
+        templateRef:
+          name: run-kde-tests
+          template: run-kde-tests
+        arguments:
+          parameters:
+          - name: vm-name
+            value: "{{workflow.parameters.vm-name}}"
+          - name: vm-namespace
+            value: "{{workflow.parameters.namespace}}"
+          - name: variant
+            value: aurora
+          - name: branch
+            value: "{{workflow.parameters.branch}}"
+          - name: containerdisk-tag
+            value: "{{workflow.parameters.image-tag}}"
+          - name: sabotage-mode
+            value: kill-plasmashell
+  - name: cleanup
+    script:
+      image: cgr.dev/chainguard/kubectl@sha256:b9f35eaf9cd6eeff77e5cab057398af90a6b6ce785ef06fdfca8b948074e17c5
+      command: [bash]
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+      source: |
+        set -euo pipefail
+        kubectl delete vm "{{workflow.parameters.vm-name}}" \
+          -n "{{workflow.parameters.namespace}}" --ignore-not-found
