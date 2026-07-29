@@ -38,6 +38,10 @@ spec:
       value: "25G"
     - name: filesystem
       value: ""
+    - name: containerdisk-repo
+      value: "bluefin-containerdisk"
+    - name: prebake-kde-webdriver
+      value: "false"
   templates:
 
     # ─── Top-level DAG ────────────────────────────────────────────────────────
@@ -54,6 +58,10 @@ spec:
         value: "25G"
       - name: filesystem
         value: ""
+      - name: containerdisk-repo
+        value: "bluefin-containerdisk"
+      - name: prebake-kde-webdriver
+        value: "false"
     dag:
       tasks:
           # check always runs; when force=true it short-circuits to "missing" inside the script.
@@ -65,6 +73,8 @@ spec:
             value: "{{inputs.parameters.containerdisk-tag}}"
           - name: force
             value: "{{inputs.parameters.force}}"
+          - name: containerdisk-repo
+            value: "{{inputs.parameters.containerdisk-repo}}"
 
           # Skipped only when check outputs "exists" (already up-to-date).
       - name: install-to-disk
@@ -83,6 +93,10 @@ spec:
             value: "{{inputs.parameters.disk-size}}"
           - name: filesystem
             value: "{{inputs.parameters.filesystem}}"
+          - name: containerdisk-repo
+            value: "{{inputs.parameters.containerdisk-repo}}"
+          - name: prebake-kde-webdriver
+            value: "{{inputs.parameters.prebake-kde-webdriver}}"
 
           # Skipped when check=exists (install-to-disk skipped → this skips too).
       - name: convert-and-push
@@ -98,6 +112,8 @@ spec:
             value: "{{inputs.parameters.containerdisk-tag}}"
           - name: disk-size
             value: "{{inputs.parameters.disk-size}}"
+          - name: containerdisk-repo
+            value: "{{inputs.parameters.containerdisk-repo}}"
 
     # ─── check ────────────────────────────────────────────────────────────────
     # Checks whether the containerDisk image already exists in the local Zot registry.
@@ -110,6 +126,8 @@ spec:
       - name: containerdisk-tag
       - name: force
         value: "false"
+      - name: containerdisk-repo
+        value: "bluefin-containerdisk"
     script:
       image: quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615
       command: [sh]
@@ -127,7 +145,7 @@ spec:
           exit 0
         fi
         TAG="{{inputs.parameters.containerdisk-tag}}"
-        CD_IMAGE="192.168.1.102:30500/bluefin-containerdisk:${TAG}"
+        CD_IMAGE="192.168.1.102:30500/{{inputs.parameters.containerdisk-repo}}:${TAG}"
         EXISTS=$(skopeo inspect --tls-verify=false --format '{{.Digest}}' \
           "docker://${CD_IMAGE}" 2>/dev/null || echo "")
         if [[ -n "$EXISTS" ]]; then
@@ -152,6 +170,8 @@ spec:
         value: "25G"
       - name: filesystem
         value: ""
+      - name: prebake-kde-webdriver
+        value: "false"
     volumes:
     - name: dev
       hostPath:
@@ -195,6 +215,7 @@ spec:
         TAG="{{inputs.parameters.containerdisk-tag}}"
         IMAGE_TAG="{{inputs.parameters.image-tag}}"
         IMAGE="{{inputs.parameters.image}}:{{inputs.parameters.image-tag}}"
+        SOURCE_IMAGE="${IMAGE}"
         STAGING="/var/mnt/ghost-data/bluefin-cd-build/${TAG}"
         DISK="${STAGING}/disk.raw"
         BUILDLOG="${STAGING}/build.log"
@@ -356,6 +377,46 @@ spec:
         BOOTABLE_CTX="${STAGING}/bootable-build"
         mkdir -p "${BOOTABLE_CTX}"
 
+        if [[ "{{inputs.parameters.prebake-kde-webdriver}}" == "true" ]]; then
+          PREBAKED_IMAGE_LOCAL="localhost/${TAG}-kde-webdriver:latest"
+          PREBAKE_CTX="${STAGING}/kde-webdriver-build"
+          mkdir -p "${PREBAKE_CTX}"
+          cat > "${PREBAKE_CTX}/Containerfile" <<'EOF'
+        FROM __SOURCE_IMAGE__
+        RUN dnf install -y --setopt=install_weak_deps=False \
+              cmake extra-cmake-modules gcc-c++ make git \
+              qt6-qtbase-devel qt6-qtwayland-devel \
+              kf6-kwayland-devel kf6-kwindowsystem-devel kf6-kcoreaddons-devel \
+              kpipewire-devel plasma-wayland-protocols-devel \
+              libxkbcommon-devel wayland-devel \
+              python3-devel python3-flask python3-pyatspi python3-lxml \
+              python3-gobject ruby ruby-devel \
+            && dnf clean all \
+            && git clone --quiet --depth 1 https://github.com/KDE/selenium-webdriver-at-spi.git /usr/src/selenium-webdriver-at-spi \
+            && cd /usr/src/selenium-webdriver-at-spi \
+            && git fetch --quiet --depth 1 origin d45a21e8f1b3591dc921f0be85f1ecd834cbe413 \
+            && git checkout --quiet d45a21e8f1b3591dc921f0be85f1ecd834cbe413 \
+            && sed -i \
+              -e 's/^add_subdirectory(screenshotter)/# add_subdirectory(screenshotter)/' \
+              -e 's/^add_subdirectory(videorecorder)/# add_subdirectory(videorecorder)/' \
+              -e 's/^add_subdirectory(autotests)/# add_subdirectory(autotests)/' \
+              -e 's/^add_subdirectory(appidlister)/# add_subdirectory(appidlister)/' \
+              -e 's/^find_package(KWayland/# find_package(KWayland/' \
+              -e 's/^find_package(KPipeWire/# find_package(KPipeWire/' \
+              CMakeLists.txt \
+            && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            && cmake --build build --parallel \
+            && cmake --install build \
+            && test -x /usr/bin/selenium-webdriver-at-spi-inputsynth \
+            && test -f /usr/share/selenium-webdriver-at-spi/selenium-webdriver-at-spi.py \
+            && rm -rf /usr/src/selenium-webdriver-at-spi
+        EOF
+          sed -i "s|__SOURCE_IMAGE__|${IMAGE}|g" "${PREBAKE_CTX}/Containerfile"
+          echo "[BUILD] prebaking selenium-webdriver-at-spi and inputsynth"
+          podman build --tls-verify=false -t "${PREBAKED_IMAGE_LOCAL}" -f "${PREBAKE_CTX}/Containerfile" "${PREBAKE_CTX}"
+          SOURCE_IMAGE="${PREBAKED_IMAGE_LOCAL}"
+        fi
+
         printf '%s\n' \
           '#!/bin/bash' \
           'mkdir -p /sysroot/tmp 2>/dev/null' \
@@ -388,7 +449,7 @@ spec:
           > "${BOOTABLE_CTX}/findmnt-wrapper"
 
         printf '%s\n' \
-          "FROM ${IMAGE}" \
+          "FROM ${SOURCE_IMAGE}" \
           "LABEL containers.bootc=1" \
           'RUN set -eux; kver=$(basename /usr/lib/modules/*); test -e "/usr/lib/modules/${kver}/vmlinuz" || cp /boot/vmlinuz "/usr/lib/modules/${kver}/vmlinuz"' \
           'COPY findmnt-wrapper /tmp/findmnt-wrapper' \
@@ -504,6 +565,8 @@ spec:
       - name: image
       - name: image-tag
       - name: containerdisk-tag
+      - name: containerdisk-repo
+        value: "bluefin-containerdisk"
       - name: disk-size
     script:
       image: quay.io/fedora/fedora:latest
@@ -536,7 +599,7 @@ spec:
         STAGING="/var/mnt/ghost-data/bluefin-cd-build/${TAG}"
         RAW="${STAGING}/disk.raw"
         QCOW="${STAGING}/containerdisk.qcow2"
-        DEST="192.168.1.102:30500/bluefin-containerdisk:${TAG}"
+        DEST="192.168.1.102:30500/{{inputs.parameters.containerdisk-repo}}:${TAG}"
 
         echo "Converting ${RAW} to qcow2..."
         qemu-img convert -f raw -O qcow2 -p "${RAW}" "${QCOW}"
