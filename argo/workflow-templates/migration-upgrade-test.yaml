@@ -1,0 +1,113 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: migration-upgrade-test
+  namespace: argo
+  annotations:
+    description: |
+      Builds a legacy ublue-os image into a fresh migration container disk,
+      provisions it, and runs bluefin-migration-test's migration sequence
+      against the requested chunkah image and storage variant.
+spec:
+  serviceAccountName: argo
+  activeDeadlineSeconds: 86400
+  entrypoint: migration-upgrade
+  onExit: teardown
+  arguments:
+    parameters:
+      - name: legacy-image
+        value: ghcr.io/ublue-os/bluefin
+      - name: legacy-image-tag
+        value: latest
+      - name: chunkah-image
+        value: ghcr.io/projectbluefin/bluefin
+      - name: chunkah-image-tag
+        value: stable
+      - name: storage-variant
+        value: default
+      - name: namespace
+        value: bluefin-test
+      - name: golden-root
+        value: /var/mnt/ghost-data/bluefin-golden
+      - name: test-root
+        value: /var/mnt/ghost-data/bluefin-test
+      - name: ssh-key-secret
+        value: bluefin-test-ssh-key
+      - name: vm-name
+        value: migration-upgrade-{{workflow.uid}}
+  volumeClaimTemplates:
+    - metadata:
+        name: staging
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 100Gi
+  templates:
+    - name: migration-upgrade
+      steps:
+        - - name: ensure-disk
+            templateRef:
+              name: build-bluefin-migration-containerdisk
+              template: build-containerdisk
+            arguments:
+              parameters:
+                - name: image
+                  value: "{{workflow.parameters.legacy-image}}"
+                - name: image-tag
+                  value: "{{workflow.parameters.legacy-image-tag}}"
+                - name: containerdisk-tag
+                  value: "{{workflow.parameters.legacy-image-tag}}"
+                - name: force
+                  value: "true"
+                - name: disk-size
+                  value: "40G"
+        - - name: provision
+            templateRef:
+              name: provision-containerdisk-vm
+              template: provision-vm
+            arguments:
+              parameters:
+                - name: image-tag
+                  value: "{{workflow.parameters.legacy-image-tag}}"
+                - name: vm-name
+                  value: "{{workflow.parameters.vm-name}}"
+                - name: namespace
+                  value: "{{workflow.parameters.namespace}}"
+        - - name: migration
+            templateRef:
+              name: bluefin-migration-test
+              template: migration-sequence
+            arguments:
+              parameters:
+                - name: image-tag
+                  value: "{{workflow.parameters.legacy-image-tag}}"
+                - name: vm-name
+                  value: "{{workflow.parameters.vm-name}}"
+                - name: vm-ip
+                  value: "{{steps.provision.outputs.parameters.vm-ip}}"
+                - name: ssh-user
+                  value: bluefin-test
+                - name: ssh-key-secret
+                  value: "{{workflow.parameters.ssh-key-secret}}"
+                - name: legacy-image
+                  value: "{{workflow.parameters.legacy-image}}"
+                - name: chunkah-image
+                  value: "{{workflow.parameters.chunkah-image}}"
+                - name: chunkah-image-tag
+                  value: "{{workflow.parameters.chunkah-image-tag}}"
+                - name: storage-variant
+                  value: "{{workflow.parameters.storage-variant}}"
+
+    - name: teardown
+      steps:
+        - - name: delete-vm
+            templateRef:
+              name: teardown-vm
+              template: teardown-vm
+            arguments:
+              parameters:
+                - name: vm-name
+                  value: "{{workflow.parameters.vm-name}}"
+                - name: namespace
+                  value: "{{workflow.parameters.namespace}}"
