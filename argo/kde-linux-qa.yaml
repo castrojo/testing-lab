@@ -15,8 +15,8 @@ spec:
     - name: image-sha256
       value: "8554c25d098373a618a733656852ef25ad96c2b8ce59d57d9705e38eb95046bf"
     - name: namespace
-      value: "kde-test"
-    - name: testsuite-branch
+      value: "aurora-test"
+    - name: branch
       value: "main"
   templates:
   - name: pipeline
@@ -47,8 +47,8 @@ spec:
             value: "kde-linux-{{workflow.uid}}"
           - name: vm-namespace
             value: "{{workflow.parameters.namespace}}"
-          - name: testsuite-branch
-            value: "{{workflow.parameters.testsuite-branch}}"
+          - name: branch
+            value: "{{workflow.parameters.branch}}"
   - name: cleanup
     steps:
     - - name: teardown

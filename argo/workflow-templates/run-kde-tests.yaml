@@ -124,10 +124,32 @@ spec:
               "${VM_USER}@127.0.0.1" true 2>/dev/null; do sleep 5; done'
         ssh -i "${SSH_KEY}" -p 2222 -o StrictHostKeyChecking=no \
           -o UserKnownHostsFile=/dev/null "${VM_USER}@127.0.0.1" \
-          'command -v selenium-webdriver-at-spi-run && \
-           XDG_SESSION_DESKTOP=kde KDE_WEBDRIVER_URL=http://127.0.0.1:4723 \
-           nohup selenium-webdriver-at-spi-run \
-             >/tmp/selenium-webdriver-at-spi.log 2>&1 </dev/null &'
+          '
+          set -e
+          export XDG_RUNTIME_DIR=/run/user/$(id -u)
+          SESSION_BUS=$(systemctl --user show-environment 2>/dev/null |
+            sed -n "s/^DBUS_SESSION_BUS_ADDRESS=//p" | head -1)
+          if [ -z "${SESSION_BUS}" ] && [ -S "${XDG_RUNTIME_DIR}/bus" ]; then
+            SESSION_BUS="unix:path=${XDG_RUNTIME_DIR}/bus"
+          fi
+          WAYLAND_DISPLAY=$(find "${XDG_RUNTIME_DIR}" -maxdepth 1 \
+            -name "wayland-*" -printf "%f\n" 2>/dev/null | head -1)
+          AT_SPI_BUS_ADDRESS="${SESSION_BUS}"
+          KDE_WEBDRIVER_URL=http://127.0.0.1:4723
+          printf "%s\n" \
+            "export DBUS_SESSION_BUS_ADDRESS=${SESSION_BUS}" \
+            "export WAYLAND_DISPLAY=${WAYLAND_DISPLAY}" \
+            "export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}" \
+            "export AT_SPI_BUS_ADDRESS=${AT_SPI_BUS_ADDRESS}" \
+            "export XDG_SESSION_TYPE=wayland" \
+            "export XDG_SESSION_DESKTOP=kde" \
+            "export KDE_WEBDRIVER_URL=${KDE_WEBDRIVER_URL}" \
+            > /tmp/session.env
+          source /tmp/session.env
+          command -v selenium-webdriver-at-spi-run
+          nohup selenium-webdriver-at-spi-run \
+            >/tmp/selenium-webdriver-at-spi.log 2>&1 </dev/null &
+          '
         timeout 120 bash -c 'until curl --fail --silent "${KDE_WEBDRIVER_URL}/status" >/dev/null; do sleep 2; done'
         cd /workspace/testsuite
         python3 -m pip install --quiet selenium behave

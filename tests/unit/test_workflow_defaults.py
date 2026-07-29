@@ -191,6 +191,37 @@ def test_kde_runner_adapts_gnome_runner_contract_for_webdriver():
     assert "gnome-ponytail-daemon" not in kde
 
 
+def test_kde_workflow_calls_runner_with_current_contract():
+    workflow = (ROOT / "argo/kde-linux-qa.yaml").read_text(encoding="utf-8")
+    provision = (
+        ROOT / "argo/workflow-templates/provision-kde-linux-vm.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert 'value: "aurora-test"' in workflow
+    assert "- name: branch" in workflow
+    assert "workflow.parameters.branch" in workflow
+    assert "testsuite-branch" not in workflow
+    assert 'value: "aurora-test"' in provision
+    assert "kde-test-namespace" not in workflow
+
+
+def test_kde_runner_sources_complete_session_environment():
+    kde = (ROOT / "argo/workflow-templates/run-kde-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    for variable in (
+        "DBUS_SESSION_BUS_ADDRESS",
+        "WAYLAND_DISPLAY",
+        "XDG_RUNTIME_DIR",
+        "AT_SPI_BUS_ADDRESS",
+        "XDG_SESSION_DESKTOP",
+        "KDE_WEBDRIVER_URL",
+    ):
+        assert variable in kde
+    assert "source /tmp/session.env" in kde
+
+
 def test_cache_only_diagnostic_disables_remote_execution_explicitly():
     config = (ROOT / "manifests/buildstream-remote-cache-config.yaml").read_text(encoding="utf-8")
     assert "remote-execution: {}" not in config
