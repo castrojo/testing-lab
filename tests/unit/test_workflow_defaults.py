@@ -155,6 +155,42 @@ def test_buildbarn_runner_uses_stable_tmpdir_after_chroot():
     assert "filePool:" not in config
 
 
+def test_kde_runner_adapts_gnome_runner_contract_for_webdriver():
+    gnome = (ROOT / "argo/workflow-templates/run-gnome-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+    kde = (ROOT / "argo/workflow-templates/run-kde-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    for parameter in (
+        "vm-name",
+        "vm-namespace",
+        "suite",
+        "variant",
+        "ssh-user",
+        "ssh-key-secret",
+        "issue-title",
+        "behave-tags",
+        "branch",
+        "containerdisk-tag",
+    ):
+        assert f"- name: {parameter}" in gnome
+        assert f"- name: {parameter}" in kde
+
+    assert 'value: "aurora-test"' in kde
+    assert 'value: "kde-smoke"' in kde
+    assert "4723:4723" in kde
+    assert "selenium-webdriver-at-spi-run" in kde
+    assert "KDE_WEBDRIVER_URL" in kde
+    assert "XDG_SESSION_DESKTOP=kde" in kde
+    assert "/status" in kde
+    assert "publish_test_results.py" in kde
+    assert "/var/mnt/ghost-data/test-results" in kde
+    assert "qecore-headless" not in kde
+    assert "gnome-ponytail-daemon" not in kde
+
+
 def test_cache_only_diagnostic_disables_remote_execution_explicitly():
     config = (ROOT / "manifests/buildstream-remote-cache-config.yaml").read_text(encoding="utf-8")
     assert "remote-execution: {}" not in config

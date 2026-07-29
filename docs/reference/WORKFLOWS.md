@@ -214,6 +214,15 @@ captures `results.json` to pod stdout (Loki + `argo logs`).
 Resource limits and `hostNetwork: true` are set on the pod (KubeVirt
 masquerade only routes from host netns).
 
+### `run-kde-tests` (template: `run-kde-tests`)
+
+Adapts the GNOME runner contract for Aurora/KDE VMs. It clones the selected
+testsuite branch, forwards SSH and WebDriver port 4723 through `virtctl`,
+starts the VM's `selenium-webdriver-at-spi-run` service, waits for its
+`/status` endpoint, and runs `tests/kde-smoke/features` with Behave. Results
+are persisted under the standard ghost test-results host path and published
+when the optional GitHub token is available.
+
 ### `run-flatcar-tests` (template: `run-flatcar-tests`)
 
 Same shape for Flatcar; uses `core` as the SSH user and runs pytest+dogtail
