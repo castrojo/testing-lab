@@ -10,6 +10,16 @@ spec:
   entrypoint: build-and-provision
   onExit: teardown
   activeDeadlineSeconds: 14400
+  volumeClaimGC:
+    strategy: OnWorkflowCompletion
+  volumeClaimTemplates:
+    - metadata:
+        name: staging
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 100Gi
   arguments:
     parameters:
       - name: image-tag

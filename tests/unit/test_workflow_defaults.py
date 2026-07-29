@@ -176,6 +176,11 @@ def test_aurora_containerdisk_builder_isolated_and_prebaked():
     assert "value: aurora-containerdisk" in aurora
     assert 'value: "true"' in aurora
     assert "key: migration-containerdisk-build" in aurora
+    assert "volumeClaimGC:" in aurora
+    assert "strategy: OnWorkflowCompletion" in aurora
+    assert "volumeClaimTemplates:" in aurora
+    assert "name: staging" in aurora
+    assert "storage: 100Gi" in aurora
 
 
 def test_cache_only_diagnostic_disables_remote_execution_explicitly():
