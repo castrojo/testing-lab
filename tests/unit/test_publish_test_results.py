@@ -1,11 +1,18 @@
 import sys
+import subprocess
 from pathlib import Path
+
+import pytest
 
 # Add scripts directory to path to import publish_test_results
 scripts_path = Path(__file__).parent.parent.parent / "scripts"
 sys.path.insert(0, str(scripts_path))
 
 from publish_test_results import parse_results_and_build_update  # noqa: E402
+from evaluate_kde_soak import (  # noqa: E402
+    evaluate_kde_soak,
+    is_trusted_github_issue_url,
+)
 
 def test_parse_results_and_build_update():
     # Sample behave JSON
@@ -124,6 +131,200 @@ def test_parse_results_and_build_update():
     old_entry = updated["history"][1]
     assert old_entry["workflow_name"] == "previous-workflow"
     assert old_entry["duration_seconds"] == 0.0
+    assert new_entry["failure_class"] == "test"
+    assert updated["soak"]["state"] == "pending"
+
+
+def test_kde_soak_allows_two_classified_infrastructure_flakes():
+    history = [
+        {
+            "status": "failed" if index < 2 else "passed",
+            "failure_class": "infra" if index < 2 else "none",
+            "failure_issue_url": (
+                "https://github.com/projectbluefin/lab/issues/466"
+                if index < 2
+                else None
+            ),
+        }
+        for index in range(30)
+    ]
+
+    summary = evaluate_kde_soak(history)
+
+    assert summary == {
+        "state": "qualified",
+        "window_size": 30,
+        "runs_recorded": 30,
+        "passed_runs": 28,
+        "failed_runs": 2,
+        "infra_flakes": 2,
+        "test_failures": 0,
+        "pass_rate": 93.33,
+        "max_infra_flakes": 2,
+        "human_approval_required": True,
+    }
+
+
+def test_kde_soak_rejects_two_test_failures():
+    history = [
+        {
+            "status": "failed" if index < 2 else "passed",
+            "failure_class": "test" if index < 2 else "none",
+        }
+        for index in range(30)
+    ]
+
+    assert evaluate_kde_soak(history)["state"] == "unqualified"
+
+
+def test_kde_soak_does_not_accept_infra_flakes_without_issue_urls():
+    history = [
+        {
+            "status": "failed" if index < 2 else "passed",
+            "failure_class": "infra" if index < 2 else "none",
+            "failure_issue_url": None,
+        }
+        for index in range(30)
+    ]
+
+    assert evaluate_kde_soak(history)["state"] == "unqualified"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/projectbluefin/lab/issues/492",
+        "https://github.com/projectbluefin/lab/issues/492/",
+    ],
+)
+def test_trusted_github_issue_urls_are_accepted(url):
+    assert is_trusted_github_issue_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "not a URL",
+        "https://example.com/projectbluefin/lab/issues/492",
+        "http://github.com/projectbluefin/lab/issues/492",
+        "https://github.com/projectbluefin/lab/pull/492",
+        "https://github.com/projectbluefin/lab/issues/",
+        "https://github.com/projectbluefin/lab/issues/492?redirect=example.com",
+        "https://github.com.evil.example/projectbluefin/lab/issues/492",
+    ],
+)
+def test_issue_url_bypass_attempts_are_rejected(url):
+    assert not is_trusted_github_issue_url(url)
+
+
+def test_infrastructure_failure_rejects_untrusted_issue_url():
+    with pytest.raises(ValueError, match="trusted GitHub issue URL"):
+        parse_results_and_build_update(
+            data=[
+                {
+                    "elements": [
+                        {
+                            "type": "scenario",
+                            "status": "failed",
+                            "name": "infra failure",
+                            "steps": [],
+                        }
+                    ]
+                }
+            ],
+            existing_data=None,
+            current_utc="2026-07-10T01:00:00Z",
+            workflow_name="infra-workflow",
+            img_slug="aurora-testing",
+            suite="smoke",
+            failure_class="infra",
+            failure_issue_url="https://example.com/fake-issue",
+        )
+
+
+def test_soak_does_not_count_untrusted_issue_url_as_infrastructure_flake():
+    history = [
+        {
+            "status": "failed" if index < 2 else "passed",
+            "failure_class": "infra" if index < 2 else "none",
+            "failure_issue_url": (
+                "https://example.com/fake-issue" if index < 2 else None
+            ),
+        }
+        for index in range(30)
+    ]
+
+    assert evaluate_kde_soak(history)["state"] == "unqualified"
+
+
+def test_kde_soak_keeps_fixed_two_flake_budget():
+    history = [
+        {
+            "status": "failed" if index < 3 else "passed",
+            "failure_class": "infra" if index < 3 else "none",
+            "failure_issue_url": "https://github.com/projectbluefin/lab/issues/466"
+            if index < 3
+            else None,
+        }
+        for index in range(30)
+    ]
+
+    summary = evaluate_kde_soak(history)
+
+    assert summary["state"] == "unqualified"
+    assert summary["max_infra_flakes"] == 2
+
+
+def test_kde_soak_is_pending_before_thirty_runs():
+    assert evaluate_kde_soak([{"status": "passed"}] * 29)["state"] == "pending"
+
+
+def test_infrastructure_failure_requires_a_filed_issue():
+    with pytest.raises(ValueError, match="failure_issue_url"):
+        parse_results_and_build_update(
+            data=[
+                {
+                    "elements": [
+                        {
+                            "type": "scenario",
+                            "status": "failed",
+                            "name": "infra failure",
+                            "steps": [],
+                        }
+                    ]
+                }
+            ],
+            existing_data=None,
+            current_utc="2026-07-10T01:00:00Z",
+            workflow_name="infra-workflow",
+            img_slug="aurora-testing",
+            suite="smoke",
+            failure_class="infra",
+        )
+
+
+def test_publication_input_failures_are_nonzero():
+    script = scripts_path / "publish_test_results.py"
+    missing = scripts_path / "does-not-exist.json"
+
+    missing_token = subprocess.run(
+        [sys.executable, str(script), str(missing), "aurora", "smoke", "wf", ""],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    missing_results = subprocess.run(
+        [sys.executable, str(script), str(missing), "aurora", "smoke", "wf", "token"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert missing_token.returncode != 0
+    assert missing_results.returncode != 0
+    assert "Skipping" not in missing_token.stderr
+    assert "Skipping" not in missing_results.stderr
 
 def test_parse_real_sample_results():
     import json
@@ -157,4 +358,3 @@ def test_parse_real_sample_results():
         assert isinstance(item["error_message"], str)
         assert len(item["failing_step"]) > 0
         assert len(item["error_message"]) > 0
-
