@@ -95,6 +95,40 @@ activeDeadlineSeconds: 3600   # 1h for containerdisk, 7200 for knuckle
 
 **VMs float to any KubeVirt-capable node** — no `nodeSelector: kubernetes.io/hostname: ghost` in VM specs. The registry-mirror-config DaemonSet writes the Zot HTTP registry config to all nodes.
 
+### 15a. Locking one DAG build task
+
+`synchronization` is a template-level field; it is not valid on an individual
+`dag.tasks[]` entry. When one task must share a cross-workflow semaphore with
+another builder, invoke a local wrapper template from the DAG and put the
+semaphore on that wrapper:
+
+```yaml
+tasks:
+  - name: build
+    template: serialized-build
+templates:
+  - name: serialized-build
+    synchronization:
+      semaphores:
+        - configMapKeyRef:
+            name: workflow-semaphores
+            key: migration-containerdisk-build
+    steps:
+      - - name: invoke-builder
+          templateRef:
+            name: shared-builder
+            template: build
+          arguments:
+            parameters:
+              - name: image
+                value: "{{workflow.parameters.image}}"
+```
+
+This keeps the lock around only the build task while preserving the
+cross-WorkflowTemplate `templateRef`. For diagnostic collection, include all
+terminal upstream states when appropriate:
+`(tests.Succeeded || tests.Failed || tests.Errored)`.
+
 ### 16. GitHub Contents API or Standalone Git Push-back — Prefer Standalone Python for Complex Files
 
 When a workflow pod needs to push a simple file to a GitHub repo, use `curl` + `jq` inside the bash script (Contents API).
@@ -112,6 +146,31 @@ However, for complex updates (such as parsing BDD/behave test results, merging w
           echo "No GITHUB_TOKEN - skipping test results publication" >&2
         fi
 ```
+
+#### KDE GUI runner: persist guest artifacts before re-raising failures
+
+KDE GUI tests run through a WebDriver service inside the VM, so screenshots and
+`faillog_*` diagnostics are written in the guest session. Set the shared
+results directory in both environments, copy it back with `scp` after Behave
+returns (including non-zero returns), archive each failure directory with
+`python3 -m tarfile` (the runner has no `tar`), then copy the complete directory
+to the runner's `/var/mnt/ghost-data/test-results` hostPath. Surface archive
+failures after persistence and publication instead of silently dropping them;
+re-raise the saved Behave status only after that cleanup.
+
+Require the GitHub credential, screenshot, and ORAS CLI. Publish the in-guest
+screenshot with the ORAS CLI's `path:media-type` syntax (verified against
+Context7 `/oras-project/oras`); missing inputs or a failed upload must fail the
+runner after artifact persistence:
+
+```bash
+oras push "${SCREENSHOT_IMAGE}:${PUSH_TAG}" \
+  --annotation "io.github.projectbluefin.caller_repo=projectbluefin/lab" \
+  "${SHOT}:image/png"
+```
+
+Use guest-side screenshots for KubeVirt. `virt-launcher` does not expose a
+QEMU monitor, so QEMU-level screendump helpers are not a valid fallback.
 
 **Contents API Pattern (for simple single-file writes, verified against Context7 `/websites/github_en_rest`):**
 ```bash
@@ -160,7 +219,8 @@ systemd starts.
 1. Install tooling if it is missing: `command -v skopeo >/dev/null || dnf install -y skopeo` and `command -v git >/dev/null || dnf install -y git-core`.
 2. Resolve the digest of `{{inputs.parameters.image}}:{{inputs.parameters.image-tag}}` with `skopeo inspect --no-tags --format '{{.Digest}}' "docker://${IMAGE}"`. Treat a missing digest as a non-fatal warning.
 3. Compute the image slug as `IMG_SLUG="${VARIANT}-${IMAGE_TAG}"` so the result file name matches the contract used by `run-gnome-tests` (e.g. `bluefin-stable-smoke.json`).
-4. Perform the git push-back in a best-effort block: log a warning if `git clone` or `publish_test_results.py` fails, but do not let a publication error fail the test workflow.
+4. Treat the git clone and `publish_test_results.py` as required evidence
+   publication. Their failures must fail the test workflow after cleanup.
 5. Pass the resolved digest as the optional sixth positional argument to `publish_test_results.py` so the collector can match QA evidence to the currently published image digest.
 
 
