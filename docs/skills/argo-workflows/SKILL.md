@@ -209,3 +209,7 @@ Before marking any WorkflowTemplate change done:
 - [ ] KDE GUI runners preserve the GNOME runner's parameter/result contract,
       use `selenium-webdriver-at-spi-run`, forward `4723:4723`, and wait for
       WebDriver readiness before Behave execution
+- [ ] Aurora/KDE sabotage runs are explicit, restricted to `aurora-test`, and
+      exercise both the nonexistent-binary and killed-`plasmashell` red paths;
+      failure results and `kde_faillog` artifacts must be retained before
+      teardown

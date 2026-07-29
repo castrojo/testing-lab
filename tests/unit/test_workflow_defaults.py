@@ -246,6 +246,45 @@ def test_aurora_qa_pipeline_is_vm_based_and_serialized():
     assert semaphores["data"]["aurora-vm-qa"] == "1"
 
 
+def test_aurora_qa_pipeline_exposes_safe_kde_sabotage_modes():
+    pipeline_path = ROOT / "argo/workflow-templates/aurora-qa-pipeline.yaml"
+    pipeline = yaml.safe_load(pipeline_path.read_text(encoding="utf-8"))
+    parameters = {
+        parameter["name"]: parameter.get("value")
+        for parameter in pipeline["spec"]["arguments"]["parameters"]
+    }
+    assert parameters["sabotage-mode"] == "none"
+    assert "sabotage-mode" in pipeline_path.read_text(encoding="utf-8")
+
+    runner = (ROOT / "argo/workflow-templates/run-kde-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "missing-binary" in runner
+    assert "kill-plasmashell" in runner
+    assert "this-does-not-exist" in runner
+    assert "pkill -x plasmashell" in runner
+    assert "unexpectedly passed" in runner
+    assert "aurora-test" in runner
+
+
+def test_aurora_kde_sabotage_workflow_runs_both_controlled_failures():
+    path = ROOT / "argo/aurora-kde-sabotage.yaml"
+    workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert workflow["spec"]["onExit"] == "cleanup"
+    tasks = workflow["spec"]["templates"][0]["dag"]["tasks"]
+    sabotage_tasks = [
+        task for task in tasks if task["name"] in {"missing-binary", "kill-plasmashell"}
+    ]
+    assert [task["name"] for task in sabotage_tasks] == [
+        "missing-binary",
+        "kill-plasmashell",
+    ]
+    content = path.read_text(encoding="utf-8")
+    assert "sabotage-mode" in content
+    assert "aurora-test" in content
+    assert "delete vm" in content.lower()
+
+
 def test_kde_runner_adapts_gnome_runner_contract_for_webdriver():
     gnome = (ROOT / "argo/workflow-templates/run-gnome-tests.yaml").read_text(
         encoding="utf-8"

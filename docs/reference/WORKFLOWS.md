@@ -245,6 +245,19 @@ existing KDE runner. It has a one-hour `activeDeadlineSeconds`, holds the
 from its `onExit: teardown` handler. The template is GitOps-managed; live lab
 evidence may require a run after the change is merged and reconciled.
 
+### `aurora-kde-sabotage`
+
+Runs the mandatory red-path proof in the isolated `aurora-test` namespace. It
+reuses the real VM and KDE runner, first replacing one launch target with
+`/usr/bin/this-does-not-exist`, then killing `plasmashell`. Both runs must
+fail, publish failed results, retain `kde_faillog` bundles, and leave no VM
+after `onExit` cleanup. Normal Aurora runs default to `sabotage-mode: none`;
+the runner rejects sabotage modes outside `aurora-test`.
+
+```bash
+just run-aurora-kde-sabotage
+```
+
 ### `run-flatcar-tests` (template: `run-flatcar-tests`)
 
 Same shape for Flatcar; uses `core` as the SSH user and runs pytest+dogtail

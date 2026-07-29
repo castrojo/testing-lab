@@ -36,6 +36,8 @@ spec:
         value: aurora-test
       - name: containerdisk-repo
         value: aurora-containerdisk
+      - name: sabotage-mode
+        value: none
       - name: disk-size
         value: 30G
       - name: suite
@@ -99,6 +101,8 @@ spec:
                   value: "{{workflow.parameters.branch}}"
                 - name: containerdisk-tag
                   value: "{{workflow.parameters.image-tag}}"
+                - name: sabotage-mode
+                  value: "{{workflow.parameters.sabotage-mode}}"
           - name: collect-logs
             depends: "(run-kde-tests.Succeeded || run-kde-tests.Failed || run-kde-tests.Errored)"
             templateRef:

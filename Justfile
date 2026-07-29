@@ -142,6 +142,12 @@ run-kde-linux:
         -n {{ argo_ns }} \
         --watch
 
+# Run the mandatory red-path proof for the Aurora/KDE gate.
+run-aurora-kde-sabotage:
+    argo submit argo/aurora-kde-sabotage.yaml \
+        -n {{ argo_ns }} \
+        --watch
+
 # ── Observation ─────────────────────────────────────────────────────────────
 
 # List all test workflows
