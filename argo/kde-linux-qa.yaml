@@ -1,0 +1,63 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: kde-linux-qa-
+  namespace: argo
+spec:
+  entrypoint: pipeline
+  serviceAccountName: argo
+  activeDeadlineSeconds: 5400
+  onExit: cleanup
+  arguments:
+    parameters:
+    - name: image-url
+      value: "https://files.kde.org/kde-linux/kde-linux_202607281716.iso"
+    - name: image-sha256
+      value: "8554c25d098373a618a733656852ef25ad96c2b8ce59d57d9705e38eb95046bf"
+    - name: namespace
+      value: "kde-test"
+    - name: testsuite-branch
+      value: "main"
+  templates:
+  - name: pipeline
+    dag:
+      tasks:
+      - name: provision
+        templateRef:
+          name: provision-kde-linux-vm
+          template: provision-vm
+        arguments:
+          parameters:
+          - name: vm-name
+            value: "kde-linux-{{workflow.uid}}"
+          - name: namespace
+            value: "{{workflow.parameters.namespace}}"
+          - name: image-url
+            value: "{{workflow.parameters.image-url}}"
+          - name: image-sha256
+            value: "{{workflow.parameters.image-sha256}}"
+      - name: tests
+        depends: provision.Succeeded
+        templateRef:
+          name: run-kde-tests
+          template: run-kde-tests
+        arguments:
+          parameters:
+          - name: vm-name
+            value: "kde-linux-{{workflow.uid}}"
+          - name: vm-namespace
+            value: "{{workflow.parameters.namespace}}"
+          - name: testsuite-branch
+            value: "{{workflow.parameters.testsuite-branch}}"
+  - name: cleanup
+    steps:
+    - - name: teardown
+        templateRef:
+          name: teardown-vm
+          template: teardown-vm
+        arguments:
+          parameters:
+          - name: vm-name
+            value: "kde-linux-{{workflow.uid}}"
+          - name: namespace
+            value: "{{workflow.parameters.namespace}}"

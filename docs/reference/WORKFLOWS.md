@@ -160,6 +160,17 @@ persistence, reachability, redeploy, and teardown assertions.
 
 ## Supporting templates (called via `templateRef`)
 
+### `kde-linux-qa`
+
+Downloads the published KDE Linux hybrid ISO pinned by SHA256, wraps it as a
+containerDisk, boots it under KubeVirt OVMF, forwards SSH and port 4723 with
+virtctl, and runs the `testsuite` `kde-smoke` suite. The VM is deleted by the
+mandatory `onExit` teardown.
+
+```
+just run-kde-linux
+```
+
 These are exposed only because they are referenced by the entry points;
 submit them directly only for diagnosis.
 

@@ -1,0 +1,194 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: provision-kde-linux-vm
+  namespace: argo
+  annotations:
+    description: |
+      Downloads a published KDE Linux hybrid ISO, verifies its pinned SHA256,
+      wraps it as a containerDisk, and boots it as an ephemeral OVMF/KubeVirt VM.
+      KDE Linux publishes a GPT disk image and El Torito ISO in the same artifact.
+spec:
+  templates:
+  - name: provision-vm
+    inputs:
+      parameters:
+      - name: vm-name
+      - name: namespace
+        value: "kde-test"
+      - name: image-url
+        value: "https://files.kde.org/kde-linux/kde-linux_202607281716.iso"
+      - name: image-sha256
+        value: "8554c25d098373a618a733656852ef25ad96c2b8ce59d57d9705e38eb95046bf"
+    outputs:
+      parameters:
+      - name: vm-ip
+        valueFrom:
+          parameter: "{{steps.wait-for-vm.outputs.result}}"
+    steps:
+    - - name: prepare-disk
+        template: prepare-disk
+        arguments:
+          parameters:
+          - name: image-url
+            value: "{{inputs.parameters.image-url}}"
+          - name: image-sha256
+            value: "{{inputs.parameters.image-sha256}}"
+    - - name: create-vm
+        template: create-vm
+        arguments:
+          parameters:
+          - name: vm-name
+            value: "{{inputs.parameters.vm-name}}"
+          - name: namespace
+            value: "{{inputs.parameters.namespace}}"
+    - - name: wait-for-vm
+        template: wait-for-vm
+        arguments:
+          parameters:
+          - name: vm-name
+            value: "{{inputs.parameters.vm-name}}"
+          - name: namespace
+            value: "{{inputs.parameters.namespace}}"
+
+  - name: prepare-disk
+    inputs:
+      parameters:
+      - name: image-url
+      - name: image-sha256
+    volumes:
+    - name: work
+      emptyDir:
+        sizeLimit: 12Gi
+    script:
+      image: quay.io/buildah/stable:latest
+      command: [bash]
+      securityContext:
+        privileged: true
+        runAsUser: 0
+      resources:
+        requests:
+          cpu: "1"
+          memory: 2Gi
+        limits:
+          cpu: "4"
+          memory: 8Gi
+      volumeMounts:
+      - name: work
+        mountPath: /mnt/work
+      source: |
+        set -euo pipefail
+        URL="{{inputs.parameters.image-url}}"
+        SHA="{{inputs.parameters.image-sha256}}"
+        WORK=/mnt/work
+        IMAGE="${WORK}/kde-linux.iso"
+        CONTAINERDISK="192.168.1.102:30500/kde-linux-containerdisk:latest"
+
+        [[ "${SHA}" =~ ^[[:xdigit:]]{64}$ ]] || {
+          echo "image-sha256 must be a 64-character hexadecimal digest" >&2
+          exit 1
+        }
+        curl --fail --location --retry 3 --retry-all-errors \
+          --output "${IMAGE}" "${URL}"
+        printf '%s  %s\n' "${SHA}" "${IMAGE}" | sha256sum -c -
+
+        ctr=$(buildah from scratch)
+        trap 'buildah rm "${ctr}" >/dev/null 2>&1 || true' EXIT
+        buildah copy --chown 107:107 "${ctr}" "${IMAGE}" /disk/kde-linux.iso
+        printf '%s\n' \
+          '{"volumes":[{"image":"kde-linux.iso","capacity":"12Gi"}]}' \
+          > "${WORK}/containerDisk.json"
+        buildah copy "${ctr}" "${WORK}/containerDisk.json" /containerDisk.json
+        buildah commit "${ctr}" "${CONTAINERDISK}"
+        buildah push --tls-verify=false "${CONTAINERDISK}"
+
+  - name: create-vm
+    inputs:
+      parameters:
+      - name: vm-name
+      - name: namespace
+    resource:
+      action: apply
+      manifest: |
+        apiVersion: kubevirt.io/v1
+        kind: VirtualMachine
+        metadata:
+          name: "{{inputs.parameters.vm-name}}"
+          namespace: "{{inputs.parameters.namespace}}"
+          labels:
+            app: kde-linux-test
+            argo-workflow: "{{workflow.name}}"
+        spec:
+          runStrategy: Always
+          template:
+            metadata:
+              labels:
+                kubevirt.io/vm: "{{inputs.parameters.vm-name}}"
+            spec:
+              priorityClassName: lab-test-vm
+              domain:
+                firmware:
+                  bootloader:
+                    efi:
+                      secureBoot: false
+                cpu:
+                  cores: 4
+                memory:
+                  guest: 8Gi
+                devices:
+                  blockMultiQueue: true
+                  rng: {}
+                  disks:
+                  - name: rootdisk
+                    disk:
+                      bus: virtio
+                    bootOrder: 1
+                  - name: cloudinit
+                    disk:
+                      bus: virtio
+                  interfaces:
+                  - name: default
+                    masquerade: {}
+              networks:
+              - name: default
+                pod: {}
+              volumes:
+              - name: rootdisk
+                containerDisk:
+                  image: 192.168.1.102:30500/kde-linux-containerdisk:latest
+              - name: cloudinit
+                cloudInitNoCloud:
+                  userData: |
+                    #cloud-config
+                    users:
+                    - name: bluefin-test
+                      groups: [wheel]
+                      sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+                      shell: /bin/bash
+                      ssh_authorized_keys:
+                      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIkkCyAz7Z1Kk+nUx7K9gKLmeE1ns3jYQ7RMEJx/+PEg bluefin-test-suite@ghost
+
+  - name: wait-for-vm
+    inputs:
+      parameters:
+      - name: vm-name
+      - name: namespace
+    script:
+      image: ghcr.io/projectbluefin/lab-runner:latest
+      command: [bash]
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+      source: |
+        set -euo pipefail
+        exec 3>&1
+        exec 1>&2
+        NS="{{inputs.parameters.namespace}}"
+        VM="{{inputs.parameters.vm-name}}"
+        kubectl wait vmi -n "${NS}" "${VM}" --for=condition=Ready --timeout=900s >&2
+        kubectl get pod -n "${NS}" -l "kubevirt.io/vm=${VM}" \
+          -o jsonpath='{.items[0].status.podIP}' >&3

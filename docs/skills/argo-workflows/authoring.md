@@ -37,6 +37,12 @@ spec:
 - `serviceAccountName: argo` on every WorkflowTemplate
 - `namespace: argo` always
 - `description:` annotation on every template — one paragraph saying what it does
+- `volumeMounts` for a `script` or `container` belong inside that executor
+  block, while matching `volumes` belong on the surrounding template. Argo's
+  strict decoder rejects executor mounts placed directly on the template.
+- Template names are unique within one WorkflowTemplate. Give an entrypoint
+  and its executable step distinct names (for example, `toggle-testing` and
+  `run-toggle-testing`) rather than reusing the same name.
 
 ### 1b. Debugging a workflow stuck on a dead node
 
