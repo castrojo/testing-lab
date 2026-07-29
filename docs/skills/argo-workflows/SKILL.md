@@ -63,6 +63,10 @@ The workflow authoring guidance is split by topic:
   workflow `parallelism` — that limit does not cover simultaneous workflows.
   Put a template-level `synchronization.semaphores` reference on the shared
   template and define its capacity in the GitOps-managed ConfigMap.
+- A `synchronization` block placed directly on a `dag.tasks[]` entry — Argo's
+  schema rejects it. Wrap the `templateRef` in a local `steps` template and put
+  the ConfigMap-backed semaphore on that wrapper when only one DAG task needs
+  cross-workflow serialization.
 - A `steps` or `dag` task calling a sub-template without `arguments:`
 - `{{steps.X.outputs...}}` or `{{tasks.X.outputs...}}` used as an input
   parameter *default inside a leaf template* — that scope only exists at
@@ -171,6 +175,9 @@ Before marking any WorkflowTemplate change done:
 - [ ] All pod-running templates have `resources:` requests and limits
 - [ ] Every node-pinned, high-memory shared template has a ConfigMap-backed
       template-level semaphore sized to the node's allocatable capacity
+- [ ] Any semaphore intended for one DAG task is attached to a wrapper template,
+      not directly to `dag.tasks[]`; the wrapper's `steps` call the external
+      `templateRef`
 - [ ] VM pipelines are scheduler-managed by default; if cross-workflow memory
       contention requires serialization, use a documented template-level
       ConfigMap semaphore with an explicit capacity

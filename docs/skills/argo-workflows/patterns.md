@@ -95,6 +95,40 @@ activeDeadlineSeconds: 3600   # 1h for containerdisk, 7200 for knuckle
 
 **VMs float to any KubeVirt-capable node** — no `nodeSelector: kubernetes.io/hostname: ghost` in VM specs. The registry-mirror-config DaemonSet writes the Zot HTTP registry config to all nodes.
 
+### 15a. Locking one DAG build task
+
+`synchronization` is a template-level field; it is not valid on an individual
+`dag.tasks[]` entry. When one task must share a cross-workflow semaphore with
+another builder, invoke a local wrapper template from the DAG and put the
+semaphore on that wrapper:
+
+```yaml
+tasks:
+  - name: build
+    template: serialized-build
+templates:
+  - name: serialized-build
+    synchronization:
+      semaphores:
+        - configMapKeyRef:
+            name: workflow-semaphores
+            key: migration-containerdisk-build
+    steps:
+      - - name: invoke-builder
+          templateRef:
+            name: shared-builder
+            template: build
+          arguments:
+            parameters:
+              - name: image
+                value: "{{workflow.parameters.image}}"
+```
+
+This keeps the lock around only the build task while preserving the
+cross-WorkflowTemplate `templateRef`. For diagnostic collection, include all
+terminal upstream states when appropriate:
+`(tests.Succeeded || tests.Failed || tests.Errored)`.
+
 ### 16. GitHub Contents API or Standalone Git Push-back — Prefer Standalone Python for Complex Files
 
 When a workflow pod needs to push a simple file to a GitHub repo, use `curl` + `jq` inside the bash script (Contents API).
