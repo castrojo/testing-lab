@@ -68,6 +68,10 @@ The workflow authoring guidance is split by topic:
   paths between steps; pass file *content* via an output parameter
   (`valueFrom.path`, 256KB cap) or an artifact.
 - A pipeline with no `onExit` handler (VM will leak on failure)
+- A workflow invoking a builder that mounts a named staging PVC without defining
+  the matching `volumeClaimTemplates` entry; define the claim at workflow scope
+  and set `volumeClaimGC.strategy: OnWorkflowCompletion` so failed builds do not
+  leave staging storage behind.
 - Any `script:` template without `resources:` limits
 - Templates in `argo/workflow-templates/` applied with `kubectl apply` (not via git)
 - A `pr-poller` (or any PR-gating workflow) that skips on ANY existing commit status — it must skip only `pending` (in-flight) and `success` (already passed), and re-test on `error`/`failure`. Skipping `error` means stale statuses from deleted workflows permanently block retests.
