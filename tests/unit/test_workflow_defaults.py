@@ -52,6 +52,8 @@ def test_dakota_requires_distributed_capacity_matched_execution():
     assert "nodeSelector:\n        kubernetes.io/hostname: ghost" not in pipeline
     assert "depends: detect-build-mode" in pipeline
     assert "Verified BuildStream remote execution configuration" in pipeline
+    assert pipeline.count("key: execution_mode") >= 4
+    assert "value: re" in pipeline
 
 
 def test_bst_pipelines_require_fresh_usb4_backed_remote_execution():
@@ -73,6 +75,15 @@ def test_bst_pipelines_require_fresh_usb4_backed_remote_execution():
         assert "name: bst-build-local" not in pipeline
 
 
+def test_cosmic_remote_build_allows_cache_cold_bootstrap():
+    pipeline = (ROOT / "argo/workflow-templates/cosmic-build-pipeline.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "activeDeadlineSeconds: 10800" in pipeline
+    assert "BST_BUILD_TIMEOUT_SECONDS=10800" in pipeline
+
+
 def test_dakota_production_lane_has_no_local_fallback():
     pipeline = (ROOT / "argo/workflow-templates/dakota-build-pipeline.yaml").read_text(
         encoding="utf-8"
@@ -84,12 +95,49 @@ def test_dakota_production_lane_has_no_local_fallback():
     assert "template: bst-build-local" not in pipeline
 
 
+def test_dakota_build_persists_canonical_build_history_without_invented_evidence():
+    pipeline = (ROOT / "argo/workflow-templates/dakota-build-pipeline.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "onExit: publish-build-history" in pipeline
+    assert "name: publish-build-history" in pipeline
+    assert 'kind: "build"' in pipeline
+    assert 'value: "{{workflow.status}}"' in pipeline
+    assert 'value: "{{workflow.creationTimestamp.RFC3339}}"' in pipeline
+    assert 'value: "{{workflow.parameters.commit-sha}}"' in pipeline
+    assert 'name: GITHUB_TOKEN\n            valueFrom:\n              secretKeyRef:\n                name: github-token\n                key: token' in pipeline
+    assert "git clone --depth=1 https://github.com/projectbluefin/lab.git /workspace/lab" in pipeline
+    assert "GIT_ASKPASS=/workspace/git-askpass" in pipeline
+    assert "python3 /workspace/lab/scripts/publish_dakota_run.py publish" in pipeline
+    assert "raw.githubusercontent.com" not in pipeline
+    assert "phase:" not in pipeline
+    assert "node:" not in pipeline
+    assert "usb4:" not in pipeline
+
+
+def test_bst_build_caches_use_workflow_owned_local_path_pvcs():
+    for filename in ("dakota-build-pipeline.yaml", "cosmic-build-pipeline.yaml"):
+        pipeline = (ROOT / "argo/workflow-templates" / filename).read_text(
+            encoding="utf-8"
+        )
+
+        assert "activeDeadlineSeconds: 10800" in pipeline
+        assert "name: bst-cache\n          ephemeral:" in pipeline
+        assert "storageClassName: local-path" in pipeline
+        assert "storage: 200Gi" in pipeline
+        assert "path: /var/lib/dakota/buildstream-cache" not in pipeline
+        assert "ephemeral-storage: 10Gi" in pipeline
+        assert "ephemeral-storage: 50Gi" in pipeline
+
+
 def test_usb4_monitor_publishes_a_fresh_observation_on_every_probe():
     monitor = (ROOT / "manifests/usb4-link-monitor.yaml").read_text(
         encoding="utf-8"
     )
 
     assert "lab.projectbluefin.io/usb4-link-observed-at" in monitor
+    assert "lab.projectbluefin.io/usb4-latency-ms" in monitor
     assert "date -u +%s" in monitor
     assert "N % 20" not in monitor
 
@@ -239,6 +287,7 @@ def test_aurora_qa_pipeline_is_vm_based_and_serialized():
     assert "value: aurora-test" in content
     assert "value: 30G" in content
     assert "run-kde-tests.Errored" in content
+    assert 'kubectl delete vmi,pod -n "${NS}" -l "${LABEL}"' in content
 
     semaphores = yaml.safe_load(
         (ROOT / "manifests/workflow-semaphores.yaml").read_text(encoding="utf-8")
@@ -358,6 +407,7 @@ def test_kde_runner_persists_failure_artifacts_and_pushes_guest_screenshots():
     )
 
     assert "faillog_" in kde
+    assert "kde_faillog" in kde
     assert "python3 -m tarfile -c" in kde
     assert "tar -czf" not in kde
     assert "ARTIFACT_RC=1" in kde
@@ -378,11 +428,15 @@ def test_kde_linux_workflow_calls_native_runner_with_current_contract():
         ROOT / "argo/workflow-templates/provision-kde-linux-vm.yaml"
     ).read_text(encoding="utf-8")
 
-    assert 'value: "aurora-test"' in workflow
+    assert 'value: "kde-test"' in workflow
+    assert "- name: suite" in workflow
+    assert 'value: "kde-smoke"' in workflow
+    assert "- name: variant" in workflow
+    assert 'value: "kde-linux"' in workflow
     assert "- name: branch" in workflow
     assert "workflow.parameters.branch" in workflow
     assert "testsuite-branch" not in workflow
-    assert 'value: "aurora-test"' in provision
+    assert 'value: "kde-test"' in provision
     assert "kde-test-namespace" not in workflow
 
 

@@ -249,6 +249,10 @@ retained for 180 days and is safe to consume as a dashboard trend source.
 | `requests` | number or null | BuildBarn `Get` operation count when exposed |
 | `bytes` | number or null | BuildBarn `Get` histogram sum when exposed |
 | `duration_seconds` | number or null | BuildBarn `Get` duration histogram sum when exposed |
+| `latency_ms` | number or null | Mean `Get` latency, `duration_seconds / request_count * 1000` |
+| `logical_fill_bytes` / `logical_capacity_bytes` | number or null | Logical cache fill and configured capacity |
+| `logical_fill_percent` | number or null | Logical fill percentage derived from allocator counters |
+| `logical_fill_state` / `logical_fill_reason` | string | Availability and provenance for logical fill |
 | `state` / `state_reason` | string | Availability of the requested heat signal |
 | `source_url` / `derivation` | string or null | Evidence and calculation provenance |
 
@@ -256,13 +260,71 @@ BuildBarn does not expose dedicated cache-hit counters. The collector derives
 hits and misses only from `Get` gRPC status counters (`OK` and `NotFound`);
 when those counters are absent, the fields and `effectiveness` remain `null`
 with an explicit unavailable reason. It never derives a hit rate from
-occupancy or allocator counters.
+occupancy or allocator counters. Latency is derived from the same BuildBarn
+duration histogram sums and status counts; logical fill is derived separately
+from the exact allocator `allocations_total` and `releases_total` families and
+is labeled as an estimate of logical rather than physical allocation.
+
+## `docs/data/dakota-build-trends.json` execution matrix
+
+The optional `execution_matrix[]` preserves one row per validated Dakota build
+or publish execution. `phases` contains measured clone, fetch, BuildStream,
+export, and Zot-push seconds; `rechunk_seconds`, `second_run_speedup`, node
+work, GHCR outcome, and USB4 latency remain `null`/`unavailable` until a
+producer emits direct measurements. The dashboard renders missing cells as
+unavailable rather than estimating them.
+
+## `docs/data/usb4-execution.json`
+
+The USB-4 heatmap is backed by `scripts/collect_usb4_execution.py`, which reads
+bounded execution fields from validated workflow telemetry records. Rows are
+keyed only by `ghost` or `exo-0` and carry an explicit UTC window. Throughput,
+latency, action count, cache result, and cold/warm state remain `null` until a
+workflow publishes those measurements; link annotations alone are not execution
+evidence. `scripts/usb4_execution_exporter.py` exposes available rows as
+`lab_usb4_execution_throughput_bytes_per_second`,
+`lab_usb4_execution_latency_ms`, and
+`lab_usb4_execution_actions_total`, all labeled only by node.
 
 ## history/release-verdict.ndjson
+
+## `docs/data/fleet-telemetry.json`
+
+Historical fleet-drift contract produced by `scripts/collect_fleet_telemetry.py`.
+It contains `active_version_histogram`, `digest_age`, `upstream_lag`, and
+`workload_health` rows, plus links to rolling NDJSON history under
+`docs/data/history/`. Active-version rows require a repo-owned artifact/cache
+export (`FLEET_TELEMETRY_ARTIFACT`); without one they remain `null` and
+`state: "unavailable"`. Digest age is derived only from release-verdict build
+timestamps, upstream lag only from `upstream-status.json` freshness, and
+workload health only from Kubernetes resource snapshots. Missing evidence is
+never replaced with synthetic values. The four histories are
+`active-versions.ndjson`, `digest-age.ndjson`, `upstream-lag.ndjson`, and
+`workload-health.ndjson`.
 
 Rolling append-only history of verdict transitions. One line per `(lane, digest)` change:
 `{recorded_at, lane, digest, verdict, build, qa, signature}`. Retention: 365 days; the collector
 prunes older lines on each run. Rows never rewrite — a new digest or changed verdict appends.
+
+## `docs/data/history/boot-update.ndjson` and `boot-update-telemetry.json`
+
+The `toggle-testing-rebase` WorkflowTemplate emits one JSON telemetry parameter
+after both directions complete. A publisher may append that parameter with
+`scripts/collect_boot_update_telemetry.py append`; the dashboard consumer
+regenerates `boot-update-telemetry.json` during the normal page-data refresh.
+The record is intentionally small and evidence-backed:
+
+| Field | Meaning |
+| --- | --- |
+| `workflow_name` / `lane` | Argo run and tested image lane |
+| `bootc_status` | Whether machine-readable `bootc status --json` was observed |
+| `deployment` | Booted image and digest from `bootc status --json`; either may be `null` |
+| `update.succeeded` | Forward toggle and reboot verification completed |
+| `rollback.succeeded` | Return toggle and reboot verification completed |
+| `post_update_boot.succeeded` | Post-update boot evidence from the forward reboot |
+
+Missing identity values remain `null`; consumers never infer them from tags.
+Rows use the shared provenance fields and are retained for 180 days.
 
 ## NDJSON history contracts
 
@@ -306,7 +368,8 @@ Dedup key: `(variant, branch, suite, workflow_name)`.
 
 ### `docs/data/history/build-runs.ndjson`
 
-One line per terminal build or publish run.
+One line per build or publish run, including an explicit `running` status when
+the producer has not published terminal timestamps yet.
 
 Producer: `scripts/collect_factory_builds.py` for `plane=publish` (GitHub Actions
 runs of `projectbluefin/{bluefin,bluefin-lts,dakota}`) and
@@ -327,12 +390,12 @@ input.
 | `lane` | string | Lane id (`bluefin-testing`, ...) |
 | `run_id` | string | Unique run identifier from the producing system |
 | `workflow_name` | string | Argo workflow name; canonical Dakota deduplication key |
-| `status` | `"passed"` or `"failed"` | Terminal build status |
+| `status` | `"passed"`, `"failed"`, or `"running"` | Build status |
 | `started_at` | ISO8601 | Build start time |
-| `finished_at` | ISO8601 | Build end time |
-| `duration_min` | number | Duration in minutes |
-| `run_url` | string | Canonical run URL |
-| `failure_stage` | string or null | Failed stage name when `status` is `failed` |
+| `finished_at` | ISO8601 or null | Build end time; null while running |
+| `duration_min` | number or null | Duration in minutes; null while running |
+| `run_url` | string or null | Canonical run URL |
+| `failure_stage` | string or null | Failed stage name when published |
 | `failure_class` | string or null | Normalized failure class; never a raw log excerpt |
 | `commit_sha` | string or null | Dakota source commit for retry/flakiness comparisons |
 | `digest` | string or null | Published or built OCI digest when known |
@@ -342,11 +405,21 @@ input.
 Dedup key: `workflow_name` for schema `1.0` Dakota records; `(plane, run_id)` for
 other collectors.
 
+The `/` and `/builds` consumers use the same UTC rolling window and preserve
+passed, failed, and running counts for both planes. Argo telemetry reuses
+`lab_build_workflow_completed_total` for completion counts and
+`lab_build_workflow_duration_seconds` for duration distributions (source unit:
+seconds); NDJSON `duration_min` is the published minute representation. Missing
+metrics, failure attribution, or provenance remain null with an explicit
+unavailable state rather than being inferred.
+
 ### `docs/data/dakota-build-trends.json`
 
 Derived page dataset for Dakota throughput and duration trends. The raw source
 remains `docs/data/history/build-runs.ndjson`; this file is regenerated by
 `scripts/generate_page_datasets.py` and is not an additional event log.
+Consumer: `/builds`, where the trend chart and UTC-bucketed detail table are
+shown with generated-at and raw-history provenance.
 
 Top-level fields:
 
@@ -396,6 +469,36 @@ Consumer: `/security` page, release-verdict CVE regression display.
 
 This file is non-gating per ADR 0002. It is displayed alongside the verdict as a
 trend signal.
+
+### `docs/data/security-telemetry.json`
+
+Historical security evidence assembled by `scripts/collect_security_telemetry.py`.
+It consumes the existing CVE scan and release-verdict histories; it does not
+turn publisher capability declarations into runtime evidence.
+
+`summary_metrics[]` contains exactly these stable ids:
+`cve_counts_by_severity`, `time_to_patch`, `sbom_coverage`,
+`signature_completeness`, and `provenance_attestations`. Available metrics carry
+a `history` array and the shared provenance fields. Unsupported metrics carry
+`value: null`, an empty `history`, `state: "unavailable"`, and an explicit
+`state_reason`.
+
+The CVE history preserves `critical`, `high`, `medium`, `low`, `negligible`, and
+`unknown` counts from `cve-summary.ndjson`. Signature completeness is the ratio
+of passed outcomes to all verdict rows in the collection bucket; the contract
+also publishes `known`, `unavailable`, and `total`. A bucket with unavailable
+outcomes is not marked fully available. Time-to-patch requires per-CVE first-seen and fixed/resolved timestamps,
+SBOM coverage requires a historical SBOM artifact manifest, and provenance
+coverage requires a historical attestation manifest. Until those artifacts are
+published, the metrics remain unavailable rather than inferred.
+
+Scan and verdict artifacts may also carry `sbom`, `provenance`, and
+`signature_evidence` objects. Each object uses `status`, `reason`, `source_url`,
+`collected_at`, and `derivation`; `available` means the referenced artifact was
+actually published for the digest. An unavailable object is retained in the
+contract so consumers cannot mistake a missing artifact, a capability flag, or
+a passing signature for evidence. Digest identity is an artifact field and is
+never a metric label.
 
 ### `docs/data/enrollment-issues.json`
 

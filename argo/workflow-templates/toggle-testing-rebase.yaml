@@ -140,6 +140,26 @@ spec:
                   value: "{{workflow.parameters.start-tag}}"
                 - name: ssh-key-secret
                   value: "{{workflow.parameters.ssh-key-secret}}"
+        - - name: emit-telemetry
+            template: emit-boot-update-telemetry
+            arguments:
+              parameters:
+                - name: vm-ip
+                  value: "{{steps.provision.outputs.parameters.vm-ip}}"
+                - name: image
+                  value: "{{workflow.parameters.image}}"
+                - name: target-tag
+                  value: "{{workflow.parameters.target-tag}}"
+                - name: start-tag
+                  value: "{{workflow.parameters.start-tag}}"
+                - name: ssh-key-secret
+                  value: "{{workflow.parameters.ssh-key-secret}}"
+        - - name: publish-telemetry
+            template: publish-boot-update-telemetry
+            arguments:
+              parameters:
+                - name: telemetry
+                  value: "{{steps.emit-telemetry.outputs.parameters.telemetry}}"
 
     - name: run-toggle-testing
       activeDeadlineSeconds: 1800
@@ -265,6 +285,55 @@ spec:
           secret:
             secretName: "{{inputs.parameters.ssh-key-secret}}"
 
+    - name: emit-boot-update-telemetry
+      activeDeadlineSeconds: 300
+      inputs:
+        parameters:
+          - name: vm-ip
+          - name: image
+          - name: target-tag
+          - name: start-tag
+          - name: ssh-key-secret
+      outputs:
+        parameters:
+          - name: telemetry
+            valueFrom:
+              path: /tmp/results/boot-update-telemetry.json
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        source: |
+          set -euo pipefail
+          mkdir -p /tmp/results
+          KEY=/etc/ssh/test-key/id_ed25519
+          SSH=(ssh -i "${KEY}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o LogLevel=ERROR "bluefin-test@{{inputs.parameters.vm-ip}}")
+          STATUS="$("${SSH[@]}" "sudo bootc status --json")"
+          RECORDED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf '%s' "${STATUS}" > /tmp/results/bootc-status.json
+          git clone --depth=1 https://github.com/projectbluefin/lab.git /tmp/lab
+          python3 /tmp/lab/scripts/record_boot_update_telemetry.py \
+            /tmp/results/bootc-status.json \
+            /tmp/results/boot-update-telemetry.json \
+            --recorded-at "${RECORDED_AT}" \
+            --workflow-name "{{workflow.name}}" \
+            --image "{{inputs.parameters.image}}" \
+            --target-tag "{{inputs.parameters.target-tag}}"
+        volumeMounts:
+          - name: ssh-key
+            mountPath: /etc/ssh/test-key
+            readOnly: true
+      volumes:
+        - name: ssh-key
+          secret:
+            secretName: "{{inputs.parameters.ssh-key-secret}}"
+
     - name: teardown
       steps:
         - - name: delete-vm
@@ -279,3 +348,60 @@ spec:
                   value: "{{workflow.parameters.namespace}}"
                 - name: test-root
                   value: "{{workflow.parameters.test-root}}"
+
+    - name: publish-boot-update-telemetry
+      inputs:
+        parameters:
+          - name: telemetry
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+        source: |
+          set -Eeuo pipefail
+          TELEMETRY='{{inputs.parameters.telemetry}}'
+          if [ -z "${TELEMETRY}" ] || [ "${TELEMETRY}" = "null" ]; then
+            echo "No boot/update telemetry was emitted; leaving history unchanged." >&2
+            exit 0
+          fi
+
+          mkdir -p /workspace
+          printf '%s' "${TELEMETRY}" > /workspace/boot-update-telemetry.json
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'case "$1" in' \
+            '  *Username*) printf "%s\n" github-actions ;;' \
+            '  *) printf "%s\n" "$GITHUB_TOKEN" ;;' \
+            'esac' > /workspace/git-askpass
+          chmod 700 /workspace/git-askpass
+          GIT_ASKPASS=/workspace/git-askpass \
+            GIT_TERMINAL_PROMPT=0 \
+            git clone --depth=1 https://github.com/projectbluefin/lab.git /workspace/lab
+          python3 /workspace/lab/scripts/collect_boot_update_telemetry.py append \
+            /workspace/boot-update-telemetry.json \
+            --history /workspace/lab/docs/data/history/boot-update.ndjson
+          cd /workspace/lab
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add docs/data/history/boot-update.ndjson
+          if git diff --cached --quiet; then
+            echo "Boot/update telemetry already present; nothing to publish." >&2
+            exit 0
+          fi
+          git commit -m "ci: record boot update telemetry"
+          GIT_ASKPASS=/workspace/git-askpass GIT_TERMINAL_PROMPT=0 git push origin HEAD:main
+          rm -f /workspace/git-askpass

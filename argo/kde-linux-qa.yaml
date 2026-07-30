@@ -15,7 +15,11 @@ spec:
     - name: image-sha256
       value: "8554c25d098373a618a733656852ef25ad96c2b8ce59d57d9705e38eb95046bf"
     - name: namespace
-      value: "aurora-test"
+      value: "kde-test"
+    - name: suite
+      value: "kde-smoke"
+    - name: variant
+      value: "kde-linux"
     - name: branch
       value: "main"
   templates:
@@ -47,6 +51,10 @@ spec:
             value: "kde-linux-{{workflow.uid}}"
           - name: vm-namespace
             value: "{{workflow.parameters.namespace}}"
+          - name: suite
+            value: "{{workflow.parameters.suite}}"
+          - name: variant
+            value: "{{workflow.parameters.variant}}"
           - name: branch
             value: "{{workflow.parameters.branch}}"
   - name: cleanup

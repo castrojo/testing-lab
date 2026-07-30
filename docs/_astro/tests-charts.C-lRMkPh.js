@@ -8,6 +8,22 @@ const renderUnavailable = (element, message) => {
   element.innerHTML = `<div class="chart-panel__empty">${message}</div>`;
 };
 
+const formatUtc = (value) => value
+  ? `${new Date(value).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' })} UTC`
+  : 'Unavailable';
+
+const addContext = (element, items, label = 'UTC history', generatedAt = null) => {
+  const timestamps = items
+    .map((item) => new Date(item.recorded_at).getTime())
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b);
+  const note = document.createElement('div');
+  note.className = 'chart-panel__note';
+  note.style.cssText = 'color:#64748b;font-size:0.72rem;margin-top:0.5rem;';
+  note.textContent = `${label} · ${items.length} sample${items.length === 1 ? '' : 's'} · ${timestamps.length ? `${formatUtc(timestamps[0])} – ${formatUtc(timestamps[timestamps.length - 1])}` : 'window unavailable'} · last updated ${formatUtc(generatedAt || timestamps[timestamps.length - 1])}`;
+  element.parentElement?.appendChild(note);
+};
+
 const palette = [
   '#38bdf8', '#4ade80', '#f59e0b', '#ec4899', '#8b5cf6',
   '#f43f5e', '#10b981', '#3b82f6', '#f97316', '#a78bfa',
@@ -44,8 +60,10 @@ const renderTrends = () => {
   const groups = groupTestRuns();
   if (!groups.length) {
     renderUnavailable(element, 'No test run history published yet.');
+    addContext(element, testRuns, 'UTC history', payload.generatedAt);
     return;
   }
+  addContext(element, testRuns, 'UTC history', payload.generatedAt);
 
   const series = groups.map(([key, runs], index) => {
     const run = runs[0];
@@ -113,8 +131,10 @@ const renderHeatmap = () => {
   const variants = Array.isArray(payload.variants) ? payload.variants : [];
   if (!suites.length || !variants.length) {
     renderUnavailable(element, 'No suite/variant dimensions published yet.');
+    addContext(element, [], 'Current snapshot', payload.generatedAt);
     return;
   }
+  addContext(element, [], 'Current snapshot', payload.generatedAt);
 
   const cellMap = new Map();
   for (const row of rows) {
@@ -232,8 +252,10 @@ const renderFlakes = () => {
 
   if (!flakyRows.length) {
     container.innerHTML = `<div class="flake-panel__empty">No flaky rows detected across ${totalRuns} recorded runs.</div>`;
+    addContext(container, testRuns, 'UTC history', payload.generatedAt);
     return;
   }
+  addContext(container, testRuns, 'UTC history', payload.generatedAt);
 
   const grid = document.createElement('div');
   grid.className = 'flake-grid';

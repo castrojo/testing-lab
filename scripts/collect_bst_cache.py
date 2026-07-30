@@ -103,7 +103,15 @@ def _metric_total(metrics_text, metric_name, storage_type, operation, suffix):
     return total if found else None
 
 
-def collect_cache_heat(metrics_text, pod, storage_type):
+def collect_cache_heat(
+    metrics_text,
+    pod,
+    storage_type,
+    logical_fill_bytes=None,
+    logical_capacity_bytes=None,
+    logical_fill_state=None,
+    logical_fill_reason=None,
+):
     """Build one honest cache-heat record from BuildBarn's exposed metrics.
 
     BuildBarn exposes blob access counts, bytes, timings, and gRPC status
@@ -145,6 +153,18 @@ def collect_cache_heat(metrics_text, pod, storage_type):
         effectiveness = round(hit_count / (hit_count + miss_count), 6)
         requests = hit_count + miss_count
     metrics_available = hit_count is not None and miss_count is not None
+    latency_ms = None
+    if duration is not None and status_total:
+        latency_ms = round(duration / status_total * 1000, 6)
+    logical_fill_percent = None
+    if (
+        logical_fill_bytes is not None
+        and logical_capacity_bytes is not None
+        and logical_capacity_bytes > 0
+    ):
+        logical_fill_percent = round(
+            100 * logical_fill_bytes / logical_capacity_bytes, 6
+        )
     return {
         "cache_backend": "buildbarn",
         "pod": pod,
@@ -155,6 +175,14 @@ def collect_cache_heat(metrics_text, pod, storage_type):
         "requests": int(requests) if requests is not None and requests.is_integer() else requests,
         "bytes": int(bytes_total) if bytes_total is not None and bytes_total.is_integer() else bytes_total,
         "duration_seconds": duration,
+        "latency_ms": latency_ms,
+        "logical_fill_bytes": logical_fill_bytes,
+        "logical_capacity_bytes": logical_capacity_bytes,
+        "logical_fill_percent": logical_fill_percent,
+        "logical_fill_state": logical_fill_state or (
+            "available" if logical_fill_bytes is not None else "unavailable"
+        ),
+        "logical_fill_reason": logical_fill_reason,
         "state": "available" if metrics_available else "unavailable",
         "state_reason": (
             None
@@ -169,7 +197,8 @@ def collect_cache_heat(metrics_text, pod, storage_type):
         "source_url": f"kubectl proxy: pods/{pod}:9980/proxy/metrics (namespace buildbarn)",
         "derivation": (
             "BuildBarn blob_access_operations Get histogram counters/sums; "
-            "OK is a hit and NotFound is a miss"
+            "OK is a hit and NotFound is a miss; latency is duration_sum / "
+            "status_count; logical fill is supplied from allocator counters"
         ),
     }
 
@@ -213,65 +242,71 @@ def node_for_pod(namespace, pod):
     return doc.get("spec", {}).get("nodeName")
 
 
+def collect_usb4_telemetry(collected_at):
+    """Collect only the USB-4 link observations backed by node annotations."""
+    links = {}
+    observed_at = {}
+    latency_ms = {}
+    for node in ("ghost", "exo-0"):
+        doc = run_json_raw(f"/api/v1/nodes/{node}")
+        annotations = (doc or {}).get("metadata", {}).get("annotations", {})
+        link = annotations.get("lab.projectbluefin.io/usb4-link")
+        if link in {"up", "down"}:
+            links[node] = link
+        observed = annotations.get("lab.projectbluefin.io/usb4-link-observed-at")
+        if observed:
+            observed_at[node] = observed
+        latency = annotations.get("lab.projectbluefin.io/usb4-latency-ms")
+        if latency not in (None, "", "unavailable"):
+            try:
+                latency_ms[node] = float(latency)
+            except ValueError:
+                pass
+
+    if links.get("ghost") == "up" and links.get("exo-0") == "up":
+        status = "up"
+    elif "down" in (links.get("ghost"), links.get("exo-0")):
+        status = "down"
+    else:
+        status = "unavailable"
+
+    return {
+        "status": status,
+        "bandwidth_gbps": None,
+        "latency_ms": latency_ms.get("ghost")
+        if latency_ms.get("ghost") is not None
+        else latency_ms.get("exo-0"),
+        "ghost_link": links.get("ghost"),
+        "ghost_observed_at": observed_at.get("ghost"),
+        "exo0_link": links.get("exo-0"),
+        "exo0_observed_at": observed_at.get("exo-0"),
+        "cold_build_duration_min": None,
+        "warm_build_duration_min": None,
+        "speedup_ratio": None,
+        "rechunk_duration_sec": None,
+        "work_distribution": {"ghost": None, "exo-0": None},
+        "source_url": "kubectl proxy: nodes/ghost and nodes/exo-0",
+        "collected_at": collected_at,
+        "derivation": (
+            "USB-4 link status and probe latency are read from node annotations; bandwidth, "
+            "build durations, rechunk time, and work distribution require direct "
+            "measurements not exposed by this collector"
+        ),
+        "state": "unavailable",
+        "state_reason": (
+            "USB-4 link annotations do not provide measured distributed-build "
+            "telemetry"
+        ),
+    }
+
+
 def main():
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows = []
     heat_records = []
 
     # -- USB-4 Link & Distributed Build Telemetry ----------------------
-    usb4_link_state = "unavailable"
-    ghost_link = None
-    ghost_obs = None
-    exo0_link = None
-    exo0_obs = None
-
-    try:
-        ghost_link = run_raw("/api/v1/nodes/ghost")
-        if ghost_link:
-            ghost_doc = json.loads(ghost_link)
-            ann = ghost_doc.get("metadata", {}).get("annotations", {})
-            ghost_link_val = ann.get("lab.projectbluefin.io/usb4-link")
-            ghost_obs_val = ann.get("lab.projectbluefin.io/usb4-link-observed-at")
-            if ghost_link_val:
-                ghost_link = ghost_link_val
-            if ghost_obs_val:
-                ghost_obs = ghost_obs_val
-
-        exo0_raw = run_raw("/api/v1/nodes/exo-0")
-        if exo0_raw:
-            exo0_doc = json.loads(exo0_raw)
-            ann0 = exo0_doc.get("metadata", {}).get("annotations", {})
-            exo0_link_val = ann0.get("lab.projectbluefin.io/usb4-link")
-            exo0_obs_val = ann0.get("lab.projectbluefin.io/usb4-link-observed-at")
-            if exo0_link_val:
-                exo0_link = exo0_link_val
-            if exo0_obs_val:
-                exo0_obs = exo0_obs_val
-
-        if ghost_link == "up" and exo0_link == "up":
-            usb4_link_state = "up"
-        elif ghost_link == "down" or exo0_link == "down":
-            usb4_link_state = "down"
-    except Exception:
-        pass
-
-    usb4_telemetry = {
-        "status": usb4_link_state,
-        "bandwidth_gbps": 40.0,
-        "latency_ms": 0.18 if usb4_link_state == "up" else None,
-        "ghost_link": ghost_link or "unavailable",
-        "ghost_observed_at": ghost_obs,
-        "exo0_link": exo0_link or "unavailable",
-        "exo0_observed_at": exo0_obs,
-        "cold_build_duration_min": 20.2,
-        "warm_build_duration_min": 4.8,
-        "speedup_ratio": 4.2,
-        "rechunk_duration_sec": 145,
-        "work_distribution": {
-            "ghost": 45,
-            "exo-0": 55
-        }
-    }
+    usb4_telemetry = collect_usb4_telemetry(now)
 
     # -- bazel-remote (ghost only) --------------------------------------
     # bst-artifact-server is nodeSelector-pinned to ghost (manifests/bst-artifact-server.yaml)
@@ -304,10 +339,27 @@ def main():
             "requests": None,
             "bytes": None,
             "duration_seconds": None,
+            "latency_ms": None,
+            "logical_fill_bytes": used if status else None,
+            "logical_capacity_bytes": capacity if status else None,
+            "logical_fill_percent": (
+                round(100 * used / capacity, 6)
+                if status and used is not None and capacity
+                else None
+            ),
+            "logical_fill_state": "available" if status and used is not None else "unavailable",
+            "logical_fill_reason": (
+                None
+                if status and used is not None
+                else "bazel-remote /status exposes occupancy only when available"
+            ),
             "state": "unavailable",
             "state_reason": "bazel-remote /status exposes occupancy only, not hit/miss metrics",
             "source_url": "kubectl proxy: services/bst-artifact-server:8080/proxy/status",
-            "derivation": None,
+            "derivation": (
+                "bazel-remote /status exposes occupancy only; hit, miss, request, "
+                "bytes, and latency metrics are not exposed"
+            ),
         })
     else:
         rows.append({
@@ -319,9 +371,9 @@ def main():
             "used_bytes": None,
             "capacity_bytes": None,
             "percent": None,
-            "source_url": None,
+            "source_url": "kubectl proxy: services/bst-artifact-server:8080/proxy/status",
             "collected_at": now,
-            "derivation": None,
+            "derivation": "bazel-remote /status occupancy contract via kubectl API-server service proxy",
             "state": "unavailable",
             "state_reason": "cluster unreachable or bst-artifact-server not responding on /status",
         })
@@ -335,10 +387,19 @@ def main():
             "requests": None,
             "bytes": None,
             "duration_seconds": None,
+            "latency_ms": None,
+            "logical_fill_bytes": None,
+            "logical_capacity_bytes": None,
+            "logical_fill_percent": None,
+            "logical_fill_state": "unavailable",
+            "logical_fill_reason": "bazel-remote /status unavailable",
             "state": "unavailable",
             "state_reason": "bazel-remote /status unavailable",
-            "source_url": None,
-            "derivation": None,
+            "source_url": "kubectl proxy: services/bst-artifact-server:8080/proxy/status",
+            "derivation": (
+                "bazel-remote /status occupancy contract via kubectl API-server "
+                "service proxy; endpoint unavailable"
+            ),
         })
 
     # -- Buildbarn 2-shard CAS/AC (ghost + exo-0) ------------------------
@@ -361,10 +422,19 @@ def main():
                     "requests": None,
                     "bytes": None,
                     "duration_seconds": None,
+                    "latency_ms": None,
+                    "logical_fill_bytes": None,
+                    "logical_capacity_bytes": capacity,
+                    "logical_fill_percent": None,
+                    "logical_fill_state": "unavailable",
+                    "logical_fill_reason": "BuildBarn metrics endpoint unavailable",
                     "state": "unavailable",
                     "state_reason": "BuildBarn metrics endpoint unavailable",
-                    "source_url": None,
-                    "derivation": None,
+                    "source_url": f"kubectl proxy: pods/{pod}:9980/proxy/metrics (namespace buildbarn)",
+                    "derivation": (
+                        "BuildBarn blob access metrics endpoint was unavailable; "
+                        "allocator and cache heat fields remain null"
+                    ),
                 })
                 rows.append({
                     "id": row_id,
@@ -383,7 +453,6 @@ def main():
                 })
                 continue
 
-            heat_records.append(collect_cache_heat(metrics, pod, storage_type))
             allocations = parse_metric_value(
                 metrics, "buildbarn_blobstore_block_device_backed_block_allocator_allocations_total",
                 {"storage_type": storage_type},
@@ -397,6 +466,18 @@ def main():
             if allocations is not None and releases is not None:
                 used = max(0.0, allocations - releases) * block_size
                 used = min(used, float(capacity))
+
+            heat_records[-1] = collect_cache_heat(
+                metrics,
+                pod,
+                storage_type,
+                logical_fill_bytes=used,
+                logical_capacity_bytes=capacity,
+                logical_fill_state="available" if used is not None else "unavailable",
+                logical_fill_reason=(
+                    None if used is not None else "allocator counters not readable from /metrics"
+                ),
+            )
 
             rows.append({
                 "id": row_id,

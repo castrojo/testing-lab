@@ -62,6 +62,11 @@ metadata:
 27. **Never let a private, in-cluster URL become public dashboard evidence.** Collector fallbacks that reach for an Argo run URL or a LAN address publish an unreachable link to every visitor. Gate evidence links on being publicly resolvable and emit an explicit unavailable state otherwise. This class of bug does not reproduce locally, because a developer PAT carries scopes (`read:packages`) that `GITHUB_TOKEN` lacks, so the public path succeeds on a workstation and silently falls back in CI.
 28. **Derive dataset expectations from the data, never hardcode counts.** Tests that assert a fixed number of lanes or cards break the whole ingestion workflow the moment a lane is added. Read the count from the source of truth (`docs/data/variant-publishers.json`).
 29. **Git-mutating workflow publishers must keep tokens out of URLs and argv.** Use a credential-free HTTPS remote plus `GIT_ASKPASS`/`GIT_TERMINAL_PROMPT=0`, with the token supplied only through the process environment. If an append-only history push loses a race, fetch/reset a disposable clone to the latest remote branch and replay the validated append before retrying; never force-push or resolve the NDJSON conflict with `-X ours`, because either can discard a concurrent record. Source: `/websites/git-scm`.
+30. **Optional fleet telemetry artifacts must be capability-detected.** Run
+    `scripts/collect_fleet_telemetry.py` even when the GitHub artifact/cache export
+    is absent; it must publish `null` plus `state: unavailable` for active-version
+    buckets and continue using only repo-tracked release, upstream, and Kubernetes
+    snapshots. Never seed history with fabricated observations.
 
 ## Common Rationalizations
 
@@ -109,6 +114,14 @@ metadata:
 - A publishing workflow has been red for dozens of consecutive runs and nobody has checked whether a ruleset was created around the last green run (`gh api repos/<owner>/<repo>/rulesets`, compare `created_at` to the last success).
 
 ## Verification
+
+### Security history evidence
+
+Use `scripts/collect_security_telemetry.py` to derive security history from
+the tracked CVE and release-verdict NDJSON artifacts. Keep unsupported
+time-to-patch, SBOM, and provenance-attestation metrics explicitly unavailable
+until workflows publish their required artifacts; static publisher capability
+flags and a passing signature are not historical evidence for those metrics.
 
 - [ ] Workflow logic preserves last known live snapshot when private endpoint fetch fails
 - [ ] `_meta.live_snapshot_ok` and `_meta.refreshed_at` are present and updated

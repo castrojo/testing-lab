@@ -57,6 +57,8 @@ def test_toggle_testing_rebase_is_gitops_managed_and_covers_both_directions():
         "toggle-back",
         "reboot-back",
         "verify-back",
+        "emit-telemetry",
+        "publish-telemetry",
     ]
     content = (ROOT / "argo" / "workflow-templates" / "toggle-testing-rebase.yaml").read_text(
         encoding="utf-8"

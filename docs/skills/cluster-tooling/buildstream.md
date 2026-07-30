@@ -67,6 +67,18 @@ and blocked Buildbarn storage scheduling on `exo-0` until the Job was removed.
 
 ## Lessons for future agents
 
+### Cache trend evidence
+
+`scripts/collect_bst_cache.py` is the source of truth for cache history. Keep
+the exact BuildBarn Prometheus metric families already used by the collector:
+derive hits/misses only from `Get` status samples (`OK`/`NotFound`), derive
+mean latency from the matching duration sum and request count, and derive
+logical fill from allocator `allocations_total - releases_total` times the
+configured block size. Persist each backend/storage snapshot to
+`docs/data/history/cache-heat.ndjson` with `source_url`, `recorded_at`,
+`derivation`, and explicit unavailable fields; never turn occupancy into a
+hit rate or hide missing trend points in the dashboard.
+
 The 2026-07-22 Dakota investigation established the following decision tree:
 
 1. **Verify admission before debugging compilation.** Fresh USB4 timestamps, node

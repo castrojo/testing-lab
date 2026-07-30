@@ -1,0 +1,355 @@
+{
+  "schema_version": "v1",
+  "_meta": {
+    "page": "index",
+    "description": "Historical fleet drift telemetry from release, upstream, Kubernetes, and optional artifact evidence.",
+    "generated_at": "2026-07-30T03:03:43Z",
+    "status": "live",
+    "source": "docs/data/release-verdict.json"
+  },
+  "summary_metrics": [
+    {
+      "id": "active_versions",
+      "label": "Active versions",
+      "value": 0,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/active-versions.ndjson",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Count available active-version histogram buckets."
+    },
+    {
+      "id": "stale_digests",
+      "label": "Stale digests",
+      "value": 1,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/release-verdict.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Count digest-age rows beyond branch freshness threshold."
+    },
+    {
+      "id": "unhealthy_workloads",
+      "label": "Unhealthy workloads",
+      "value": 1,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/app-resource-usage.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Count workloads without a positive pod snapshot."
+    }
+  ],
+  "active_version_histogram": [
+    {
+      "version": null,
+      "count": null,
+      "lanes": [],
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/artifacts/fleet-telemetry.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Expected a repo-owned artifact/cache export with active_versions[].",
+      "state": "unavailable",
+      "state_reason": "No fleet active-version artifact or cache export is available."
+    }
+  ],
+  "digest_age": [
+    {
+      "lane": "bluefin-stable",
+      "digest": "sha256:383f523982a84cd23b40a8d252b50d6c4a65b013b03bfb70e74e0708fd8e082f",
+      "digest_age_days": 0.45,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/release-verdict.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Compute age from the latest release-verdict digest build finished_at.",
+      "state": "available",
+      "state_reason": null,
+      "stale": false
+    },
+    {
+      "lane": "bluefin-testing",
+      "digest": "sha256:e43d08400fbd9db4aabd5c8eae57cb68009d4043cc0be883a57823d97f674b39",
+      "digest_age_days": 0.2,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/release-verdict.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Compute age from the latest release-verdict digest build finished_at.",
+      "state": "available",
+      "state_reason": null,
+      "stale": false
+    },
+    {
+      "lane": "bluefin-lts-stable",
+      "digest": "sha256:5433eee1597431bff47127edd53463f71385c2fb6888fecbe93d7fc6d144b6d5",
+      "digest_age_days": 36.54,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/release-verdict.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Compute age from the latest release-verdict digest build finished_at.",
+      "state": "available",
+      "state_reason": null,
+      "stale": true
+    },
+    {
+      "lane": "bluefin-lts-testing",
+      "digest": "sha256:c50a6a0139bea7a17d016917cc43297f3f80e6d290e3885c742f732bc9817354",
+      "digest_age_days": 0.19,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/release-verdict.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Compute age from the latest release-verdict digest build finished_at.",
+      "state": "available",
+      "state_reason": null,
+      "stale": false
+    },
+    {
+      "lane": "dakota-testing",
+      "digest": "sha256:81ebd0c0be888b9710529e31a416e03f3ab8e3ace43f1001601167abbbce99e5",
+      "digest_age_days": 0.31,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/release-verdict.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Compute age from the latest release-verdict digest build finished_at.",
+      "state": "available",
+      "state_reason": null,
+      "stale": false
+    }
+  ],
+  "upstream_lag": [
+    {
+      "id": "bluefin-testing",
+      "variant": "bluefin",
+      "branch": "testing",
+      "freshness_age_days": 0,
+      "upstream_lag_days": 0,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Use upstream-status freshness_age_days as the published upstream lag signal.",
+      "state": "available",
+      "state_reason": null
+    },
+    {
+      "id": "bluefin-stable",
+      "variant": "bluefin",
+      "branch": "stable",
+      "freshness_age_days": 9,
+      "upstream_lag_days": 9,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Use upstream-status freshness_age_days as the published upstream lag signal.",
+      "state": "available",
+      "state_reason": null
+    },
+    {
+      "id": "bluefin-lts-testing",
+      "variant": "bluefin-lts",
+      "branch": "testing",
+      "freshness_age_days": 0,
+      "upstream_lag_days": 0,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Use upstream-status freshness_age_days as the published upstream lag signal.",
+      "state": "available",
+      "state_reason": null
+    },
+    {
+      "id": "bluefin-lts-stable",
+      "variant": "bluefin-lts",
+      "branch": "stable",
+      "freshness_age_days": 0,
+      "upstream_lag_days": 0,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Use upstream-status freshness_age_days as the published upstream lag signal.",
+      "state": "available",
+      "state_reason": null
+    },
+    {
+      "id": "aurora-testing",
+      "variant": "aurora",
+      "branch": "testing",
+      "freshness_age_days": null,
+      "upstream_lag_days": null,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Upstream-status row has no freshness_age_days value.",
+      "state": "unavailable",
+      "state_reason": "Upstream publish timestamp is unavailable."
+    },
+    {
+      "id": "aurora-stable",
+      "variant": "aurora",
+      "branch": "stable",
+      "freshness_age_days": 1,
+      "upstream_lag_days": 1,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Use upstream-status freshness_age_days as the published upstream lag signal.",
+      "state": "available",
+      "state_reason": null
+    },
+    {
+      "id": "bazzite-testing",
+      "variant": "bazzite",
+      "branch": "testing",
+      "freshness_age_days": 1,
+      "upstream_lag_days": 1,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Use upstream-status freshness_age_days as the published upstream lag signal.",
+      "state": "available",
+      "state_reason": null
+    },
+    {
+      "id": "bazzite-stable",
+      "variant": "bazzite",
+      "branch": "stable",
+      "freshness_age_days": 8,
+      "upstream_lag_days": 8,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Use upstream-status freshness_age_days as the published upstream lag signal.",
+      "state": "available",
+      "state_reason": null
+    },
+    {
+      "id": "dakota-testing",
+      "variant": "dakota",
+      "branch": "testing",
+      "freshness_age_days": 3,
+      "upstream_lag_days": 3,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Use upstream-status freshness_age_days as the published upstream lag signal.",
+      "state": "available",
+      "state_reason": null
+    },
+    {
+      "id": "cosmic-stable",
+      "variant": "cosmic",
+      "branch": "stable",
+      "freshness_age_days": null,
+      "upstream_lag_days": null,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Upstream-status row has no freshness_age_days value.",
+      "state": "unavailable",
+      "state_reason": "Upstream publish timestamp is unavailable."
+    },
+    {
+      "id": "cosmic-nvidia",
+      "variant": "cosmic",
+      "branch": "nvidia",
+      "freshness_age_days": null,
+      "upstream_lag_days": null,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Upstream-status row has no freshness_age_days value.",
+      "state": "unavailable",
+      "state_reason": "Upstream publish timestamp is unavailable."
+    },
+    {
+      "id": "zirconium-latest",
+      "variant": "zirconium",
+      "branch": "latest",
+      "freshness_age_days": null,
+      "upstream_lag_days": null,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Upstream-status row has no freshness_age_days value.",
+      "state": "unavailable",
+      "state_reason": "Upstream publish timestamp is unavailable."
+    },
+    {
+      "id": "gnomeos-nightly",
+      "variant": "gnomeos",
+      "branch": "nightly",
+      "freshness_age_days": null,
+      "upstream_lag_days": null,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Upstream-status row has no freshness_age_days value.",
+      "state": "unavailable",
+      "state_reason": "Upstream publish timestamp is unavailable."
+    },
+    {
+      "id": "fedora-bootc-stable",
+      "variant": "fedora-bootc",
+      "branch": "stable",
+      "freshness_age_days": null,
+      "upstream_lag_days": null,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Upstream-status row has no freshness_age_days value.",
+      "state": "unavailable",
+      "state_reason": "Upstream publish timestamp is unavailable."
+    },
+    {
+      "id": "fedora-bootc-testing",
+      "variant": "fedora-bootc",
+      "branch": "testing",
+      "freshness_age_days": null,
+      "upstream_lag_days": null,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/upstream-status.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Upstream-status row has no freshness_age_days value.",
+      "state": "unavailable",
+      "state_reason": "Upstream publish timestamp is unavailable."
+    }
+  ],
+  "workload_health": [
+    {
+      "workload": "arc-runners",
+      "pods_count": 0,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/app-resource-usage.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Read workload pod count from the repo-tracked Kubernetes resource snapshot.",
+      "state": "available",
+      "state_reason": null,
+      "health": "empty"
+    },
+    {
+      "workload": "arc-systems",
+      "pods_count": 2,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/app-resource-usage.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Read workload pod count from the repo-tracked Kubernetes resource snapshot.",
+      "state": "available",
+      "state_reason": null,
+      "health": "healthy"
+    },
+    {
+      "workload": "argo-workflows",
+      "pods_count": 2,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/app-resource-usage.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Read workload pod count from the repo-tracked Kubernetes resource snapshot.",
+      "state": "available",
+      "state_reason": null,
+      "health": "healthy"
+    },
+    {
+      "workload": "flatcar-update",
+      "pods_count": 1,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/app-resource-usage.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Read workload pod count from the repo-tracked Kubernetes resource snapshot.",
+      "state": "available",
+      "state_reason": null,
+      "health": "healthy"
+    },
+    {
+      "workload": "testing-lab",
+      "pods_count": 3,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/app-resource-usage.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Read workload pod count from the repo-tracked Kubernetes resource snapshot.",
+      "state": "available",
+      "state_reason": null,
+      "health": "healthy"
+    },
+    {
+      "workload": "testing-lab-infra",
+      "pods_count": 26,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/app-resource-usage.json",
+      "collected_at": "2026-07-30T03:03:43Z",
+      "derivation": "Read workload pod count from the repo-tracked Kubernetes resource snapshot.",
+      "state": "available",
+      "state_reason": null,
+      "health": "healthy"
+    }
+  ],
+  "history": {
+    "active_versions": "data/history/active-versions.ndjson",
+    "digest_age": "data/history/digest-age.ndjson",
+    "upstream_lag": "data/history/upstream-lag.ndjson",
+    "workload_health": "data/history/workload-health.ndjson"
+  }
+}

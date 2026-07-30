@@ -11,6 +11,13 @@ spec:
       command:
       - bash
       image: cgr.dev/chainguard/kubectl:latest-dev
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
       source: "set -euo pipefail\necho \"\u2192 Installing KubeVirt Manager...\"\n\
         kubectl apply -f https://raw.githubusercontent.com/kubevirt-manager/kubevirt-manager/main/kubernetes/bundled.yaml\n\
         kubectl -n kubevirt-manager wait deploy/kubevirt-manager --for=condition=Available\
@@ -18,4 +25,3 @@ spec:
         \n  --type=merge \\\n  --patch '{\"spec\":{\"type\":\"NodePort\",\"ports\"\
         :[{\"port\":8080,\"nodePort\":30180}]}}'\necho \"\u2713 KubeVirt Manager ready\
         \ at :30180\"\n"
-

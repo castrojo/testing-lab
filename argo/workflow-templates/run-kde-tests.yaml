@@ -182,6 +182,8 @@ spec:
           '
           set -e
           export XDG_RUNTIME_DIR=/run/user/$(id -u)
+          [[ -d "${XDG_RUNTIME_DIR}" ]] ||
+            { echo "KDE session runtime directory is missing" >&2; exit 1; }
           SESSION_BUS=$(systemctl --user show-environment 2>/dev/null |
             sed -n "s/^DBUS_SESSION_BUS_ADDRESS=//p" | head -1)
           if [ -z "${SESSION_BUS}" ] && [ -S "${XDG_RUNTIME_DIR}/bus" ]; then
@@ -189,6 +191,10 @@ spec:
           fi
           WAYLAND_DISPLAY=$(find "${XDG_RUNTIME_DIR}" -maxdepth 1 \
             -name "wayland-*" -printf "%f\n" 2>/dev/null | head -1)
+          [[ -n "${SESSION_BUS}" ]] ||
+            { echo "KDE session D-Bus address is unavailable" >&2; exit 1; }
+          [[ -n "${WAYLAND_DISPLAY}" ]] ||
+            { echo "KDE Wayland display is unavailable" >&2; exit 1; }
           AT_SPI_BUS_ADDRESS="${SESSION_BUS}"
           KDE_WEBDRIVER_URL=http://127.0.0.1:4723
           printf "%s\n" \
@@ -198,6 +204,8 @@ spec:
             "export AT_SPI_BUS_ADDRESS=${AT_SPI_BUS_ADDRESS}" \
             "export XDG_SESSION_TYPE=wayland" \
             "export XDG_SESSION_DESKTOP=kde" \
+            "export QT_ACCESSIBILITY=1" \
+            "export QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1" \
             "export KDE_WEBDRIVER_URL=${KDE_WEBDRIVER_URL}" \
             "export TESTSUITE_RESULTS_DIR=/tmp/results" \
             > /tmp/session.env
@@ -264,7 +272,10 @@ spec:
             echo "ERROR: failed to archive KDE failure bundle ${bundle}" >&2
             ARTIFACT_RC=1
           fi
-        done < <(find /tmp/results -type d -name 'faillog_*' -print0)
+        done < <(
+          find /tmp/results -type d \
+            \( -name 'kde_faillog' -o -name 'faillog_*' \) -print0
+        )
 
         RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}/${SUITE}"
         mkdir -p "${RESULT_DIR}"
@@ -328,11 +339,11 @@ spec:
 
         PUBLISH_RC=0
         if ! {
-          rm -rf /workspace/lab-code
+          rm -rf /results/lab-code
           git clone --depth 1 \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/projectbluefin/lab.git" \
-            /workspace/lab-code
-          python3 /workspace/lab-code/scripts/publish_test_results.py \
+            /results/lab-code
+          python3 /results/lab-code/scripts/publish_test_results.py \
             /results/results.json "${IMG_SLUG}" "${SUITE}" \
             "{{workflow.name}}" "${GITHUB_TOKEN}" "" \
             "${FAILURE_CLASS}" "${FAILURE_ISSUE_URL}"

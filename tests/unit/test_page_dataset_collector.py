@@ -13,6 +13,43 @@ def load_module():
     return module
 
 
+def test_run_collectors_uses_requested_root_and_restores_cwd(tmp_path):
+    module = load_module()
+    calls = []
+
+    class Collector:
+        def main(self):
+            calls.append(Path.cwd())
+
+    original_cwd = Path.cwd()
+    module.run_collectors(tmp_path, collectors=[Collector()])
+
+    assert Path.cwd() == original_cwd
+    assert calls == [tmp_path]
+
+
+def test_run_collectors_propagates_required_producer_failure(tmp_path):
+    module = load_module()
+
+    class BrokenCollector:
+        def main(self):
+            raise RuntimeError('producer failed')
+
+    try:
+        module.run_collectors(tmp_path, collectors=[BrokenCollector()])
+    except RuntimeError as exc:
+        assert str(exc) == 'producer failed'
+    else:
+        raise AssertionError('required producer failure was swallowed')
+
+
+def test_refresh_workflow_runs_for_dakota_history_inputs():
+    workflow = (ROOT / '.github/workflows/update-test-results.yml').read_text()
+
+    assert "      - 'scripts/publish_dakota_run.py'" in workflow
+    assert "      - 'docs/data/history/build-runs.ndjson'" in workflow
+
+
 def test_upstream_dataset_derives_required_families(monkeypatch):
     module = load_module()
 
@@ -64,6 +101,40 @@ def test_upstream_dataset_derives_required_families(monkeypatch):
     assert metrics['lanes_with_release_data']['value'] == 9
     assert metrics['lanes_without_release_data']['value'] == 6
     assert all(metric['collected_at'] == '2026-06-29T19:22:22Z' for metric in dataset['summary_metrics'])
+
+
+def test_dakota_trends_are_derived_from_raw_history(tmp_path):
+    module = load_module()
+    history_path = tmp_path / 'docs/data/history/build-runs.ndjson'
+    history_path.parent.mkdir(parents=True)
+    history_path.write_text(
+        '\n'.join(
+            [
+                '{"schema_version":"1.0","recorded_at":"2026-07-28T14:00:00Z","plane":"lab","record_type":"build","repo":"projectbluefin/dakota","lane":"dakota-testing","run_id":"wf-1","workflow_name":"wf-1","status":"passed","started_at":"2026-07-28T10:00:00Z","finished_at":"2026-07-28T11:00:00Z","duration_min":60,"run_url":"https://argo.example.test/wf-1","failure_stage":null,"failure_class":null,"commit_sha":null,"digest":null,"metrics":{},"attempt":1}',
+                '{"schema_version":"1.0","recorded_at":"2026-07-28T14:00:00Z","plane":"lab","record_type":"build","repo":"projectbluefin/dakota","lane":"dakota-testing","run_id":"wf-2","workflow_name":"wf-2","status":"failed","started_at":"2026-07-28T12:00:00Z","finished_at":"2026-07-28T13:30:00Z","duration_min":90,"run_url":"https://argo.example.test/wf-2","failure_stage":"build","failure_class":"build","commit_sha":null,"digest":null,"metrics":{},"attempt":1}',
+            ]
+        )
+        + '\n',
+        encoding='utf-8',
+    )
+
+    dataset = module.build_dakota_build_trends(tmp_path, '2026-07-29T00:00:00Z')
+
+    assert dataset['_meta']['status'] == 'ready'
+    assert dataset['rows'][0]['id'] == 'build-2026-07-28'
+    assert dataset['rows'][0]['throughput'] == 2
+    assert dataset['rows'][0]['duration_seconds']['p50'] == 4500
+    assert dataset['rows'][0]['source_url'].endswith('/docs/data/history/build-runs.ndjson')
+
+
+def test_dakota_trends_are_unavailable_when_history_is_missing(tmp_path):
+    module = load_module()
+
+    dataset = module.build_dakota_build_trends(tmp_path, '2026-07-29T00:00:00Z')
+
+    assert dataset['_meta']['status'] == 'unavailable'
+    assert dataset['rows'] == []
+    assert all(metric['state'] == 'unavailable' for metric in dataset['summary_metrics'])
 
 
 def test_tests_matrix_derives_rows_from_surface_and_results():

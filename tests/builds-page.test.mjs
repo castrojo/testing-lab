@@ -95,6 +95,12 @@ test('builds page renders triage strip, dense charts, and explicit unavailable s
     /data\/history\/build-runs\.ndjson/,
     'builds page links the rolling history dataset',
   );
+  assert.match(buildsPage, /Dakota Historical Trends/i, 'builds page consumes the Dakota trend dataset');
+  assert.match(buildsPage, /builds-chart-dakota-trends/, 'builds page renders the Dakota historical chart mount');
+  assert.match(buildsPage, /Dakota testing throughput and duration/i, 'builds page labels the Dakota trend visualization');
+  assert.match(buildsPage, /UTC date[\s\S]{0,500}p50 \/ p95/i, 'builds page renders a Dakota historical table');
+  assert.match(buildsPage, /Dataset updated/i, 'builds page exposes Dakota dataset update context');
+  assert.match(buildsPage, /dakota-build-trends\.json|dakota-build-trends/i, 'builds page preserves Dakota trend provenance');
   assert.match(
     overviewPage,
     /href="[^"]*builds\/"/,

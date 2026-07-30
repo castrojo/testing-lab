@@ -147,6 +147,22 @@ However, for complex updates (such as parsing BDD/behave test results, merging w
         fi
 ```
 
+### 17. Publish step outputs before workflow exit cleanup
+
+Argo step outputs are directly consumable by later steps in the same `steps`
+template with `{{steps.<step-name>.outputs.parameters.<name>}}`. Do not assume
+an `onExit` template can resolve an output from a nested entrypoint step through
+`{{workflow.outputs.parameters...}}`; that reference requires a declared
+workflow-level output and is rejected by offline lint otherwise. Publish
+evidence in a normal step immediately after the producer, then keep `onExit`
+focused on cleanup.
+
+This follows the Argo output-parameter pattern documented in
+`/argoproj/argo-workflows`: producer output files are declared with
+`valueFrom.path`, and the consuming step receives the value through a direct
+`steps` reference. Exit handlers remain appropriate for status-aware cleanup,
+but should not be the only persistence path for nested step evidence.
+
 #### KDE GUI runner: persist guest artifacts before re-raising failures
 
 KDE GUI tests run through a WebDriver service inside the VM, so screenshots and
@@ -334,10 +350,21 @@ compact record with `jq`, then invoke the validated publisher CLI. Do not append
 failure must remain visible and make an otherwise successful run fail. Never
 put the GitHub token in a clone URL or command argument; expose it only as
 `GITHUB_TOKEN` from a Secret and let the CLI's `GIT_ASKPASS` path consume it.
+If the helper script is fetched at runtime, shallow-clone the trusted repository
+with the existing askpass contract and invoke the checked-out file locally;
+never curl a raw script or put the token in a clone URL.
 
 > Source: Context7 `/argoproj/argo-workflows` exit-handler and global-variable
 > documentation. Exit handlers always run and receive the terminal workflow
 > status; `workflow.creationTimestamp.RFC3339` is available in the exit handler.
+
+When the workflow cannot resolve a canonical artifact digest, emit a `build`
+record with only terminal status, timestamps, commit, and run URL. Do not
+invent phase, node, USB4, or other utilization fields; the publisher accepts
+digest-less build records while successful `publish` records require a digest.
+Build steps that can measure phase timing should emit a JSON `telemetry` output
+parameter. The exit publisher copies it into the history record; fields without
+a direct producer stay `null` and are rendered unavailable by the dashboard.
 
 ### 18. `when` condition trap — never reference a Skipped task's outputs
 

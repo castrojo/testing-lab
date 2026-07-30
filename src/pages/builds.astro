@@ -2,6 +2,7 @@
 import SiteLayout from '../layouts/SiteLayout.astro';
 import buildsChartsScript from '../scripts/builds-charts.js?url';
 import buildsMatrix from '../../docs/data/builds-matrix.json';
+import dakotaBuildTrends from '../../docs/data/dakota-build-trends.json';
 import { serializeJsonScript } from '../lib/json-script';
 import { readFileSync } from 'fs';
 import nodePath from 'node:path';
@@ -15,9 +16,11 @@ interface BuildRun {
   status: 'passed' | 'failed' | 'running';
   started_at: string;
   finished_at: string | null;
-  duration_min: number;
-  run_url: string;
-  failure_stage: null;
+  duration_min: number | null;
+  run_url: string | null;
+  failure_stage: string | null;
+  failure_class: string | null;
+  workflow_name?: string;
 }
 
 interface BuildRow {
@@ -41,7 +44,68 @@ interface BuildsContract {
   rows: BuildRow[];
 }
 
+interface DakotaTrendRow {
+  id: string;
+  record_type: 'build' | 'publish';
+  date: string;
+  throughput: number;
+  passed: number;
+  failed: number;
+  duration_seconds: {
+    p50: number | null;
+    p95: number | null;
+    avg: number | null;
+  };
+  state: string;
+  state_reason: string | null;
+  source_url: string;
+  collected_at: string;
+  derivation: string;
+}
+
+interface DakotaTrendsContract {
+  schema_version: string;
+  _meta: {
+    page: string;
+    generated_at: string;
+    status: string;
+    state_reason: string | null;
+  };
+  lane: string;
+  window_days: number;
+  summary_metrics: Array<{
+    id: string;
+    label: string;
+    value: number | null;
+    collected_at: string;
+    state: string;
+    state_reason: string | null;
+  }>;
+  rows: DakotaTrendRow[];
+  execution_matrix: Array<{
+    id: string;
+    date: string;
+    record_type: 'build' | 'publish';
+    status: string;
+    duration_seconds: number | null;
+    phases: Record<string, number | null>;
+    zot_push: string | null;
+    ghcr_push: string | null;
+    rechunk_seconds: number | null;
+    second_run_speedup: number | null;
+    ghost_work_seconds: number | null;
+    exo0_work_seconds: number | null;
+    usb4_transfer_seconds: number | null;
+    usb4_link: string | null;
+    state: string;
+    state_reason: string | null;
+    source_url: string;
+    collected_at: string;
+  }>;
+}
+
 const contract = buildsMatrix as unknown as BuildsContract;
+const dakotaTrends = dakotaBuildTrends as unknown as DakotaTrendsContract;
 const baseUrl = import.meta.env.BASE_URL;
 
 function loadBuildRuns(relativePath: string): BuildRun[] {
@@ -58,7 +122,7 @@ function loadBuildRuns(relativePath: string): BuildRun[] {
           typeof rec.lane === 'string' &&
           typeof rec.run_id === 'string' &&
           typeof rec.started_at === 'string' &&
-          typeof rec.duration_min === 'number' &&
+          (rec.duration_min === null || typeof rec.duration_min === 'number') &&
           (rec.plane === 'publish' || rec.plane === 'lab') &&
           (rec.status === 'passed' || rec.status === 'failed' || rec.status === 'running'),
       );
@@ -115,6 +179,16 @@ const recentRuns = [...buildRuns]
   .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
   .slice(0, 40);
 
+const dakotaTrendAvailable = dakotaTrends._meta.status === 'ready' && dakotaTrends.rows.length > 0;
+const dakotaTrendUnavailableReason = dakotaTrendAvailable
+  ? null
+  : dakotaTrends._meta.state_reason ?? 'No validated Dakota trend rows are available in the published window.';
+const dakotaTrendSourceUrl = dakotaTrends.rows[0]?.source_url
+  ?? 'https://github.com/projectbluefin/lab/blob/main/docs/data/history/build-runs.ndjson';
+const dakotaTrendCollectedAt = dakotaTrends._meta.generated_at;
+const dakotaRunsMetric = dakotaTrends.summary_metrics.find((metric) => metric.id === 'dakota_runs');
+const dakotaDaysMetric = dakotaTrends.summary_metrics.find((metric) => metric.id === 'trend_days');
+
 const chartPayload = {
   generatedAt: contract._meta.generated_at,
   historySourceUrl: `${baseUrl}data/history/build-runs.ndjson`,
@@ -122,6 +196,18 @@ const chartPayload = {
   runs: buildRuns,
   lanes: lanesByPlane,
   laneMeta,
+  dakotaTrends: dakotaTrendAvailable ? dakotaTrends.rows : [],
+  dakotaExecutionMatrix: dakotaTrendAvailable ? dakotaTrends.execution_matrix : [],
+  dakotaTrendState: {
+    available: dakotaTrendAvailable,
+    reason: dakotaTrendUnavailableReason,
+    collectedAt: dakotaTrendCollectedAt,
+  },
+  metricSources: {
+    completed: 'lab_build_workflow_completed_total',
+    duration: 'lab_build_workflow_duration_seconds',
+    durationUnit: 'seconds',
+  },
 };
 const payloadJson = serializeJsonScript(chartPayload);
 
@@ -365,6 +451,35 @@ const historyUnavailableReason = historyAvailable
       text-align: center;
       margin-bottom: 2.5rem;
     }
+    .trend-summary {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+      color: #94a3b8;
+      font-size: 0.8rem;
+    }
+    .trend-summary strong { color: #e2e8f0; }
+    .trend-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+    }
+    .trend-table th {
+      text-align: left;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #64748b;
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .trend-table td {
+      padding: 0.7rem 0.75rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: #cbd5e1;
+      font-size: 0.82rem;
+    }
   </style>
 
   <div class="dashboard-header">
@@ -372,6 +487,7 @@ const historyUnavailableReason = historyAvailable
     <div class="meta-bar">
       <span>History updated {formatUtc(contract._meta.generated_at)}</span>
       <span>Source: <a href={`${baseUrl}data/history/build-runs.ndjson`}>build-runs.ndjson</a></span>
+      <span>Planes: GitHub Actions publish + Argo lab · durations: minutes (source metric seconds)</span>
       <span>Status: <span style="color: #fbbf24;">{contract._meta.status}</span></span>
     </div>
   </div>
@@ -437,6 +553,64 @@ const historyUnavailableReason = historyAvailable
     <div id="builds-chart-daily-outcomes" style="width: 100%; height: 340px;" role="img" aria-label="Daily build outcomes stacked chart"></div>
   </div>
 
+  <h2 class="section-title">Dakota Historical Trends</h2>
+  <div class="full-width-card">
+    <div class="chart-panel__header">
+      <h3>Dakota testing throughput and duration</h3>
+      <p>
+        Validated <code>{dakotaTrends.lane}</code> records grouped by UTC start date over the trailing
+        {dakotaTrends.window_days} days. Builds and publishes remain separate series.
+      </p>
+    </div>
+    <div class="trend-summary">
+      <span><strong>{dakotaRunsMetric?.value ?? 'Unavailable'}</strong> validated runs</span>
+      <span><strong>{dakotaDaysMetric?.value ?? 'Unavailable'}</strong> days represented</span>
+      <span>Dataset updated <strong>{formatUtc(dakotaTrendCollectedAt)}</strong></span>
+      <a class="evidence-link" href={`${baseUrl}data/dakota-build-trends.json`}>Generated dataset ↗</a>
+      <a class="evidence-link" href={dakotaTrendSourceUrl} target="_blank" rel="noreferrer">Raw history ↗</a>
+    </div>
+    {dakotaTrendAvailable ? (
+      <>
+        <div id="builds-chart-dakota-trends" style="width: 100%; height: 340px;" role="img" aria-label="Dakota historical throughput and duration chart"></div>
+        <h4 style="margin: 1.5rem 0 0.5rem;">Historical execution matrix</h4>
+        <p class="chart-panel__note">Measured phase duration by execution, with unavailable cells left explicit.</p>
+        <div id="builds-chart-dakota-execution-matrix" style="width: 100%; height: 300px;" role="img" aria-label="Dakota historical execution phase heatmap"></div>
+        <div class="table-scroll">
+          <table class="trend-table">
+            <thead>
+              <tr>
+                <th scope="col">UTC date</th>
+                <th scope="col">Operation</th>
+                <th scope="col">Runs</th>
+                <th scope="col">Passed</th>
+                <th scope="col">Failed</th>
+                <th scope="col">p50 / p95</th>
+                <th scope="col">Average</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dakotaTrends.rows.map((row) => (
+                <tr>
+                  <td>{row.date}</td>
+                  <td>{row.record_type}</td>
+                  <td>{row.throughput}</td>
+                  <td>{row.passed}</td>
+                  <td>{row.failed}</td>
+                  <td>{row.duration_seconds.p50 ?? 'n/a'}s / {row.duration_seconds.p95 ?? 'n/a'}s</td>
+                  <td>{row.duration_seconds.avg ?? 'n/a'}s</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    ) : (
+      <div class="chart-empty">
+        Dakota trends unavailable — {dakotaTrendUnavailableReason} Last dataset update: {formatUtc(dakotaTrendCollectedAt)}.
+      </div>
+    )}
+  </div>
+
   <h2 class="section-title">Lab Plane Pipeline Health</h2>
   {historyAvailable ? (
     <div class="chart-grid">
@@ -466,6 +640,7 @@ const historyUnavailableReason = historyAvailable
             <th scope="col">Started</th>
             <th scope="col">Duration</th>
             <th scope="col">Status</th>
+            <th scope="col">Failure attribution</th>
             <th scope="col">Evidence</th>
           </tr>
         </thead>
@@ -480,17 +655,20 @@ const historyUnavailableReason = historyAvailable
                 </td>
                 <td>{run.plane}</td>
                 <td>{formatUtc(run.started_at)}</td>
-                <td>{run.duration_min} min</td>
+                <td>{run.duration_min !== null ? `${run.duration_min} min` : 'running'}</td>
                 <td><span class={`pill pill--${pill.tone}`}>{pill.label}</span></td>
+                <td>{run.failure_stage ?? run.failure_class ?? '—'}</td>
                 <td>
-                  <a class="evidence-link" href={run.run_url} target="_blank" rel="noreferrer">Open run ↗</a>
+                  {run.run_url
+                    ? <a class="evidence-link" href={run.run_url} target="_blank" rel="noreferrer">Open run ↗</a>
+                    : '—'}
                 </td>
               </tr>
             );
           })}
           {recentRuns.length === 0 && (
             <tr>
-              <td colspan="6" style="text-align: center; color: #64748b;">No terminal runs recorded yet.</td>
+              <td colspan="7" style="text-align: center; color: #64748b;">No terminal runs recorded yet.</td>
             </tr>
           )}
         </tbody>
@@ -512,6 +690,9 @@ const historyUnavailableReason = historyAvailable
     <p>
       All history is kept as git-tracked rolling NDJSON at <a class="evidence-link" href={`${baseUrl}data/history/build-runs.ndjson`}>build-runs.ndjson</a>.
       Records older than 180 days are pruned on each collector pass.
+      Argo completion and duration telemetry uses <code>lab_build_workflow_completed_total</code> and
+      <code>lab_build_workflow_duration_seconds</code>; the page never invents values when a source or
+      failure attribution is unavailable.
     </p>
   </div>
 

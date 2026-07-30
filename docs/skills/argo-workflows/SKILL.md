@@ -154,6 +154,10 @@ The workflow authoring guidance is split by topic:
   constant pipeline identifiers and bounded states. Workflow-level completion
   metrics are safe only when the workflow status truthfully represents the
   publish result; non-blocking or transitional DAG branches must be fixed first.
+- **Evidence inflation**: Do not infer worker/node/USB4 utilization or phase
+  timings from capability gates, labels, or log text. Publish only Argo
+  durations and explicit workflow outputs; derive an envelope duration from
+  existing start and finish timestamps when needed.
 - A KDE GUI runner that copies the GNOME runner without replacing
   `qecore-headless` and the GNOME daemon — use the VM's
   `selenium-webdriver-at-spi-run`, forward port 4723, and gate test start on
@@ -180,6 +184,9 @@ The workflow authoring guidance is split by topic:
 
 Before marking any WorkflowTemplate change done:
 
+- [ ] Distributed-build evidence uses bounded labels and measured Argo
+      durations/outputs only; no per-node, USB4, or inferred phase values are
+      published
 - [ ] All VM-running pipelines have `spec.activeDeadlineSeconds` set
 - [ ] All queueable templates/dynamic workflows (e.g. `build-containerdisk` and `digest-watch` submit payloads) have a generous workflow-level `activeDeadlineSeconds` (e.g., 14400s / 4h) to avoid queue starvation
 - [ ] Any new CronWorkflow uses `spec.schedules:` (array), not `spec.schedule:` (singular)
@@ -200,6 +207,9 @@ Before marking any WorkflowTemplate change done:
 - [ ] Change is committed and pushed — not manually applied to cluster
 - [ ] `description:` annotation present on the new/modified template
 - [ ] File name matches `metadata.name` (e.g. `provision-containerdisk-vm.yaml` for `name: provision-containerdisk-vm`)
+- [ ] Boot/update telemetry records are emitted as output parameters from the
+      ephemeral VM workflow; identity is read from `bootc status --json` and
+      missing digests remain null rather than being inferred from tags
 - [ ] Any VM pipeline semaphore is justified by documented cross-workflow
       memory contention and is attached at template level, not workflow scope
 - [ ] VM pipeline spec has `activeDeadlineSeconds` (1h or 2h) so stuck VMs self-evict

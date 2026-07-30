@@ -18,6 +18,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 HISTORY_PATH = Path("docs/data/history/build-runs.ndjson")
+HISTORY_SOURCE_URL = "https://github.com/projectbluefin/lab/blob/main/docs/data/history/build-runs.ndjson"
 REPO_URL = "https://github.com/projectbluefin/lab.git"
 REPO = "projectbluefin/dakota"
 LANE = "dakota-testing"
@@ -40,6 +41,7 @@ INPUT_FIELDS = {
     "failure_stage",
     "failure_hint",
     "metrics",
+    "telemetry",
     "attempt",
 }
 OUTPUT_FIELDS = {
@@ -61,6 +63,7 @@ OUTPUT_FIELDS = {
     "commit_sha",
     "digest",
     "metrics",
+    "telemetry",
     "attempt",
 }
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,199}$")
@@ -203,6 +206,50 @@ def validate_metrics(value: object) -> dict[str, float | int | None]:
     return metrics
 
 
+TELEMETRY_NUMERIC_FIELDS = {
+    "clone_seconds", "fetch_seconds", "build_seconds", "export_seconds",
+    "push_seconds", "rechunk_seconds", "second_run_speedup",
+    "ghost_work_seconds", "exo0_work_seconds", "usb4_latency_ms",
+    "usb4_transfer_seconds", "ghost_throughput_bytes_per_second",
+    "exo0_throughput_bytes_per_second", "ghost_action_count",
+    "exo0_action_count", "ghost_cache_hit_count", "ghost_cache_miss_count",
+    "exo0_cache_hit_count", "exo0_cache_miss_count",
+}
+TELEMETRY_STATUS_FIELDS = {
+    "zot_push", "ghcr_push", "usb4_link", "ghost_cache_result",
+    "exo0_cache_result", "cache_temperature",
+}
+
+
+def validate_telemetry(value: object) -> dict[str, object]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or len(value) > 32:
+        raise RecordError("telemetry must be an object with at most 32 fields")
+    unknown = set(value) - TELEMETRY_NUMERIC_FIELDS - TELEMETRY_STATUS_FIELDS
+    if unknown:
+        raise RecordError(f"unsupported telemetry fields: {', '.join(sorted(unknown))}")
+    result: dict[str, object] = {}
+    for key, item in value.items():
+        if key in TELEMETRY_STATUS_FIELDS:
+            allowed = {"passed", "failed", "unavailable", "up", "down"}
+            if key.endswith("cache_result"):
+                allowed = {"hit", "miss", "unavailable"}
+            elif key == "cache_temperature":
+                allowed = {"cold", "warm", "unavailable"}
+            if item is not None and (not isinstance(item, str) or item not in allowed):
+                raise RecordError(f"telemetry.{key} must be a supported status or null")
+            result[key] = item
+            continue
+        if item is None:
+            result[key] = None
+        elif isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(item) or item < 0:
+            raise RecordError(f"telemetry.{key} must be numeric or null")
+        else:
+            result[key] = item
+    return result
+
+
 def normalize_record(record: object) -> dict[str, object]:
     if not isinstance(record, dict):
         raise RecordError("record must be a JSON object")
@@ -254,6 +301,14 @@ def normalize_record(record: object) -> dict[str, object]:
     if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
         raise RecordError("attempt must be a positive integer")
 
+    metrics = validate_metrics(record.get("metrics"))
+    telemetry = validate_telemetry(record.get("telemetry"))
+    workflow_duration_seconds = round((finished_at - started_at).total_seconds(), 3)
+    supplied_duration = metrics.get("workflow_duration_seconds")
+    if supplied_duration is not None and float(supplied_duration) != workflow_duration_seconds:
+        raise RecordError("metrics.workflow_duration_seconds must match the record timestamps")
+    metrics["workflow_duration_seconds"] = workflow_duration_seconds
+
     return {
         "schema_version": SCHEMA_VERSION,
         "recorded_at": format_timestamp(recorded_at),
@@ -272,13 +327,14 @@ def normalize_record(record: object) -> dict[str, object]:
         "failure_class": failure_class,
         "commit_sha": commit_sha.lower() if commit_sha else None,
         "digest": digest.lower() if digest else None,
-        "metrics": validate_metrics(record.get("metrics")),
+        "metrics": metrics,
+        "telemetry": telemetry,
         "attempt": attempt,
     }
 
 
 def validate_stored_record(record: object) -> dict[str, object]:
-    if not isinstance(record, dict) or set(record) != OUTPUT_FIELDS:
+    if not isinstance(record, dict) or set(record) not in (OUTPUT_FIELDS, OUTPUT_FIELDS - {"telemetry"}):
         raise RecordError("stored Dakota record fields do not match schema 1.0")
     normalized = normalize_record(
         {
@@ -297,10 +353,19 @@ def validate_stored_record(record: object) -> dict[str, object]:
             "failure_class": record["failure_class"],
             "failure_stage": record["failure_stage"],
             "metrics": record["metrics"],
+            "telemetry": record.get("telemetry"),
             "attempt": record["attempt"],
         }
     )
     if normalized != record:
+        if "telemetry" not in record and normalized["telemetry"] == {}:
+            return record
+        legacy_metrics = dict(record["metrics"])
+        legacy_metrics.pop("workflow_duration_seconds", None)
+        expected_legacy = dict(normalized)
+        expected_legacy["metrics"] = legacy_metrics
+        if expected_legacy == record and "workflow_duration_seconds" not in record["metrics"]:
+            return record
         raise RecordError("stored Dakota record is not canonical")
     return normalized
 
@@ -461,6 +526,138 @@ def build_report(
             }
         )
     return report
+
+
+def build_trend_dataset(
+    records: list[dict[str, object]],
+    collected_at: str,
+    *,
+    window_days: int = 180,
+) -> dict[str, object]:
+    """Build a provenance-bearing daily Dakota throughput/duration dataset."""
+    if window_days < 1:
+        raise RecordError("window_days must be positive")
+
+    validated = [
+        validate_stored_record(record)
+        for record in records
+        if record.get("schema_version") == SCHEMA_VERSION and record.get("repo") == REPO
+    ]
+    collected_at_value = parse_timestamp(collected_at, "collected_at")
+    cutoff = collected_at_value.timestamp() - window_days * 86400
+    recent = [
+        record
+        for record in validated
+        if parse_timestamp(record["started_at"], "started_at").timestamp() >= cutoff
+    ]
+    grouped: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
+    for record in recent:
+        date = parse_timestamp(record["started_at"], "started_at").date().isoformat()
+        grouped[(str(record["record_type"]), date)].append(record)
+
+    rows = []
+    for (record_type, date), group in sorted(grouped.items()):
+        durations = [round(float(record["duration_min"]) * 60, 3) for record in group]
+        passed = sum(record["status"] == "passed" for record in group)
+        failed = len(group) - passed
+        rows.append(
+            {
+                "id": f"{record_type}-{date}",
+                "record_type": record_type,
+                "date": date,
+                "throughput": len(group),
+                "passed": passed,
+                "failed": failed,
+                "duration_seconds": {
+                    "p50": percentile(durations, 0.5),
+                    "p95": percentile(durations, 0.95),
+                    "avg": round(sum(durations) / len(durations), 3) if durations else None,
+                },
+                "state": "available" if durations else "unavailable",
+                "state_reason": None if durations else "No duration values were published for this day.",
+                "source_url": HISTORY_SOURCE_URL,
+                "collected_at": collected_at,
+                "derivation": (
+                    f"Aggregate validated Dakota {record_type} records by UTC start date; "
+                    f"retain the trailing {window_days}-day window."
+                ),
+            }
+        )
+    execution_matrix = []
+    for record in sorted(recent, key=lambda item: item["started_at"]):
+        telemetry = record.get("telemetry") or {}
+        measured = any(telemetry.get(key) is not None for key in ("clone_seconds", "fetch_seconds", "build_seconds", "export_seconds", "push_seconds"))
+        execution_matrix.append({
+            "id": str(record["run_id"]),
+            "date": str(record["started_at"])[:10],
+            "record_type": record["record_type"],
+            "status": record["status"],
+            "duration_seconds": round(float(record["duration_min"]) * 60, 3),
+            "phases": {key: telemetry.get(key) for key in ("clone_seconds", "fetch_seconds", "build_seconds", "export_seconds", "push_seconds")},
+            "zot_push": telemetry.get("zot_push"),
+            "ghcr_push": telemetry.get("ghcr_push"),
+            "rechunk_seconds": telemetry.get("rechunk_seconds"),
+            "second_run_speedup": telemetry.get("second_run_speedup"),
+            "ghost_work_seconds": telemetry.get("ghost_work_seconds"),
+            "exo0_work_seconds": telemetry.get("exo0_work_seconds"),
+            "usb4_transfer_seconds": telemetry.get("usb4_transfer_seconds"),
+            "usb4_link": telemetry.get("usb4_link"),
+            "state": "available" if measured else "unavailable",
+            "state_reason": None if measured else "Runtime phase telemetry was not emitted by this execution.",
+            "source_url": record["run_url"],
+            "collected_at": collected_at,
+        })
+
+    state = "ready" if rows else "unavailable"
+    reason = None if rows else "No validated Dakota build or publish records are available in the history window."
+    metric_base = {
+        "source_url": HISTORY_SOURCE_URL,
+        "collected_at": collected_at,
+        "state": "available" if rows else "unavailable",
+        "state_reason": reason,
+    }
+    summary_metrics = [
+        {
+            "id": "dakota_runs",
+            "label": "Dakota runs in trend window",
+            "value": len(recent) if rows else None,
+            "unit": "count",
+            **metric_base,
+            "derivation": f"Count validated Dakota records retained in the trailing {window_days}-day window.",
+        },
+        {
+            "id": "telemetry_runs",
+            "label": "Runs with measured phase telemetry",
+            "value": sum(row["state"] == "available" for row in execution_matrix) if execution_matrix else None,
+            "unit": "count",
+            **metric_base,
+            "derivation": "Count records with at least one measured runtime phase.",
+        },
+        {
+            "id": "trend_days",
+            "label": "Days with Dakota runs",
+            "value": len({row["date"] for row in rows}) if rows else None,
+            "unit": "count",
+            **metric_base,
+            "derivation": "Count UTC dates represented by the derived Dakota trend rows.",
+        },
+    ]
+    return {
+        "schema_version": "v1",
+        "_meta": {
+            "page": "dakota-build-trends",
+            "description": "Derived Dakota throughput and duration trends from raw build history.",
+            "generated_at": collected_at,
+            "starter_artifact": False,
+            "status": state,
+            "state_reason": reason,
+        },
+        "lane": LANE,
+        "window_days": window_days,
+        "summary_metrics": summary_metrics,
+        "rows": rows,
+        "execution_matrix": execution_matrix,
+    }
 
 
 def format_value(value: object, suffix: str = "") -> str:

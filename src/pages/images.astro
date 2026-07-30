@@ -3,6 +3,7 @@ import SiteLayout from '../layouts/SiteLayout.astro';
 import upstreamPageScript from '../scripts/upstream-page.js?url';
 import upstreamStatus from '../../docs/data/upstream-status.json';
 import cveSummary from '../../docs/data/cve-summary.json';
+import securityTelemetry from '../../docs/data/security-telemetry.json';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildUpstreamPageModel } from '../lib/upstream-page.js';
@@ -74,6 +75,7 @@ const formatUtc = (value: string | null) =>
 const activeFamilies = model.summaryMetrics.find((m: any) => m.id === 'active_upstream_families')?.value || model.groups.length;
 const activeStreams = model.summaryMetrics.find((m: any) => m.id === 'active_upstream_streams')?.value || model.groups.reduce((acc: number, g: any) => acc + g.availableCount, 0);
 const unavailableStreams = model.summaryMetrics.find((m: any) => m.id === 'unavailable_upstream_streams')?.value || model.missingLanes.length;
+const securityMetrics = new Map((securityTelemetry.summary_metrics || []).map((metric: any) => [metric.id, metric]));
 ---
 
 <SiteLayout
@@ -395,6 +397,33 @@ const unavailableStreams = model.summaryMetrics.find((m: any) => m.id === 'unava
         </p>
       </article>
     )}
+
+    <article class="status-card upstream-chart-card upstream-chart-card--wide">
+      <div class="upstream-card__header">
+        <div>
+          <p class="status-card__eyebrow">Supply-chain evidence</p>
+          <h2>Artifact coverage</h2>
+        </div>
+        <span class="upstream-pill muted">Evidence only</span>
+      </div>
+      <p>SBOM and provenance status is based only on published artifact records. A valid signature does not establish either artifact.</p>
+      <div class="upstream-summary-grid">
+        {['signature_completeness', 'sbom_coverage', 'provenance_attestations'].map((id) => {
+          const metric: any = securityMetrics.get(id);
+          return (
+            <div class="upstream-summary-item">
+              <dt>{id.replaceAll('_', ' ')}</dt>
+              <dd>{metric?.state === 'available' ? 'Available' : 'Unavailable'}</dd>
+              <small>{metric?.state_reason || metric?.derivation || 'No published evidence.'}</small>
+            </div>
+          );
+        })}
+      </div>
+      <div class="upstream-evidence-row" style="margin-top: 1rem;">
+        <a href={`${baseUrl}data/security-telemetry.json`}>Security evidence dataset ↗</a>
+        <span>Collected {formatUtc(securityTelemetry._meta?.generated_at)}</span>
+      </div>
+    </article>
   </section>
 
   <!-- Missing Streams List (Gaps) at the bottom of the page -->

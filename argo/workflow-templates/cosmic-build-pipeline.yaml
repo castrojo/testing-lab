@@ -63,6 +63,25 @@ spec:
         histogram:
           buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
           value: "{{workflow.duration}}"
+      - name: lab_build_workflow_wall_time_seconds
+        help: Total wall-clock time for lab build workflows in seconds.
+        labels:
+          - key: pipeline
+            value: cosmic
+          - key: status
+            value: "{{workflow.status}}"
+        histogram:
+          buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+          value: "{{workflow.duration}}"
+      - name: lab_build_workflow_throughput_total
+        help: Completed lab build workflows used to calculate throughput.
+        labels:
+          - key: pipeline
+            value: cosmic
+          - key: status
+            value: "{{workflow.status}}"
+        counter:
+          value: "1"
 
   templates:
 
@@ -133,6 +152,18 @@ spec:
           - configMapKeyRef:
               name: workflow-semaphores
               key: bst-build
+      metrics:
+        prometheus:
+          - name: lab_build_workflow_queue_time_seconds
+            help: Time spent admitted through the shared build semaphore.
+            labels:
+              - key: pipeline
+                value: cosmic
+              - key: status
+                value: "{{status}}"
+            histogram:
+              buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+              value: "{{duration}}"
       inputs:
         parameters:
           - name: ref
@@ -224,6 +255,30 @@ spec:
           printf '%s' re > /tmp/mode
 
     - name: run-bst-step
+      metrics:
+        prometheus:
+          - name: lab_build_workflow_execution_time_seconds
+            help: Build execution time in seconds for cosmic workflows.
+            labels:
+              - key: pipeline
+                value: cosmic
+              - key: status
+                value: "{{status}}"
+            histogram:
+              buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+              value: "{{duration}}"
+          - name: lab_build_variant_duration_seconds
+            help: Duration in seconds of the cosmic variant build.
+            labels:
+              - key: pipeline
+                value: cosmic
+              - key: variant
+                value: cosmic
+              - key: status
+                value: "{{status}}"
+            histogram:
+              buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+              value: "{{duration}}"
       inputs:
         parameters:
           - name: element
@@ -257,7 +312,10 @@ spec:
       # letting a pod burn 30+ minutes of cluster time before the workflow gives
       # up. A healthy distributed build should either finish or surface a real
       # infrastructure error well before this window.
-      activeDeadlineSeconds: 1800
+      # Cache-cold builds spend well over 30 minutes fetching upstream
+      # artifacts before compilation starts; keep the pod deadline aligned
+      # with the workflow's 24-hour queue/build budget.
+      activeDeadlineSeconds: 10800
       retryStrategy:
         # Keep the queue healthy: a stalled or infrastructure-backed build should
         # fail immediately rather than consume another pod slot on retry.
@@ -319,9 +377,11 @@ spec:
           requests:
             cpu: "1"
             memory: 2Gi
+            ephemeral-storage: 10Gi
           limits:
             cpu: "2"
             memory: 4Gi
+            ephemeral-storage: 50Gi
         volumeMounts:
           - name: fuse
             mountPath: /dev/fuse
@@ -377,7 +437,7 @@ spec:
           echo "=== Distributed build: remote execution enabled (USB4 link up) ==="
           sed 's/^/    /' /etc/buildstream/remote-execution.conf >> /tmp/buildstream-cluster.conf
 
-          BST_BUILD_TIMEOUT_SECONDS=1800
+          BST_BUILD_TIMEOUT_SECONDS=10800
           BST_EXPORT_TIMEOUT_SECONDS=600
 
           echo "=== Building ${ELEMENT} ==="

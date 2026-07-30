@@ -18,7 +18,13 @@ spec:
       command:
       - sh
       image: alpine:latest # registry-lint-ignore
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
       source: "set -euo pipefail\necho \"\u2192 Deploying observability stack to {{inputs.parameters.host}}...\"\
         \nsh /workspace/otel/deploy.sh {{inputs.parameters.host}}\necho \"\u2713 Observability\
         \ stack deployed to {{inputs.parameters.host}}\"\n"
-

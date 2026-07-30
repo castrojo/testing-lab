@@ -7,7 +7,7 @@ metadata:
     description: |
       Dakota BST build pipeline. Builds the default bluefin OCI variant and
       the NVIDIA variant in parallel using the shared Buildbarn frontend.
-      BuildStream driver pods use node-local persistent cache directories on ghost/exo-0.
+      BuildStream driver pods use workflow-owned local-path cache PVCs on ghost/exo-0.
       Triggered by push to dakota:testing via the shared bst-commit-poller template.
       On success, exports to local Zot (:30500) as dakota:<image-tag> and
       dakota-nvidia:<image-tag> (default "testing").
@@ -19,6 +19,7 @@ metadata:
     app.kubernetes.io/part-of: bluefin-test-suite
 spec:
   serviceAccountName: argo
+  onExit: publish-build-history
   # One pipeline is admitted at a time by the cluster-wide bst-build
   # semaphore; the two variant drivers inside that pipeline remain parallel.
   # Cold bootstrap + source fetch + package compilation can exceed the prior 6h
@@ -51,6 +52,8 @@ spec:
         labels:
           - key: pipeline
             value: dakota
+          - key: execution_mode
+            value: re
           - key: status
             value: "{{workflow.status}}"
         counter:
@@ -60,13 +63,120 @@ spec:
         labels:
           - key: pipeline
             value: dakota
+          - key: execution_mode
+            value: re
           - key: status
             value: "{{workflow.status}}"
         histogram:
           buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
           value: "{{workflow.duration}}"
+      - name: lab_build_workflow_wall_time_seconds
+        help: Total wall-clock time for lab build workflows in seconds.
+        labels:
+          - key: pipeline
+            value: dakota
+          - key: execution_mode
+            value: re
+          - key: status
+            value: "{{workflow.status}}"
+        histogram:
+          buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+          value: "{{workflow.duration}}"
+      - name: lab_build_workflow_throughput_total
+        help: Completed lab build workflows used to calculate throughput.
+        labels:
+          - key: pipeline
+            value: dakota
+          - key: status
+            value: "{{workflow.status}}"
+        counter:
+          value: "1"
   
   templates:
+
+    - name: publish-build-history
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: WORKFLOW_NAME
+            value: "{{workflow.name}}"
+          - name: WORKFLOW_STATUS
+            value: "{{workflow.status}}"
+          - name: STARTED_AT
+            value: "{{workflow.creationTimestamp.RFC3339}}"
+          - name: COMMIT_SHA
+            value: "{{workflow.parameters.commit-sha}}"
+        source: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "ERROR: Dakota build history persistence failed (exit ${rc})" >&2; exit "${rc}"' ERR
+
+          FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          RUN_URL="http://192.168.1.102:2746/workflows/argo/${WORKFLOW_NAME}"
+          RECORD=/workspace/run.json
+          mkdir -p /workspace
+
+          if [ "${WORKFLOW_STATUS}" = Succeeded ]; then
+            RECORD_STATUS=passed
+          else
+            RECORD_STATUS=failed
+          fi
+
+          TELEMETRY='{}'
+          if command -v kubectl >/dev/null 2>&1; then
+            TELEMETRY="$(kubectl -n argo get workflow "${WORKFLOW_NAME}" -o json 2>/dev/null \
+              | jq -c '[.status.nodes[]?.outputs.parameters[]? | select(.name == "telemetry") | .value | fromjson] | first // {}' \
+              || printf '%s' '{}')"
+          fi
+
+          jq -n \
+            --arg workflow_name "${WORKFLOW_NAME}" \
+            --arg status "${RECORD_STATUS}" \
+            --arg started_at "${STARTED_AT}" \
+            --arg finished_at "${FINISHED_AT}" \
+            --arg run_url "${RUN_URL}" \
+            --arg commit_sha "${COMMIT_SHA}" \
+            --argjson telemetry "${TELEMETRY}" \
+            '{
+              kind: "build",
+              workflow_name: $workflow_name,
+              status: $status,
+              started_at: $started_at,
+              finished_at: $finished_at,
+              run_url: $run_url,
+              commit_sha: (if $commit_sha == "" then null else $commit_sha end),
+              telemetry: $telemetry
+            }' > "${RECORD}"
+
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'case "$1" in' \
+            '  *Username*) printf "%s\n" github-actions ;;' \
+            '  *) printf "%s\n" "$GITHUB_TOKEN" ;;' \
+            'esac' > /workspace/git-askpass
+          chmod 700 /workspace/git-askpass
+          GIT_ASKPASS=/workspace/git-askpass \
+            GIT_TERMINAL_PROMPT=0 \
+            git clone --depth=1 https://github.com/projectbluefin/lab.git /workspace/lab
+          rm -f /workspace/git-askpass
+          python3 /workspace/lab/scripts/publish_dakota_run.py publish "${RECORD}" --work-dir /workspace
+
+          trap - ERR
+          echo "Dakota build history persisted for ${WORKFLOW_NAME}" >&2
 
     - name: build
       inputs:
@@ -90,6 +200,18 @@ spec:
           - configMapKeyRef:
               name: workflow-semaphores
               key: bst-build
+      metrics:
+        prometheus:
+          - name: lab_build_workflow_queue_time_seconds
+            help: Time spent admitted through the shared build semaphore.
+            labels:
+              - key: pipeline
+                value: dakota
+              - key: status
+                value: "{{status}}"
+            histogram:
+              buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+              value: "{{duration}}"
       steps:
         - - name: detect-build-mode
             template: detect-build-mode
@@ -287,6 +409,32 @@ spec:
           printf '%s' re > /tmp/mode
 
     - name: run-bst-step
+      metrics:
+        prometheus:
+          - name: lab_build_workflow_execution_time_seconds
+            help: Build execution time in seconds for Dakota workflows.
+            labels:
+              - key: pipeline
+                value: dakota
+              - key: status
+                value: "{{status}}"
+            histogram:
+              buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+              value: "{{duration}}"
+          - name: lab_build_variant_duration_seconds
+            help: Duration in seconds of the Dakota variant build.
+            labels:
+              - key: pipeline
+                value: dakota
+              - key: variant
+                value: dakota
+              - key: execution_mode
+                value: re
+              - key: status
+                value: "{{status}}"
+            histogram:
+              buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+              value: "{{duration}}"
       inputs:
         parameters:
           - name: element
@@ -325,6 +473,22 @@ spec:
                   value: "{{inputs.parameters.lock-key}}"
 
     - name: run-bst-step-nonblocking
+      metrics:
+        prometheus:
+          - name: lab_build_variant_duration_seconds
+            help: Duration in seconds of the Dakota NVIDIA variant build.
+            labels:
+              - key: pipeline
+                value: dakota
+              - key: variant
+                value: dakota-nvidia
+              - key: execution_mode
+                value: re
+              - key: status
+                value: "{{status}}"
+            histogram:
+              buckets: [300, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
+              value: "{{duration}}"
       inputs:
         parameters:
           - name: element
@@ -399,17 +563,28 @@ spec:
           - name: registry
           - name: mode
           - name: lock-key
+      outputs:
+        parameters:
+          - name: telemetry
+            valueFrom:
+              path: /workspace/telemetry.json
       volumes:
         - name: fuse
           hostPath:
             path: /dev/fuse
-        # Keep the coordinator's local cache on the node-local XFS data
-        # mount. BuildBarn remains the durable cross-workflow cache; this
-        # cache is deliberately per-driver because local-path is RWO.
+        # Keep the coordinator's scratch cache on a workflow-owned local-path
+        # PVC. BuildBarn remains the durable cross-workflow cache; this cache
+        # is deliberately per-driver because local-path is RWO.
         - name: bst-cache
-          hostPath:
-            path: /var/lib/dakota/buildstream-cache
-            type: DirectoryOrCreate
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                storageClassName: local-path
+                volumeMode: Filesystem
+                resources:
+                  requests:
+                    storage: 200Gi
         - name: buildstream-config
           configMap:
             name: buildstream-remote-cache
@@ -462,6 +637,16 @@ spec:
         source: |
           set -euo pipefail
 
+          TELEMETRY=/workspace/telemetry.json
+          mkdir -p /workspace
+          phase_start() { date +%s; }
+          phase_seconds() { echo $(( $(date +%s) - $1 )); }
+          clone_seconds=null
+          fetch_seconds=null
+          build_seconds=null
+          export_seconds=null
+          push_seconds=null
+
           cp /etc/buildstream/buildstream.conf /tmp/buildstream-cluster.conf
           BST_CONF=/tmp/buildstream-cluster.conf
           ELEMENT="{{inputs.parameters.element}}"
@@ -473,19 +658,24 @@ spec:
           # Retries can leave stale dulwich lock files; clear them before fetch.
           find "${XDG_CACHE_HOME}/buildstream/sources/git_repo" -type f -name '*.lock' -delete 2>/dev/null || true
           echo "=== Cloning dakota @ ${REF} ==="
+          PHASE=$(phase_start)
           rm -rf /src
           git clone --depth=1 "${REPO}" /src
           cd /src
+          clone_seconds=$(phase_seconds "${PHASE}")
           COMMIT_SHA="{{inputs.parameters.commit-sha}}"
           if [[ -n "${COMMIT_SHA}" ]]; then
             echo "=== Checking out exact GitHub commit ${COMMIT_SHA} ==="
+            PHASE=$(phase_start)
             git fetch --depth=1 origin "${COMMIT_SHA}"
             git checkout --detach "${COMMIT_SHA}"
           else
             echo "=== Checking out ref ${REF} ==="
+            PHASE=$(phase_start)
             git fetch --depth=1 origin "${REF}"
             git checkout --detach FETCH_HEAD
           fi
+          fetch_seconds=$(phase_seconds "${PHASE}")
 
           echo "=== Rewriting gnome-build-meta source URL to GitHub mirror ==="
           if [[ -f /src/elements/gnome-build-meta.bst ]]; then
@@ -590,13 +780,16 @@ spec:
           echo "=== Verified BuildStream remote execution configuration ==="
 
           echo "=== Building ${ELEMENT} through BuildBarn remote execution ==="
+          PHASE=$(phase_start)
           bst --config "${BST_CONF}" \
               --no-interactive \
               --max-jobs 12 \
               --fetchers 8 \
               build "${ELEMENT}"
+          build_seconds=$(phase_seconds "${PHASE}")
 
           echo "=== Exporting ${ELEMENT} ==="
+          PHASE=$(phase_start)
           EXPORT_DIR="/tmp/export-$(basename ${ELEMENT} .bst)"
           mkdir -p "${EXPORT_DIR}"
           bst --config "${BST_CONF}" \
@@ -606,8 +799,10 @@ spec:
               -o x86_64_v3 true \
               artifact checkout "${ELEMENT}" \
               --directory "${EXPORT_DIR}"
+          export_seconds=$(phase_seconds "${PHASE}")
 
           echo "=== Pushing to local Zot ==="
+          PHASE=$(phase_start)
           if command -v skopeo >/dev/null 2>&1; then
             skopeo copy --dest-tls-verify=false "oci:${EXPORT_DIR}" "docker://{{inputs.parameters.registry}}/${TAG}:${IMAGE_TAG}"
           else
@@ -615,5 +810,9 @@ spec:
             podman push "${IMAGE_ID}" "docker://{{inputs.parameters.registry}}/${TAG}:${IMAGE_TAG}" --tls-verify=false
             podman rmi "${IMAGE_ID}" 2>/dev/null || true
           fi
+          push_seconds=$(phase_seconds "${PHASE}")
+
+          printf '{"clone_seconds":%s,"fetch_seconds":%s,"build_seconds":%s,"export_seconds":%s,"push_seconds":%s,"rechunk_seconds":null,"second_run_speedup":null,"ghost_work_seconds":null,"exo0_work_seconds":null,"usb4_latency_ms":null,"usb4_transfer_seconds":null,"ghost_throughput_bytes_per_second":null,"exo0_throughput_bytes_per_second":null,"ghost_action_count":null,"exo0_action_count":null,"ghost_cache_hit_count":null,"ghost_cache_miss_count":null,"exo0_cache_hit_count":null,"exo0_cache_miss_count":null,"ghost_cache_result":"unavailable","exo0_cache_result":"unavailable","cache_temperature":"unavailable","zot_push":"passed","ghcr_push":"unavailable","usb4_link":"up"}\n' \
+            "${clone_seconds}" "${fetch_seconds}" "${build_seconds}" "${export_seconds}" "${push_seconds}" > "${TELEMETRY}"
 
           echo "=== Build complete: {{inputs.parameters.registry}}/${TAG}:${IMAGE_TAG} ==="

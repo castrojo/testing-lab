@@ -5,6 +5,7 @@
 # Annotations:
 # - lab.projectbluefin.io/usb4-link = up | down
 # - lab.projectbluefin.io/usb4-link-observed-at = Unix epoch seconds
+# - lab.projectbluefin.io/usb4-latency-ms = measured kubelet TCP connect latency
 # "up" requires operstate=up AND carrier=1 AND a TCP probe of the peer's
 # kubelet port over the tb subnet (10.99.0.0/30) — proving end-to-end
 # reachability, not just local link state.
@@ -120,10 +121,14 @@ spec:
                 done
 
                 STATE=down
+                LATENCY="unavailable"
                 if [[ "$(cat ${IF}/operstate 2>/dev/null)" == "up" ]] \
                    && [[ "$(cat ${IF}/carrier 2>/dev/null)" == "1" ]] \
-                   && timeout 2 bash -c "</dev/tcp/${PEER_IP}/10250" 2>/dev/null; then
+                   && START_MS="$(date +%s%3N)" \
+                   && timeout 2 bash -c "</dev/tcp/${PEER_IP}/10250" 2>/dev/null \
+                   && END_MS="$(date +%s%3N)"; then
                   STATE=up
+                  LATENCY="$((END_MS - START_MS))"
                 fi
                 # Publish every observation. The admission gate rejects stale
                 # observations so a dead monitor cannot leave an old "up" value.
@@ -131,6 +136,7 @@ spec:
                 if kubectl annotate node "${NODE_NAME}" \
                      "lab.projectbluefin.io/usb4-link=${STATE}" \
                      "lab.projectbluefin.io/usb4-link-observed-at=${OBSERVED_AT}" \
+                     "lab.projectbluefin.io/usb4-latency-ms=${LATENCY}" \
                      --overwrite >/dev/null; then
                   [[ "${STATE}" != "${LAST}" ]] && echo "usb4-link -> ${STATE}"
                   LAST="${STATE}"

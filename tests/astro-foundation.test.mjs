@@ -61,6 +61,17 @@ test('Astro build emits multipage factory routes into docs', () => {
   assert.match(html('docs/index.html'), /class="verdict-grid"/, 'overview renders per-lane verdict cards');
   assert.match(html('docs/index.html'), /class="spark-grid"/, 'overview renders build duration sparklines');
   assert.match(html('docs/index.html'), /What's degrading\?/i, 'overview renders degradation panel');
+  assert.match(html('docs/index.html'), /Cache heat trend/i, 'overview renders cache heat trend');
+  assert.match(html('docs/index.html'), /cache heat trend unavailable|cache trend unavailable/i, 'overview renders an explicit cache unavailable state');
+  assert.match(html('docs/index.html'), /Cache utilization \(%\)/i, 'cache heatmap uses an explicit percent scale');
+  assert.match(html('docs/index.html'), /unavailable:.*state_reason/i, 'cache tooltip includes unavailable reason');
+  assert.match(html('docs/index.html'), /USB-4 Distributed Execution/i, 'overview renders the evidence-driven USB-4 section');
+  assert.match(html('docs/index.html'), /Cache occupancy above is storage telemetry only/i, 'USB-4 execution is kept separate from cache occupancy');
+  assert.match(html('docs/index.html'), /Measured phase \/ signal|Execution telemetry unavailable/i, 'USB-4 section renders measured rows or an explicit unavailable state');
+  assert.match(html('docs/index.html'), /USB-4 execution heatmap/i, 'USB-4 section renders the ghost/exo-0 execution heatmap');
+  assert.match(html('docs/index.html'), /bytes\/s/i, 'USB-4 heatmap tooltip names throughput units');
+  assert.match(html('docs/index.html'), /cache:|temperature/i, 'USB-4 heatmap tooltip includes cache and cold/warm evidence');
+  assert.doesNotMatch(readFileSync(path.join(repo, 'src/pages/index.astro'), 'utf8'), /usb4Telemetry\.[a-z_]+\s*\?\?\s*(?:0|45|50|55)/, 'USB-4 execution does not use fabricated metric defaults');
   assert.doesNotMatch(html('docs/index.html'), /Zot OCI Registry Cache & Heat/i, 'fabricated registry heat panel is removed from overview');
   assert.match(html('docs/images/index.html'), /Unavailable|pending|coming soon/i, 'subpages show explicit unavailable state');
 
@@ -108,6 +119,76 @@ test('Astro build emits multipage factory routes into docs', () => {
       `${scriptToken}.js has no unresolved bare echarts import`,
     );
   }
+});
+
+test('homepage renders real all-factory rolling seven-day build health metrics', () => {
+  const overviewPage = html('docs/index.html');
+
+  assert.match(
+    overviewPage,
+    /Rolling 7-day factory build health/i,
+    'overview labels the build-health window',
+  );
+  assert.match(
+    overviewPage,
+    /All factory builds/i,
+    'overview reports an all-factory total rather than only per-lane cards',
+  );
+  assert.match(
+    overviewPage,
+    /Passed/i,
+    'overview reports the rolling passed-build count',
+  );
+  assert.match(
+    overviewPage,
+    /Failed/i,
+    'overview reports the rolling failed-build count',
+  );
+  assert.match(
+    overviewPage,
+    /Success rate/i,
+    'overview reports the rolling factory success rate',
+  );
+  assert.match(
+    overviewPage,
+    /data-factory-build-health/,
+    'overview embeds the collected build-health data used for the numbers',
+  );
+  assert.match(
+    overviewPage,
+    /samples:\s*\d+\s*·\s*last updated:/i,
+    'overview exposes build-history sample and update context',
+  );
+});
+
+test('homepage frames build outcomes with a compact visualization, provenance, and unavailable state', () => {
+  const overviewPage = html('docs/index.html');
+
+  assert.match(
+    overviewPage,
+    /factory-build-outcomes-chart/,
+    'overview mounts a compact build-outcome visualization',
+  );
+  assert.match(
+    overviewPage,
+    /data\/history\/build-runs\.ndjson/,
+    'overview links the rolling build history source',
+  );
+  assert.match(
+    overviewPage,
+    /GitHub Actions.*Argo(?: Workflows| lab)|Argo(?: Workflows| lab).*GitHub Actions/i,
+    'overview explains the publish and lab sources',
+  );
+  assert.match(
+    overviewPage,
+    /Build health unavailable/i,
+    'overview has an explicit unavailable heading for missing history',
+  );
+  assert.match(
+    overviewPage,
+    /state_reason/,
+    'overview preserves the unavailable reason from the data contract',
+  );
 });
 
 test('tests page renders matrix views, chart mounts, evidence links, and unavailable states', () => {

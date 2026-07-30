@@ -4,10 +4,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from publish_dakota_run import (
+    HISTORY_PATH as DAKOTA_HISTORY_PATH,
+    RecordError as DakotaRecordError,
+    build_trend_dataset,
+    validate_stored_record,
+)
+from collect_boot_update_telemetry import build_dataset as build_boot_update_dataset
 
 
 REPO_SLUG = 'projectbluefin/lab'
@@ -37,6 +47,28 @@ def now_utc_iso() -> str:
 def load_json(path: Path):
     with path.open() as handle:
         return json.load(handle)
+
+
+def load_dakota_history(root: Path) -> list[dict]:
+    """Load only canonical Dakota records from the append-only raw history."""
+    path = root / DAKOTA_HISTORY_PATH
+    if not path.exists():
+        return []
+    records = []
+    for line in path.read_text(encoding='utf-8').splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+            if isinstance(record, dict):
+                records.append(validate_stored_record(record))
+        except (json.JSONDecodeError, DakotaRecordError):
+            continue
+    return records
+
+
+def build_dakota_build_trends(root: Path, collected_at: str) -> dict:
+    return build_trend_dataset(load_dakota_history(root), collected_at)
 
 
 def repo_blob_url(relative_path: str) -> str:
@@ -1435,13 +1467,41 @@ def write_page_datasets(root: Path, collected_at: str) -> dict[str, dict]:
         'upstream-status.json': build_upstream_status(root, collected_at),
         'tests-matrix.json': build_tests_matrix(root, collected_at),
         'builds-matrix.json': build_builds_matrix(root, collected_at),
+        'dakota-build-trends.json': build_dakota_build_trends(root, collected_at),
         'applications-matrix.json': build_applications_matrix(root, collected_at),
         'homebrew-ecosystem.json': build_homebrew_ecosystem(root, collected_at),
         'adoption-metrics.json': build_adoption_metrics(root, collected_at),
+        'boot-update-telemetry.json': build_boot_update_dataset(
+            root / 'docs/data/history/boot-update.ndjson', collected_at
+        ),
     }
     for name, payload in datasets.items():
         (data_dir / name).write_text(json.dumps(payload, indent=2) + '\n')
     return datasets
+
+
+def run_collectors(root: Path, collectors=None) -> None:
+    """Run required input producers from the requested repository root."""
+    if collectors is None:
+        import refresh_gitops_stats
+        import collect_app_resources
+        import check_gitops_policy
+        import refresh_factory_stats
+
+        collectors = (
+            refresh_gitops_stats,
+            collect_app_resources,
+            check_gitops_policy,
+            refresh_factory_stats,
+        )
+
+    previous_cwd = Path.cwd()
+    try:
+        os.chdir(root)
+        for collector in collectors:
+            collector.main()
+    finally:
+        os.chdir(previous_cwd)
 
 
 def main() -> int:
@@ -1453,16 +1513,10 @@ def main() -> int:
     root = Path(args.root).resolve()
     collected_at = args.collected_at or now_utc_iso()
     warn_if_surface_drifted_from_testsuite(root)
-    
-    # Run GitOps dashboard collector scripts (same dir, so importable directly)
-    import refresh_gitops_stats, collect_app_resources, check_gitops_policy, refresh_factory_stats
-    for collector in (refresh_gitops_stats, collect_app_resources, check_gitops_policy, refresh_factory_stats):
-        try:
-            collector.main()
-        except Exception as exc:  # match old subprocess check=False behavior
-            print(f"warning: {collector.__name__} failed: {exc}", file=sys.stderr)
 
-
+    # These collectors produce required inputs for the generated datasets. Let
+    # failures reach the workflow instead of publishing stale derived data.
+    run_collectors(root)
     write_page_datasets(root, collected_at)
     return 0
 

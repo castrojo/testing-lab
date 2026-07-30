@@ -57,8 +57,39 @@ def test_normalizes_compact_record_to_dashboard_contract():
     assert record["finished_at"] == "2026-07-26T14:30:00Z"
     assert record["recorded_at"] == "2026-07-26T14:30:00Z"
     assert record["duration_min"] == 30
+    assert record["metrics"]["workflow_duration_seconds"] == 1800
     assert record["failure_class"] is None
     assert record["failure_stage"] is None
+    assert record["telemetry"] == {}
+
+
+def test_normalizes_measured_execution_telemetry_and_keeps_unavailable_fields_null():
+    record = history.normalize_record(
+        compact_record(
+            telemetry={
+                "build_seconds": 42,
+                "push_seconds": 3,
+                "zot_push": "passed",
+                "ghcr_push": "unavailable",
+                "second_run_speedup": None,
+            }
+        )
+    )
+    assert record["telemetry"]["build_seconds"] == 42
+    assert record["telemetry"]["zot_push"] == "passed"
+    assert record["telemetry"]["second_run_speedup"] is None
+
+
+def test_rejects_conflicting_derived_workflow_duration():
+    with pytest.raises(history.RecordError, match="must match the record timestamps"):
+        history.normalize_record(compact_record(metrics={"workflow_duration_seconds": 1}))
+
+
+def test_accepts_legacy_stored_record_without_derived_duration():
+    record = history.normalize_record(compact_record())
+    record["metrics"].pop("workflow_duration_seconds")
+
+    assert history.validate_stored_record(record) == record
 
 
 @pytest.mark.parametrize(
@@ -219,6 +250,64 @@ def test_report_filters_record_type():
     assert len(report) == 1
     assert report[0]["record_type"] == "publish"
     assert records[1]["plane"] == "lab"
+
+
+def test_build_trend_dataset_aggregates_daily_throughput_and_duration():
+    records = [
+        stored_record(0, duration=60),
+        stored_record(1, duration=120, status="failed"),
+        stored_record(2, duration=180, kind="publish"),
+    ]
+
+    dataset = history.build_trend_dataset(records, "2026-07-29T00:00:00Z")
+
+    assert dataset["schema_version"] == "v1"
+    assert dataset["_meta"]["page"] == "dakota-build-trends"
+    assert dataset["_meta"]["status"] == "ready"
+    rows = {row["id"]: row for row in dataset["rows"]}
+    assert rows["build-2026-07-01"]["throughput"] == 2
+    assert rows["build-2026-07-01"]["duration_seconds"] == {
+        "p50": 90,
+        "p95": 117,
+        "avg": 90,
+    }
+    assert rows["build-2026-07-01"]["passed"] == 1
+    assert rows["build-2026-07-01"]["failed"] == 1
+    assert rows["publish-2026-07-01"]["throughput"] == 1
+    assert rows["publish-2026-07-01"]["duration_seconds"]["avg"] == 180
+    assert all(row["state"] == "available" for row in dataset["rows"])
+    assert all(row["source_url"] and row["derivation"] for row in dataset["rows"])
+
+
+def test_build_trend_dataset_preserves_unavailable_state_without_records():
+    dataset = history.build_trend_dataset([], "2026-07-29T00:00:00Z")
+
+    assert dataset["rows"] == []
+    assert dataset["_meta"]["status"] == "unavailable"
+    metrics = {metric["id"]: metric for metric in dataset["summary_metrics"]}
+    assert metrics["dakota_runs"]["value"] is None
+    assert metrics["dakota_runs"]["state"] == "unavailable"
+    assert metrics["dakota_runs"]["state_reason"]
+
+
+def test_build_trend_dataset_exposes_execution_matrix_without_fabricating_values():
+    record = stored_record(
+        0,
+        metrics={},
+    )
+    record["telemetry"] = {
+        "build_seconds": 42,
+        "zot_push": "passed",
+        "ghcr_push": "unavailable",
+        "second_run_speedup": None,
+    }
+    dataset = history.build_trend_dataset([record], "2026-07-29T00:00:00Z")
+    row = dataset["execution_matrix"][0]
+    assert row["phases"]["build_seconds"] == 42
+    assert row["phases"]["clone_seconds"] is None
+    assert row["zot_push"] == "passed"
+    assert row["second_run_speedup"] is None
+    assert row["state"] == "available"
 
 
 def test_git_credentials_stay_out_of_askpass_file(tmp_path):

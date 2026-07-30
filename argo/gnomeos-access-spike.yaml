@@ -70,6 +70,13 @@ spec:
       script:
         image: cgr.dev/chainguard/kubectl:latest-dev
         command: [bash]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
         source: |
           set -euo pipefail
           NS="{{inputs.parameters.namespace}}"

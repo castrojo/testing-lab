@@ -143,6 +143,12 @@ Clock, quick-settings, and calendar interactions **must** use Shell.Eval.
 
 The `system/` suite is the most important. It validates the bootc contract:
 
+Boot/update runs should retain a compact JSON record from the ephemeral VM:
+`bootc_status`, deployment image/digest, forward update success, rollback
+success, and post-update boot success. Consume it through
+`scripts/collect_boot_update_telemetry.py`; a missing digest is `null`, never a
+tag-derived substitute.
+
 ```gherkin
 Scenario: bootc status shows a valid image
   When I run "bootc status --format json"

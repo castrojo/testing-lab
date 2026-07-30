@@ -79,7 +79,10 @@ spec:
             ORAS_DIR=/tmp/oras-bin
             mkdir -p "${ORAS_DIR}"
             if [ ! -f "${ORAS_DIR}/oras" ]; then
-              curl -sfL "https://github.com/oras-project/oras/releases/download/v1.2.3/oras_1.2.3_linux_amd64.tar.gz" | tar xz -C "${ORAS_DIR}" oras
+              curl -sfL "https://github.com/oras-project/oras/releases/download/v1.2.3/oras_1.2.3_linux_amd64.tar.gz" \
+                -o "${ORAS_DIR}/oras.tar.gz"
+              python3 -m tarfile -e "${ORAS_DIR}/oras.tar.gz" "${ORAS_DIR}"
+              rm -f "${ORAS_DIR}/oras.tar.gz"
             fi
             oras() { "${ORAS_DIR}/oras" "$@"; }
           fi

@@ -23,6 +23,13 @@ spec:
       initContainers:
         - name: git-sync
           image: quay.io/fedora/fedora:latest
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
           env:
             - name: BRANCH
               value: "{{inputs.parameters.branch}}"

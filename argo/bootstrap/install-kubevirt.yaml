@@ -11,9 +11,15 @@ spec:
       command:
       - bash
       image: cgr.dev/chainguard/kubectl:latest-dev
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
       source: "set -euo pipefail\nVERSION=$(curl -s https://storage.googleapis.com/kubevirt-prow/release/kubevirt/kubevirt/stable.txt)\n\
         echo \"\u2192 Installing KubeVirt ${VERSION}...\"\nkubectl apply -f https://github.com/kubevirt/kubevirt/releases/download/${VERSION}/kubevirt-operator.yaml\n\
         kubectl apply -f https://github.com/kubevirt/kubevirt/releases/download/${VERSION}/kubevirt-cr.yaml\n\
         kubectl -n kubevirt wait kv kubevirt --for condition=Available --timeout=300s\n\
         echo \"\u2713 KubeVirt ${VERSION} ready\"\n"
-

@@ -261,10 +261,11 @@ spec:
           # /etc/group, while useradd only accepts local group entries.
           for group in video render input; do
             if ! grep -q "^${group}:" /etc/group; then
-              # groupadd resolves names through NSS and exits 9 ("already exists")
-              # for NSS-only groups, which would abort this script under `set -e`.
-              # Fall back to materializing the NSS entry as a local /etc/group line.
-              if ! groupadd -r "${group}" 2>/dev/null; then
+              # groupadd may report success through NSS without writing a local
+              # /etc/group entry. Re-check the file before materializing a local
+              # entry so useradd can resolve the supplemental groups.
+              groupadd -r "${group}" 2>/dev/null || true
+              if ! grep -q "^${group}:" /etc/group; then
                 nss_entry=$(getent group "${group}" || true)
                 if [ -n "${nss_entry}" ]; then
                   printf '%s\n' "${nss_entry}" >>/etc/group

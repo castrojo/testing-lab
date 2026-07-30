@@ -340,7 +340,7 @@ just run-dakota-build                 # default + nvidia variants
 ### Dakota durable build/publish records
 
 `scripts/publish_dakota_run.py` is the workflow-independent producer for
-`docs/data/history/build-runs.ndjson`. Future build and publish onExit templates
+`docs/data/history/build-runs.ndjson`. Dakota build and publish onExit handlers
 write one compact JSON object and call:
 
 ```bash
@@ -351,13 +351,20 @@ The token is read only from `GITHUB_TOKEN`; never pass it as a command argument
 or place it in a clone URL. The publisher clones with a credential-free GitHub
 URL, authenticates through `GIT_ASKPASS`, retries non-fast-forward pushes from
 the latest `main`, and deletes its working clone. It persists no raw output.
+The build exit handler uses the existing `github-token` Secret contract and
+checks out the publisher from a shallow `projectbluefin/lab` clone using the
+same askpass contract before invoking it locally; it must not curl a raw script
+or put the token in a clone URL.
 
 Required input fields are `kind` (`build` or `publish`), `workflow_name`,
 terminal `status`, `started_at`, `finished_at`, and a credential-free
-`run_url`. Successful publish records also require `digest`. Optional
-`commit_sha`, `failure_stage`, short `failure_hint`, `failure_class`, `attempt`,
-and numeric `metrics` are validated; `failure_hint` is used only to derive a
-normalized failure class and is discarded.
+`run_url`. Successful publish records also require `digest`; build records may
+omit it because the build workflow does not resolve a canonical registry
+digest. Optional `commit_sha`, `failure_stage`, short `failure_hint`,
+`failure_class`, `attempt`, and numeric `metrics` are validated; `failure_hint`
+is used only to derive a normalized failure class and is discarded. Build
+records intentionally publish only timestamps, terminal status, commit, and
+workflow evidence; they do not infer phase, node, or USB4 utilization.
 
 Local contract checks and trailing-window comparisons use:
 

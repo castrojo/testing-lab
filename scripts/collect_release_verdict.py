@@ -319,7 +319,28 @@ def main():
                 "lab_sourced": True,
                 "informational": qa.get("informational", {"status": "unavailable", "reason": "informational suite status unavailable", "rows": []}),
             },
-            "signature": {"status": sig_status, "reason": sig_reason, "method": "cosign keyless (GitHub Actions OIDC)"},
+            "signature": {
+                "status": sig_status,
+                "reason": sig_reason,
+                "method": "cosign keyless (GitHub Actions OIDC)",
+                "source_url": image_ref,
+                "collected_at": now,
+                "derivation": "Direct cosign verification of this digest; a passing signature does not prove SBOM or provenance coverage.",
+            },
+            "sbom": {
+                "status": "unavailable",
+                "reason": "release verdict has no published SBOM artifact manifest",
+                "source_url": None,
+                "collected_at": now,
+                "derivation": "No SBOM artifact evidence is available; publisher capability flags are not evidence.",
+            },
+            "provenance": {
+                "status": "unavailable",
+                "reason": "release verdict has no published provenance attestation artifact",
+                "source_url": None,
+                "collected_at": now,
+                "derivation": "Signatures do not prove a provenance attestation.",
+            },
             "security_regression": {
                 "status": "unavailable",
                 "reason": "publisher-side CVE summary export not yet wired (phase 3); displayed alongside, never gating (ADR 0002)",
@@ -343,6 +364,15 @@ def main():
             "build": build_input["status"],
             "qa": qa["status"],
             "signature": sig_status,
+            "signature_evidence": {
+                "status": sig_status,
+                "reason": sig_reason,
+                "source_url": image_ref,
+                "collected_at": now,
+                "derivation": "Direct cosign verification of this digest; a passing signature does not prove SBOM or provenance coverage.",
+            },
+            "sbom": row["sbom"],
+            "provenance": row["provenance"],
         })
 
     appended = append_history(history_rows, now)

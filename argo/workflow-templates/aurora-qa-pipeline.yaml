@@ -165,6 +165,13 @@ spec:
             cpu: 500m
             memory: 256Mi
         source: |
-          set -e
-          kubectl delete vm "{{workflow.parameters.vm-name}}" \
-            -n "{{workflow.parameters.namespace}}" --ignore-not-found
+          set -uo pipefail
+          NS="{{workflow.parameters.namespace}}"
+          VM="{{workflow.parameters.vm-name}}"
+          LABEL="kubevirt.io/vm=${VM}"
+
+          # Delete the owner first, then explicitly remove any VMI and
+          # virt-launcher pod left behind if the owner relationship is stale.
+          kubectl delete vm "${VM}" -n "${NS}" --ignore-not-found || true
+          kubectl delete vmi,pod -n "${NS}" -l "${LABEL}" \
+            --ignore-not-found --wait=false || true

@@ -141,6 +141,22 @@ def test_container_runner_creates_runtime_directories_before_gdm():
     assert 'chage -d "$(date +%Y-%m-%d)" bluefin-test' in content
 
 
+def test_container_runner_materializes_nss_only_device_groups_after_groupadd():
+    content = (ROOT / "argo/workflow-templates/run-container-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+    group_setup = content.split("for group in video render input; do", 1)[1].split(
+        "# Create / update the test user", 1
+    )[0]
+
+    assert group_setup.count('if ! grep -q "^${group}:" /etc/group; then') == 2
+    assert 'groupadd -r "${group}" 2>/dev/null || true' in group_setup
+    assert "nss_entry=$(getent group" in group_setup
+    assert group_setup.index("nss_entry=$(getent group") > group_setup.index(
+        'groupadd -r "${group}"'
+    )
+
+
 def test_native_systemd_runner_uses_a_scheduler_managed_target_pod():
     content = (
         ROOT / "argo/workflow-templates/run-systemd-container-tests.yaml"

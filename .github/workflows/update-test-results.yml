@@ -15,7 +15,12 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - 'scripts/generate_page_datasets.py'
+      - 'scripts/collect_fleet_telemetry.py'
+      - 'scripts/publish_dakota_run.py'
       - 'docs/data/page-contracts.md'
+      - 'docs/data/history/build-runs.ndjson'
+      - 'docs/data/history/boot-update.ndjson'
+      - 'scripts/collect_boot_update_telemetry.py'
       - 'docs/data/test-surface.json'
       - 'docs/data/variant-publishers.json'
       - 'src/**'
@@ -99,6 +104,9 @@ jobs:
 
       - name: Refresh release verdict (ADR 0002)
         run: python3 scripts/collect_release_verdict.py
+
+      - name: Refresh fleet drift telemetry
+        run: python3 scripts/collect_fleet_telemetry.py --root .
 
       - name: Refresh page-owned datasets
         run: python3 scripts/generate_page_datasets.py --root .

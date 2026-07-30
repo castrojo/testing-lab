@@ -12,12 +12,14 @@ import upstreamStatus from '../../docs/data/upstream-status.json';
 import bstCache from '../../docs/data/bst-cache.json';
 import testsMatrix from '../../docs/data/tests-matrix.json';
 import releaseVerdict from '../../docs/data/release-verdict.json';
+import fleetTelemetry from '../../docs/data/fleet-telemetry.json';
+import usb4Execution from '../../docs/data/usb4-execution.json';
 
 const baseUrl = import.meta.env.BASE_URL;
 
 interface PublishBuildRun {
   recorded_at: string;
-  plane: 'publish';
+  plane: 'publish' | 'lab';
   repo: string;
   lane: string;
   run_id: string;
@@ -26,6 +28,8 @@ interface PublishBuildRun {
   finished_at: string | null;
   duration_min: number | null;
   run_url: string | null;
+  failure_stage: string | null;
+  failure_class: string | null;
 }
 
 const buildHistoryPath = path.join(process.cwd(), 'docs', 'data', 'history', 'build-runs.ndjson');
@@ -42,7 +46,7 @@ const loadPublishBuildHistory = (): PublishBuildRun[] => {
       const startedAt = Date.parse(record?.started_at);
       if (
         !record ||
-        record.plane !== 'publish' ||
+        !['publish', 'lab'].includes(record.plane) ||
         !['passed', 'failed', 'running'].includes(record.status) ||
         typeof record.lane !== 'string' ||
         typeof record.run_id !== 'string' ||
@@ -64,6 +68,8 @@ const loadPublishBuildHistory = (): PublishBuildRun[] => {
           ? record.duration_min
           : null,
         run_url: typeof record.run_url === 'string' ? record.run_url : null,
+        failure_stage: typeof record.failure_stage === 'string' ? record.failure_stage : null,
+        failure_class: typeof record.failure_class === 'string' ? record.failure_class : null,
       }];
     } catch {
       return [];
@@ -83,6 +89,8 @@ for (const run of allPublishBuildHistory) {
     publishBuildHistoryByKey.set(key, run);
   }
 }
+// The NDJSON history is the unified source for both GHA publish and Argo lab
+// runs. Keep the legacy variable name for the existing homepage payload.
 const publishBuildHistory = [...publishBuildHistoryByKey.values()].filter((run) => {
   const startedAt = Date.parse(run.started_at);
   return startedAt >= buildHistoryWindowStart && startedAt <= buildHistoryNow;
@@ -91,15 +99,30 @@ const completedPublishBuilds = publishBuildHistory.filter((run) => run.status ==
 const passedPublishBuilds = completedPublishBuilds.filter((run) => run.status === 'passed');
 const failedPublishBuilds = completedPublishBuilds.filter((run) => run.status === 'failed');
 const runningPublishBuilds = publishBuildHistory.filter((run) => run.status === 'running');
+const labBuilds = publishBuildHistory.filter((run) => run.plane === 'lab');
+const ghaBuilds = publishBuildHistory.filter((run) => run.plane === 'publish');
+const buildHistoryLastUpdated = publishBuildHistory.reduce<string | null>((latest, run) => {
+  if (!latest || Date.parse(run.recorded_at) > Date.parse(latest)) return run.recorded_at;
+  return latest;
+}, null);
 const durations = completedPublishBuilds
   .map((run) => run.duration_min)
   .filter((duration): duration is number => duration !== null && duration >= 0);
 const sortedDurations = [...durations].sort((a, b) => a - b);
+const percentile = (values: number[], p: number) => {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = (sorted.length - 1) * p;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  return lower === upper ? sorted[lower] : sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
+};
 const medianDuration = sortedDurations.length
   ? sortedDurations.length % 2 === 0
     ? (sortedDurations[sortedDurations.length / 2 - 1] + sortedDurations[sortedDurations.length / 2]) / 2
     : sortedDurations[Math.floor(sortedDurations.length / 2)]
   : null;
+const p95Duration = percentile(sortedDurations, 0.95);
 const averageDuration = durations.length
   ? durations.reduce((sum, duration) => sum + duration, 0) / durations.length
   : null;
@@ -117,8 +140,20 @@ const buildOutcomeDays = Array.from({ length: 7 }, (_, index) => {
 });
 const buildHealthPayload = {
   source: buildHistorySourceUrl,
+  provenance: {
+    publish: 'GitHub Actions workflow runs',
+    lab: 'Argo Workflow run history',
+    duration_metric: 'lab_build_workflow_duration_seconds (seconds; NDJSON duration_min is derived / 60)',
+    completion_metric: 'lab_build_workflow_completed_total (counter by pipeline/status)',
+  },
   window_start: new Date(buildHistoryWindowStart).toISOString(),
   window_end: new Date(buildHistoryNow).toISOString(),
+  last_updated: buildHistoryLastUpdated,
+  sample_count: publishBuildHistory.length,
+  planes: {
+    publish: { passed: ghaBuilds.filter((run) => run.status === 'passed').length, failed: ghaBuilds.filter((run) => run.status === 'failed').length, running: ghaBuilds.filter((run) => run.status === 'running').length },
+    lab: { passed: labBuilds.filter((run) => run.status === 'passed').length, failed: labBuilds.filter((run) => run.status === 'failed').length, running: labBuilds.filter((run) => run.status === 'running').length },
+  },
   outcomes: buildOutcomeDays,
 };
 const serializedBuildHealthData = serializeJsonScript(buildHealthPayload);
@@ -204,6 +239,10 @@ for (const link of fabricLinks) {
 }
 
 const telemetrySnapshot = telemetry?.snapshot || {};
+const fleetDigestAge = Array.isArray(fleetTelemetry?.digest_age) ? fleetTelemetry.digest_age : [];
+const fleetUpstreamLag = Array.isArray(fleetTelemetry?.upstream_lag) ? fleetTelemetry.upstream_lag : [];
+const fleetWorkloadHealth = Array.isArray(fleetTelemetry?.workload_health) ? fleetTelemetry.workload_health : [];
+const fleetVersionHistogram = Array.isArray(fleetTelemetry?.active_version_histogram) ? fleetTelemetry.active_version_histogram : [];
 
 const getNodeStatusTone = (status) => (status === 'ready' ? 'ready' : 'not-ready');
 const formatNodeStatus = (status) => (status === 'ready' ? 'Ready' : 'Not ready');
@@ -392,23 +431,36 @@ const bstChartPayload = {
 const serializedBstChartData = serializeJsonScript(bstChartPayload);
 const hasBstTrend = bstChartPayload.trend.length > 0;
 
-const usb4Telemetry = bstCache?.usb4_telemetry || {
-  status: 'down',
-  bandwidth_gbps: 0,
-  latency_ms: 0,
-  ghost_link: 'down',
-  exo0_link: 'down',
-  cold_build_duration_min: 0,
-  warm_build_duration_min: 0,
-  speedup_ratio: 0,
-  rechunk_duration_sec: 0,
-  work_distribution: { ghost: 50, 'exo-0': 50 },
+const usb4Telemetry = bstCache?.usb4_telemetry && typeof bstCache.usb4_telemetry === 'object'
+  ? bstCache.usb4_telemetry
+  : {};
+const usb4Status = typeof usb4Telemetry.status === 'string' ? usb4Telemetry.status : 'unavailable';
+const usb4StatusTone = usb4Status === 'up' ? 'ready' : usb4Status === 'down' ? 'not-ready' : 'pending';
+const usb4MeasuredRows = [
+  ['Cold build', usb4Telemetry.cold_build_duration_min, 'min'],
+  ['Warm build', usb4Telemetry.warm_build_duration_min, 'min'],
+  ['Speedup', usb4Telemetry.speedup_ratio, '×'],
+  ['Layer rechunk', usb4Telemetry.rechunk_duration_sec, 'sec'],
+  ['ghost work', usb4Telemetry.work_distribution?.ghost, '%'],
+  ['exo-0 work', usb4Telemetry.work_distribution?.['exo-0'], '%'],
+].filter(([, value]) => typeof value === 'number' && Number.isFinite(value));
+const usb4HasMeasuredTelemetry = usb4MeasuredRows.length > 0;
+const usb4EvidenceUrl = typeof usb4Telemetry.source_url === 'string' && /^https?:\/\//.test(usb4Telemetry.source_url)
+  ? usb4Telemetry.source_url
+  : null;
+const usb4CollectedAt = typeof usb4Telemetry.collected_at === 'string' ? usb4Telemetry.collected_at : null;
+const usb4ObservedAt = usb4Telemetry.ghost_observed_at || usb4Telemetry.exo0_observed_at || null;
+const usb4UnavailableReason = typeof usb4Telemetry.state_reason === 'string'
+  ? usb4Telemetry.state_reason
+  : 'No producer has published measured distributed-execution telemetry.';
+const usb4ExecutionPayload = {
+  nodes: Array.isArray(usb4Execution?.nodes) ? usb4Execution.nodes : ['ghost', 'exo-0'],
+  windowStart: usb4Execution?._meta?.window_start || null,
+  windowEnd: usb4Execution?._meta?.window_end || null,
+  rows: Array.isArray(usb4Execution?.rows) ? usb4Execution.rows : [],
 };
-const usb4StatusTone = usb4Telemetry.status === 'up' ? 'ready' : 'not-ready';
-const usb4GhostDist = usb4Telemetry.work_distribution?.ghost ?? 45;
-const usb4ExoDist = usb4Telemetry.work_distribution?.['exo-0'] ?? 55;
+const serializedUsb4ExecutionData = serializeJsonScript(usb4ExecutionPayload);
 
-const raptorEntrants: any[] = [];
 ---
 
 <SiteLayout
@@ -891,100 +943,6 @@ const raptorEntrants: any[] = [];
       </div>
     </header>
 
-    <!-- =========================================================== -->
-    <!--  RAPTOR GRID LEADERBOARD (F1 / Motorsports Dashboard)       -->
-    <!-- =========================================================== -->
-    {raptorEntrants.length > 0 && (
-      <section class="raptor-leaderboard-card" style="margin-bottom: 2.5rem; background: linear-gradient(135deg, rgba(14, 165, 233, 0.12), rgba(15, 23, 42, 0.95)); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 24px; padding: 24px; box-shadow: 0 20px 50px rgba(0,0,0,0.5);">
-        <header style="display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 16px; border-bottom: 1px solid rgba(148, 163, 184, 0.15); padding-bottom: 16px; margin-bottom: 20px;">
-          <div>
-            <div style="color: #38bdf8; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 4px;">
-              Motorsports Telemetry - Factory Leaderboard
-            </div>
-            <h2 style="margin: 0; font-size: 1.6rem; font-weight: 800; color: #f8fafc; letter-spacing: -0.03em;">
-              Raptor Grid Leaderboard
-            </h2>
-            <p style="margin: 4px 0 0; color: #94a3b8; font-size: 0.88rem;">
-              Comparing build times, pit stops, and remote execution latency across all OS Raptors.
-            </p>
-          </div>
-          <div style="display: flex; flex-wrap: wrap; gap: 10px;">
-            <span class="pill pill--ready" style="font-size: 0.78rem;">
-              40 Gbps USB4 Link: ACTIVE
-            </span>
-            <span class="pill pill--ready" style="font-size: 0.78rem;">
-              BuildBarn RE Grid: 24 Workers
-            </span>
-            <span class="pill pill--completed" style="font-size: 0.78rem;">
-              Dakota RE Target: 12m-14m
-            </span>
-          </div>
-        </header>
-
-        <div class="table-scroll">
-          <table class="data-table" style="min-width: 58rem;">
-            <thead>
-              <tr>
-                <th style="width: 70px;">Rank</th>
-                <th>Raptor Entrant</th>
-                <th>Engine & Fabric</th>
-                <th style="text-align: right;">Best Lap (Warm)</th>
-                <th style="text-align: right;">Avg Pit Stop</th>
-                <th style="text-align: right;">Heavy Stint</th>
-                <th>7-Day Trend</th>
-                <th style="text-align: center;">Live Run</th>
-              </tr>
-            </thead>
-            <tbody>
-              {raptorEntrants.map((r) => (
-                <tr style={r.rank === 'P1' ? 'background: rgba(56, 189, 248, 0.08); font-weight: 600;' : ''}>
-                  <td style="vertical-align: middle;">
-                    <span class="pill" style={`font-family: ui-monospace, monospace; font-size: 0.85rem; padding: 4px 8px; ${r.rank === 'P1' ? 'background: #38bdf8; color: #0f172a; font-weight: 800;' : r.rank === 'P2' ? 'background: #e2e8f0; color: #0f172a; font-weight: 800;' : r.rank === 'P3' ? 'background: #cbd5e1; color: #0f172a; font-weight: 800;' : ''}`}>
-                      {r.rank}
-                    </span>
-                  </td>
-                  <td style="vertical-align: middle;">
-                    <div style="display: flex; flex-direction: column; gap: 2px;">
-                      <div style="display: flex; align-items: center; gap: 8px;">
-                        <span style="color: #f1f5f9; font-weight: 700; font-size: 0.95rem;">{r.name}</span>
-                        <span class={`pill pill--${r.tone}`} style="font-size: 0.68rem; padding: 2px 6px;">{r.badge}</span>
-                      </div>
-                      <span class="mono" style="font-size: 0.75rem; color: #64748b;">{r.repo} - {r.variant}</span>
-                    </div>
-                  </td>
-                  <td style="vertical-align: middle; color: #cbd5e1; font-size: 0.85rem;">
-                    {r.engine}
-                  </td>
-                  <td style="vertical-align: middle; text-align: right; font-family: ui-monospace, monospace; color: #4ade80; font-weight: 700;">
-                    {r.bestLap}
-                  </td>
-                  <td style="vertical-align: middle; text-align: right; font-family: ui-monospace, monospace; color: #f8fafc; font-weight: 700;">
-                    {r.avgPitStop}
-                  </td>
-                  <td style="vertical-align: middle; text-align: right; font-family: ui-monospace, monospace; color: #94a3b8;">
-                    {r.heavyStint}
-                  </td>
-                  <td style="vertical-align: middle; width: 130px;">
-                    <div class="triage-spark" data-lane={r.sparkKey} style="height: 38px; width: 120px;" role="img" aria-label={`7-day trend for ${r.name}`}></div>
-                  </td>
-                  <td style="vertical-align: middle; text-align: center;">
-                    {r.runUrl ? (
-                      <a href={r.runUrl} target="_blank" rel="noreferrer" class="site-nav__link" style="padding: 4px 10px; font-size: 0.75rem; color: #38bdf8; border-color: rgba(56, 189, 248, 0.3); display: inline-flex; align-items: center; gap: 4px;">
-                        Run -&gt;
-                      </a>
-                    ) : (
-                      <span style="color: #64748b; font-size: 0.75rem;">-</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    )}
-
-
     <!-- ═══════════════════════════════════════════════════════════ -->
     <!--  SRE TRIAGE — is the factory healthy? is the last release   -->
     <!--  good? what's degrading? (ADR 0002)                          -->
@@ -1041,11 +999,89 @@ const raptorEntrants: any[] = [];
       )}
     </div>
 
+    <section id="fleet-drift-telemetry">
+      <h2 class="section-title">Fleet drift telemetry</h2>
+      <p class="section-sub" style="margin-top: -0.5rem; margin-bottom: 1.5rem; color: #64748b; font-size: 0.9rem;">
+        Historical, evidence-backed signals for version spread, digest freshness, upstream lag, and Kubernetes workload presence.
+        Missing artifact or cluster evidence remains explicitly unavailable.
+      </p>
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <span class="kpi-card__title">Active versions</span>
+          <strong class="kpi-card__value">{fleetVersionHistogram.filter((row) => row.state === 'available').length || '—'}</strong>
+          <span class="kpi-card__sub">artifact histogram buckets</span>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-card__title">Stale digests</span>
+          <strong class="kpi-card__value">{fleetDigestAge.filter((row) => row.stale === true).length || '—'}</strong>
+          <span class="kpi-card__sub">beyond lane freshness threshold</span>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-card__title">Upstream lag</span>
+          <strong class="kpi-card__value">{fleetUpstreamLag.filter((row) => row.state === 'available').length || '—'}</strong>
+          <span class="kpi-card__sub">lanes with published age evidence</span>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-card__title">Workload health</span>
+          <strong class="kpi-card__value">{fleetWorkloadHealth.filter((row) => row.health === 'healthy').length || '—'}</strong>
+          <span class="kpi-card__sub">workloads with pod snapshots</span>
+        </article>
+      </div>
+      <div class="detail-grid" style="margin-top: 1rem;">
+        <article class="detail-card">
+          <h3>Digest age and upstream lag</h3>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Lane</th><th>Digest age</th><th>Upstream age</th><th>State</th></tr></thead>
+              <tbody>
+                {fleetDigestAge.map((digest) => {
+                  const upstream = fleetUpstreamLag.find((row) => row.id === digest.lane);
+                  return <tr>
+                    <td class="mono">{digest.lane || 'unknown'}</td>
+                    <td>{digest.digest_age_days != null ? `${digest.digest_age_days}d${digest.stale ? ' · stale' : ''}` : 'Unavailable'}</td>
+                    <td>{upstream?.upstream_lag_days != null ? `${upstream.upstream_lag_days}d` : 'Unavailable'}</td>
+                    <td>{digest.state === 'available' && upstream?.state === 'available' ? 'Available' : 'Unavailable'}</td>
+                  </tr>;
+                })}
+                {fleetDigestAge.length === 0 && <tr><td colspan="4">No digest age evidence is published.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </article>
+        <article class="detail-card">
+          <h3>Kubernetes workload health</h3>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Workload</th><th>Pods</th><th>Health</th></tr></thead>
+              <tbody>
+                {fleetWorkloadHealth.map((row) => <tr>
+                  <td class="mono">{row.workload || 'unknown'}</td>
+                  <td>{row.pods_count ?? 'Unavailable'}</td>
+                  <td>{row.health || 'Unavailable'}</td>
+                </tr>)}
+                {fleetWorkloadHealth.length === 0 && <tr><td colspan="3">Kubernetes workload snapshot unavailable.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </article>
+      </div>
+      <p style="color:#64748b; font-size:0.75rem; margin-top:0.75rem;">
+        Raw evidence: <a href={`${baseUrl}data/fleet-telemetry.json`}>fleet telemetry contract</a> ·
+        <a href={`${baseUrl}data/history/active-versions.ndjson`}>active-version history</a> ·
+        <a href={`${baseUrl}data/history/digest-age.ndjson`}>digest-age history</a> ·
+        <a href={`${baseUrl}data/history/upstream-lag.ndjson`}>upstream-lag history</a> ·
+        <a href={`${baseUrl}data/history/workload-health.ndjson`}>workload history</a>
+      </p>
+    </section>
+
     <section id="factory-build-health" data-factory-build-health="true">
       <div class="spark-grid" style="display:none;" aria-hidden="true"></div>
-      <h2 class="section-title">Rolling 7-day factory build health</h2>
+      <h2 class="section-title">Rolling 7-day factory build health · unified publish + lab</h2>
       <p class="section-sub" style="margin-top: -0.5rem; margin-bottom: 1.5rem; color: #64748b; font-size: 0.9rem;">
-        All factory publish builds in the rolling UTC window. Release verdict cards above remain a separate per-lane digest, QA, and signature judgment.
+        GitHub Actions publish builds and Argo lab build runs in one explicit UTC window. Release verdict cards above remain a separate per-lane digest, QA, and signature judgment.
+      </p>
+      <p class="section-sub" style="margin-top: -1rem; margin-bottom: 1.5rem; color: #64748b; font-size: 0.78rem;">
+        Window: {formatUtc(new Date(buildHistoryWindowStart).toISOString())} – {formatUtc(new Date(buildHistoryNow).toISOString())} · samples: {publishBuildHistory.length} · last updated: {formatUtc(buildHistoryLastUpdated)}
       </p>
       {completedPublishBuilds.length > 0 || runningPublishBuilds.length > 0 ? (
         <>
@@ -1053,27 +1089,27 @@ const raptorEntrants: any[] = [];
             <article class="kpi-card">
               <span class="kpi-card__title">All factory builds</span>
               <strong class="kpi-card__value">{completedPublishBuilds.length}</strong>
-              <span class="kpi-card__sub">completed publish builds</span>
+              <span class="kpi-card__sub">completed publish + lab builds</span>
             </article>
             <article class="kpi-card kpi-card--success">
               <span class="kpi-card__title">Passed</span>
               <strong class="kpi-card__value">{passedPublishBuilds.length}</strong>
-              <span class="kpi-card__sub">terminal publish outcomes</span>
+              <span class="kpi-card__sub">terminal outcomes</span>
             </article>
             <article class="kpi-card kpi-card--warning">
               <span class="kpi-card__title">Failed</span>
               <strong class="kpi-card__value">{failedPublishBuilds.length}</strong>
-              <span class="kpi-card__sub">terminal publish outcomes</span>
+              <span class="kpi-card__sub">terminal outcomes</span>
             </article>
             <article class="kpi-card">
               <span class="kpi-card__title">Success rate</span>
               <strong class="kpi-card__value">{publishSuccessRate !== null ? `${publishSuccessRate}%` : '—'}</strong>
-              <span class="kpi-card__sub">{publishSuccessRate !== null ? 'passed / completed' : 'terminal metrics unavailable'}</span>
+              <span class="kpi-card__sub">{publishSuccessRate !== null ? 'passed / completed · all planes' : 'terminal metrics unavailable'}</span>
             </article>
             <article class="kpi-card">
               <span class="kpi-card__title">Duration</span>
               <strong class="kpi-card__value">{medianDuration !== null ? `${medianDuration.toFixed(0)}m` : '—'}</strong>
-              <span class="kpi-card__sub">{averageDuration !== null ? `median · ${averageDuration.toFixed(0)}m average` : 'terminal metrics unavailable'}</span>
+              <span class="kpi-card__sub">{averageDuration !== null ? `p50 ${medianDuration?.toFixed(0)}m · p95 ${p95Duration?.toFixed(0)}m · avg ${averageDuration.toFixed(0)}m` : 'terminal metrics unavailable'}</span>
             </article>
             <article class="kpi-card">
               <span class="kpi-card__title">Running work</span>
@@ -1093,6 +1129,7 @@ const raptorEntrants: any[] = [];
               <h3 style="margin:0; font-size:0.9rem; color:#cbd5e1;">Seven-day outcomes</h3>
               <a href={`${baseUrl}builds/`} style="color:#38bdf8; text-decoration:none; font-size:0.78rem;">View build evidence →</a>
             </header>
+            <p style="margin:0.35rem 0 0; color:#64748b; font-size:0.72rem;">UTC window · {publishBuildHistory.length} samples · last updated {formatUtc(buildHistoryLastUpdated)}</p>
             <div id="factory-build-outcomes-chart" style="height: 150px;" role="img" aria-label="Seven-day passed and failed factory publish build outcomes"></div>
           </article>
         </>
@@ -1104,8 +1141,8 @@ const raptorEntrants: any[] = [];
         </article>
       )}
       <p style="margin:0; color:#64748b; font-size:0.78rem;">
-        Source: <a href={buildHistorySourceUrl} style="color:#38bdf8;">data/history/build-runs.ndjson</a> · plane: publish · terminal statuses: passed/failed · UTC rolling window.
-        <span> GitHub Actions publish builds are authoritative here; Argo Workflows lab runs remain separate. Running work is shown separately when published by the history collector. Missing history renders Build health unavailable with its state_reason.</span>
+        Source: <a href={buildHistorySourceUrl} style="color:#38bdf8;">data/history/build-runs.ndjson</a> · planes: publish (GitHub Actions) + lab (Argo) · units: duration minutes in history, source metric seconds · statuses: passed/failed/running · UTC rolling window.
+        <span> Completion counts reuse <code>lab_build_workflow_completed_total</code>; duration distributions reuse <code>lab_build_workflow_duration_seconds</code> where Argo metrics are available. Failure stage/class are shown only when published. Missing history renders Build health unavailable with its state_reason.</span>
       </p>
     </section>
 
@@ -1319,67 +1356,53 @@ const raptorEntrants: any[] = [];
       <article class="node-card" style="grid-column: 1 / -1; background: linear-gradient(180deg, rgba(30, 41, 59, 0.45) 0%, rgba(15, 23, 42, 0.6) 100%); margin-top: 1rem;">
         <header style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
           <div style="display: flex; align-items: center; gap: 0.75rem;">
-            <h3 style="margin: 0; font-size: 1.1rem; font-weight: 700; color: #f1f5f9;">USB-4 Distributed Build System</h3>
+            <h3 style="margin: 0; font-size: 1.1rem; font-weight: 700; color: #f1f5f9;">USB-4 Distributed Execution</h3>
             <span class={`pill pill--${usb4StatusTone}`} style="text-transform: uppercase; font-size: 0.72rem; padding: 0.15rem 0.55rem;">
-              Link {usb4Telemetry.status === 'up' ? 'UP' : 'DOWN'} · {usb4Telemetry.bandwidth_gbps} Gbps
+              Link {usb4Status}
             </span>
           </div>
-          <span style="font-size: 0.75rem; color: #64748b;">Point-to-point link: ghost ↔ exo-0</span>
+          <span style="font-size: 0.75rem; color: #64748b;">Point-to-point: ghost ↔ exo-0</span>
         </header>
 
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.25rem; margin-top: 0.5rem;">
-          <!-- 1. Point-to-Point Link Status & Bandwidth -->
-          <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
-            <span style="font-size: 0.75rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">40 Gbps Thunderbolt Link</span>
-            <div style="display: flex; align-items: baseline; gap: 0.5rem;">
-              <span style="font-size: 1.8rem; font-weight: 800; color: #38bdf8;">{usb4Telemetry.bandwidth_gbps}</span>
-              <span style="font-size: 0.85rem; color: #94a3b8; font-weight: 600;">Gbps</span>
-            </div>
-            <div style="font-size: 0.78rem; color: #cbd5e1; display: flex; flex-direction: column; gap: 0.2rem;">
-              <div>Latency: <strong style="color: #4ade80;">{usb4Telemetry.latency_ms} ms</strong></div>
-              <div style="font-size: 0.72rem; color: #64748b;">
-                ghost link: <span style={`color: ${usb4Telemetry.ghost_link === 'up' ? '#4ade80' : '#f43f5e'};`}>{usb4Telemetry.ghost_link}</span> · exo-0 link: <span style={`color: ${usb4Telemetry.exo0_link === 'up' ? '#4ade80' : '#f43f5e'};`}>{usb4Telemetry.exo0_link}</span>
-              </div>
-            </div>
+        <p style="font-size: 0.82rem; color: #94a3b8; line-height: 1.5; margin: 0 0 1rem;">
+          Cache occupancy above is storage telemetry only; this table reports distributed execution measurements separately.
+          Window: {usb4ExecutionPayload.windowStart ? `${formatUtc(usb4ExecutionPayload.windowStart)} → ${formatUtc(usb4ExecutionPayload.windowEnd)}` : 'UTC window unavailable'}.
+        </p>
+        <div id="usb4-execution-heatmap" class="chart-box-custom" style="height: 280px; min-height: 280px;" role="img" aria-label="USB-4 execution heatmap for ghost and exo-0"></div>
+        <p id="usb4-execution-heatmap-unavailable" style="font-size: 0.82rem; color: #fbbf24; margin: 0 0 0.75rem;">
+          Execution heatmap unavailable: no measured throughput, latency, action, or cache fields were published.
+        </p>
+        {!usb4HasMeasuredTelemetry && (
+          <div style="border: 1px solid rgba(251, 191, 36, 0.35); background: rgba(120, 53, 15, 0.16); border-radius: 10px; padding: 0.85rem; color: #fde68a; font-size: 0.85rem;">
+            <strong>Execution telemetry unavailable.</strong> {usb4UnavailableReason}
           </div>
-
-          <!-- 2. Work Distribution Bar -->
-          <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
-            <span style="font-size: 0.75rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Work Distribution</span>
-            <div style="display: flex; justify-content: space-between; font-size: 0.82rem; font-weight: 600; color: #cbd5e1;">
-              <span>ghost: {usb4GhostDist}%</span>
-              <span>exo-0: {usb4ExoDist}%</span>
-            </div>
-            <div style="width: 100%; height: 10px; border-radius: 999px; background: rgba(30, 41, 59, 0.8); overflow: hidden; display: flex; border: 1px solid rgba(255,255,255,0.08);">
-              <div style={`width: ${usb4GhostDist}%; height: 100%; background: linear-gradient(90deg, #38bdf8, #818cf8);`} title={`ghost: ${usb4GhostDist}%`}></div>
-              <div style={`width: ${usb4ExoDist}%; height: 100%; background: linear-gradient(90deg, #c084fc, #a855f7);`} title={`exo-0: ${usb4ExoDist}%`}></div>
-            </div>
-            <span style="font-size: 0.72rem; color: #64748b;">Distributed RE build action scheduling ratio</span>
+        )}
+        {usb4HasMeasuredTelemetry && (
+          <div class="table-scroll">
+            <table class="data-table" style="min-width: 36rem;">
+              <thead><tr><th>Measured phase / signal</th><th>Value</th><th>Unit</th><th>Evidence</th></tr></thead>
+              <tbody>
+                {usb4MeasuredRows.map(([label, value, unit]) => (
+                  <tr>
+                    <td>{label}</td>
+                    <td class="mono">{value}</td>
+                    <td>{unit}</td>
+                    <td>
+                      {usb4EvidenceUrl
+                        ? <a href={usb4EvidenceUrl} target="_blank" rel="noreferrer">source ↗</a>
+                        : usb4Telemetry.source_url || 'source unavailable'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-
-          <!-- 3. Cold vs Warm Build Speedup -->
-          <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
-            <span style="font-size: 0.75rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Cold vs Warm Speedup</span>
-            <div style="display: flex; align-items: baseline; gap: 0.4rem;">
-              <span style="font-size: 1.8rem; font-weight: 800; color: #4ade80;">{usb4Telemetry.speedup_ratio}x</span>
-              <span style="font-size: 0.82rem; color: #94a3b8;">speedup</span>
-            </div>
-            <div style="font-size: 0.78rem; color: #cbd5e1; display: flex; justify-content: space-between; gap: 0.5rem;">
-              <span>Cold: <strong style="color: #fb7185;">{usb4Telemetry.cold_build_duration_min}m</strong></span>
-              <span>→</span>
-              <span>Warm: <strong style="color: #4ade80;">{usb4Telemetry.warm_build_duration_min}m</strong></span>
-            </div>
-          </div>
-
-          <!-- 4. Layer Rechunking Speed -->
-          <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
-            <span style="font-size: 0.75rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Layer Rechunking Speed</span>
-            <div style="display: flex; align-items: baseline; gap: 0.4rem;">
-              <span style="font-size: 1.8rem; font-weight: 800; color: #a78bfa;">{usb4Telemetry.rechunk_duration_sec}s</span>
-            </div>
-            <span style="font-size: 0.72rem; color: #64748b;">Fast re-chunking over high-throughput USB-4 CAS sync</span>
-          </div>
-        </div>
+        )}
+        <p style="font-size: 0.76rem; color: #64748b; margin: 0.9rem 0 0;">
+          Link observations: ghost {usb4Telemetry.ghost_link || 'unavailable'}{usb4ObservedAt ? ` (${usb4ObservedAt})` : ''} ·
+          exo-0 {usb4Telemetry.exo0_link || 'unavailable'}.
+          {usb4Telemetry.derivation ? ` ${usb4Telemetry.derivation}` : ''}
+        </p>
       </article>
     </div>
 
@@ -1445,6 +1468,7 @@ const raptorEntrants: any[] = [];
   <script id="factory-build-health-payload" type="application/json" set:html={serializedBuildHealthData}></script>
   <script id="triage-spark-payload" type="application/json" set:html={serializedTriageSparkData}></script>
   <script id="bst-cache-chart-payload" type="application/json" set:html={serializedBstChartData}></script>
+  <script id="usb4-execution-payload" type="application/json" set:html={serializedUsb4ExecutionData}></script>
   <script is:inline data-cfasync="false">
     (function() {
       const charts = [];
@@ -1649,7 +1673,12 @@ const raptorEntrants: any[] = [];
               requests: Number.isFinite(snapshot.requests) ? snapshot.requests : null,
               hitCount: snapshot.hit_count,
               missCount: snapshot.miss_count,
+              bytes: snapshot.bytes,
+              latencyMs: snapshot.latency_ms,
               effectiveness: snapshot.effectiveness,
+              logicalFillPercent: snapshot.logical_fill_percent,
+              logicalFillBytes: snapshot.logical_fill_bytes,
+              logicalCapacityBytes: snapshot.logical_capacity_bytes,
               state: snapshot.state || 'unavailable',
               reason: snapshot.state_reason || 'state_reason unavailable'
           });
@@ -1672,6 +1701,66 @@ const raptorEntrants: any[] = [];
             empty.textContent = 'Cache heat trend unavailable: published snapshots contain no readable request counts.';
             empty.style.display = '';
           }
+
+          function bootUsb4ExecutionHeatmap(echarts) {
+            const payloadNode = document.getElementById('usb4-execution-payload');
+            const chartEl = document.getElementById('usb4-execution-heatmap');
+            const unavailable = document.getElementById('usb4-execution-heatmap-unavailable');
+            if (!payloadNode || !chartEl) return;
+            const data = JSON.parse(payloadNode.textContent || '{}');
+            const rows = Array.isArray(data.rows) ? data.rows : [];
+            const nodes = Array.isArray(data.nodes) && data.nodes.length ? data.nodes : ['ghost', 'exo-0'];
+            const measured = rows.filter(function(row) { return row.state === 'available'; });
+            if (unavailable) unavailable.style.display = measured.length ? 'none' : '';
+            const timestamps = Array.from(new Set(rows.map(function(row) { return row.timestamp; }).filter(Boolean))).sort();
+            if (!timestamps.length) timestamps.push(data.windowStart || 'UTC window');
+            const points = [];
+            const sourceRows = rows.length ? rows : nodes.map(function(node) {
+              return { node: node, timestamp: timestamps[0], state: 'unavailable', state_reason: 'No measured workflow telemetry row was published.' };
+            });
+            sourceRows.forEach(function(row) {
+              const x = timestamps.indexOf(row.timestamp);
+              const y = nodes.indexOf(row.node);
+              const value = Number.isFinite(row.throughput) ? row.throughput : -1;
+              if (x >= 0 && y >= 0) points.push([x, y, value, row]);
+            });
+            const chart = echarts.init(chartEl);
+            charts.push(chart);
+            chart.setOption({
+              animation: false,
+              tooltip: {
+                position: 'top',
+                backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                borderColor: 'rgba(255, 255, 255, 0.1)',
+                textStyle: { color: '#cbd5e1', fontSize: 11 },
+                formatter: function(params) {
+                  const row = params.data && params.data[3] ? params.data[3] : {};
+                  const throughput = row.throughput == null ? 'unavailable' : row.throughput + ' bytes/s';
+                  const latency = row.latency_ms == null ? 'unavailable' : row.latency_ms + ' ms';
+                  const action = row.action_count == null ? 'unavailable' : row.action_count;
+                  const cache = row.cache_result || 'unavailable';
+                  const temperature = row.temperature || 'unavailable';
+                  return row.node + ' · ' + (row.timestamp || 'UTC timestamp unavailable') +
+                    '<br/>throughput: ' + throughput +
+                    '<br/>latency: ' + latency +
+                    '<br/>actions: ' + action +
+                    '<br/>cache: ' + cache + ' · ' + temperature +
+                    (row.state !== 'available' ? '<br/>unavailable: ' + (row.state_reason || 'state_reason unavailable') : '');
+                }
+              },
+              grid: { left: 72, right: 20, top: 18, bottom: 42 },
+              xAxis: { type: 'category', data: timestamps, axisLabel: { color: '#94a3b8', fontSize: 9 } },
+              yAxis: { type: 'category', data: nodes, axisLabel: { color: '#94a3b8', fontSize: 10 } },
+              visualMap: {
+                min: 0, max: Math.max(1, ...points.filter(function(point) { return point[2] >= 0; }).map(function(point) { return point[2]; })),
+                orient: 'horizontal', left: 'center', bottom: 0,
+                textStyle: { color: '#94a3b8', fontSize: 9 },
+                inRange: { color: ['#0f172a', '#0ea5e9', '#4ade80', '#f59e0b'] },
+                outOfRange: { color: '#475569' }
+              },
+              series: [{ type: 'heatmap', data: points, label: { show: false }, itemStyle: { borderColor: 'rgba(15, 23, 42, 0.8)', borderWidth: 2 } }]
+            });
+          }
           chartEl.style.display = 'none';
           return;
         }
@@ -1693,7 +1782,12 @@ const raptorEntrants: any[] = [];
                 const status = value == null
                   ? '<br/>unavailable: ' + (detail.state_reason || 'state_reason unavailable')
                   : '<br/>hits: ' + (detail.hit_count == null ? 'unavailable' : detail.hit_count) +
-                    ' · misses: ' + (detail.miss_count == null ? 'unavailable' : detail.miss_count);
+                    ' · misses: ' + (detail.miss_count == null ? 'unavailable' : detail.miss_count) +
+                    ' · bytes: ' + (detail.bytes == null ? 'unavailable' : detail.bytes) +
+                    ' · latency: ' + (detail.latency_ms == null ? 'unavailable' : detail.latency_ms + ' ms') +
+                    ' · logical fill: ' + (detail.logical_fill_percent == null
+                      ? 'unavailable'
+                      : detail.logical_fill_percent + '%');
                 return param.seriesName + ': ' + (value == null ? 'unavailable' : value + ' GET requests') + status;
               }).join('<br/>') + '<br/><span style="color:#94a3b8">' + params[0].axisValue + '</span>';
             }
@@ -1711,6 +1805,7 @@ const raptorEntrants: any[] = [];
           bootTriageSparks(window.echarts);
           bootBstCacheChart(window.echarts);
           bootBstCacheTrend(window.echarts);
+          bootUsb4ExecutionHeatmap(window.echarts);
           return;
         }
         if (attempt > 40) return;

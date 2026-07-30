@@ -16,11 +16,16 @@ spec:
       - bash
       image: cgr.dev/chainguard/kubectl:latest-dev
       name: ''
-      resources: {}
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
       source: "set -euo pipefail\nVERSION=$(curl -sL https://api.github.com/repos/kubevirt/containerized-data-importer/releases/latest\
         \ \\\n  | grep -o 'v[0-9]*\\.[0-9]*\\.[0-9]*' | head -1)\necho \"Installing\
         \ CDI ${VERSION}...\"\nkubectl apply -f https://github.com/kubevirt/containerized-data-importer/releases/download/${VERSION}/cdi-operator.yaml\n\
         kubectl apply -f https://github.com/kubevirt/containerized-data-importer/releases/download/${VERSION}/cdi-cr.yaml\n\
         kubectl -n cdi wait cdi cdi --for condition=Available --timeout=300s\necho\
         \ \"CDI ${VERSION} ready\"\n"
-

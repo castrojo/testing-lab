@@ -65,6 +65,7 @@ Read the published JSON contract at prerender time, join any linked result JSON 
    - `npm run build`
    - run `astro check` only if it completes in this repo scope; if it OOMs, record the blocker instead of claiming it passed
 16. When simulating or seeding results (such as primary application-specific results files), ensure you regenerate the core contracts using `python3 scripts/generate_page_datasets.py` so build-time Astro frontmatter picks up the changes immediately.
+16b. When invoking the dataset generator with `--root`, run its input collectors from that repository root so relative producer paths and generated outputs stay within the requested checkout; required producer exceptions must fail the refresh rather than publish stale derived data.
 17. In unit tests that validate dataset collectors, mock any dependencies on dynamically-updated or live-polled files (like `factory-stats.json`) by monkeypatching the loader to keep tests completely deterministic and isolated from homelab poller updates.
 18. When rendering outcomes charts or heatmaps, conditionally format labels (e.g. 'primary' vs 'fallback' vs 'none') depending on whether the primary result is completed or in a fallback-only/pending state.
 19. If a hero status card is made dynamic, conditionally render it to summarize partial/full primary coverage while preserving any expected smoke-test regex assertions (e.g. `/No completed Bazaar-specific software result is published/i`) in the text output.
@@ -103,6 +104,12 @@ schema `1.0` records, bucket by UTC start date, and preserve provenance plus
 explicit unavailable states when no validated records remain in the retention
 window.
 
+92. For distributed-execution heatmaps, publish an explicit UTC window and keep
+node labels bounded (for example `ghost` and `exo-0`). Tooltip fields such
+as throughput, latency, action count, cache result, and cold/warm state must
+come from workflow telemetry output parameters; preserve nulls and render a
+row-level `state_reason` when a field is unavailable.
+
 
 ## Common Rationalizations
 
@@ -126,6 +133,8 @@ window.
 - Runtime script tags lose `data-cfasync="false"` and Cloudflare rewrites the page boot path
 - Route split duplicates collector logic instead of reusing one shared model with page-level filters
 - Wide data tables are crammed into half-width cards and the columns collapse instead of scrolling
+- Fleet drift telemetry replaces missing artifact/cache or Kubernetes evidence
+  with invented histogram, digest, lag, or health values
 - Validation mentions `astro check` as passing when it actually OOMed
 - Disclosure about reused global or distro-wide values exists only in JSON fields and is absent from rendered HTML
 - Deleting chart containers that breaks legacy test suites instead of wrapping them in a hidden container

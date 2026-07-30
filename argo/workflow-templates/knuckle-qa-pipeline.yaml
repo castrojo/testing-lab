@@ -247,6 +247,13 @@ spec:
     initContainers:
     - name: git-clone
       image: quay.io/fedora/fedora:latest
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
       command: [bash, -c]
       args:
       - |

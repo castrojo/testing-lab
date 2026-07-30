@@ -125,3 +125,13 @@ def test_daily_gc_is_auth_ready():
     assert secret["optional"] is True
     assert 'ORAS_AUTH=(--registry-config /auth/config.json)' in source
     assert 'oras manifest delete "${REGISTRY}/${REPO}:${TAG}" --plain-http "${ORAS_AUTH[@]}"' in source
+
+
+def test_daily_gc_bootstrap_does_not_require_tar():
+    gc = load_yaml(GC_PATH)
+    source = gc["spec"]["workflowSpec"]["templates"][0]["script"]["source"]
+
+    assert 'curl -sfL "https://github.com/oras-project/oras/releases/download/v1.2.3/oras_1.2.3_linux_amd64.tar.gz"' in source
+    assert '-o "${ORAS_DIR}/oras.tar.gz"' in source
+    assert 'python3 -m tarfile -e "${ORAS_DIR}/oras.tar.gz" "${ORAS_DIR}"' in source
+    assert " | tar xz " not in source
