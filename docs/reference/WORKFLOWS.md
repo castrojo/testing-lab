@@ -441,8 +441,8 @@ installation must grant `checks: write`.
 
 ### `dakota-publish-pipeline`
 
-Publishes `192.168.1.102:30500/dakota:testing` and
-`192.168.1.102:30500/dakota-nvidia:testing` to the matching
+Publishes `<zot-registry>:30500/dakota:testing` and
+`<zot-registry>:30500/dakota-nvidia:testing` to the matching
 `ghcr.io/projectbluefin/*:testing` tags. Each lane resolves and copies the Zot
 image by digest, then fails unless GHCR reports the same digest. The lanes run
 independently; a final result task reports both statuses and fails the workflow

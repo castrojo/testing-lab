@@ -2,7 +2,7 @@
 
 Authoritative reference for writing, submitting, and debugging dogtail/qecore/behave tests in
 this repo. Read this before adding a scenario, a step, or a new suite. Pair it with
-[`/agents.md`](/agents.md), [`/docs/ops/RUNBOOK.md`](/docs/ops/RUNBOOK.md), and the example suites under
+[`/AGENTS.md`](/AGENTS.md), [`/docs/ops/RUNBOOK.md`](/docs/ops/RUNBOOK.md), and the example suites under
 [`tests/`](/tests/).
 
 > **TL;DR for agents:** Tests run inside a real GNOME Wayland session on a KubeVirt VM. The
@@ -728,7 +728,7 @@ shape for new suites.
   - [`tests/shared/wait_for_shell.py`](/tests/shared/wait_for_shell.py) — readiness probe.
   - [`argo/workflow-templates/run-gnome-tests.yaml`](/argo/workflow-templates/run-gnome-tests.yaml)
     — exact runner contract.
-- **Operational reference**: [`/docs/ops/RUNBOOK.md`](/docs/ops/RUNBOOK.md), [`/agents.md`](/agents.md).
+- **Operational reference**: [`/docs/ops/RUNBOOK.md`](/docs/ops/RUNBOOK.md), [`/AGENTS.md`](/AGENTS.md).
 
 
 ---

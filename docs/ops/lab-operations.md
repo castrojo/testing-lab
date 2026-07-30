@@ -4,7 +4,7 @@
 
 Pair with:
 - [`/docs/reference/agent-cheatsheet.md`](/docs/reference/agent-cheatsheet.md) — canonical command reference
-- [`../AGENTS.md`](/agents.md) — policy + architecture
+- [`../AGENTS.md`](/AGENTS.md) — policy + architecture
 - [`../RUNBOOK.md`](/docs/ops/RUNBOOK.md) — timeless architecture + failure modes
 - [`../WORKFLOWS.md`](/docs/reference/WORKFLOWS.md) — WorkflowTemplate parameter contracts
 - [`/docs/skills/test-authoring/dogtail-patterns.md`](/docs/skills/test-authoring/dogtail-patterns.md) — GUI test authoring

@@ -2,7 +2,7 @@
 
 Quick pointers for agents and contributors.
 
-- **Agent entry point** → [`agents.md`](../agents.md)
+- **Agent entry point** → [`AGENTS.md`](../AGENTS.md)
 - **Skill index** → [`docs/skills/README.md`](skills/README.md)
 - **Operational runbook** → [`docs/ops/RUNBOOK.md`](ops/RUNBOOK.md)
 - **Merge queue operations** → [`docs/ops/merge-queue.md`](ops/merge-queue.md)

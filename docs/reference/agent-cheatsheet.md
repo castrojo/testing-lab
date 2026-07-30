@@ -8,7 +8,7 @@
 > - [`/docs/reference/WORKFLOWS.md`](/docs/reference/WORKFLOWS.md) — WorkflowTemplate parameter contracts
 > - [`/docs/ops/RUNBOOK.md`](/docs/ops/RUNBOOK.md) — architecture + failure-mode index
 > - [`/docs/skills/test-authoring/dogtail-patterns.md`](/docs/skills/test-authoring/dogtail-patterns.md) — writing GUI tests
-> - [`/agents.md`](/agents.md) — hard policy and tenets
+> - [`/AGENTS.md`](/AGENTS.md) — hard policy and tenets
 
 > [!NOTE]
 > **CLI-first.** Tool hierarchy: `just` (lifecycle recipes) → `argo`/`kubectl` (cluster ops) → `ssh core@<control-plane>` (OS-level only).
@@ -108,7 +108,7 @@ If no row matches:
 | Node has `DiskPressure` | Do not submit builds. Inspect PV node affinity and `kube-system/local-path-config`; every eligible node needs an explicit non-root data path and there must be no default root-disk fallback. |
 | Many `virt-launcher-*` pods with no corresponding live workflow | `argo submit -n argo --from workflowtemplate/orphan-vm-cleanup` |
 
-Per-template ceilings live in [`/agents.md`](/agents.md) under **Resource Limits**.
+Per-template ceilings live in [`/AGENTS.md`](/AGENTS.md) under **Resource Limits**.
 
 ## 4. ArgoCD — my template change did not take effect
 
