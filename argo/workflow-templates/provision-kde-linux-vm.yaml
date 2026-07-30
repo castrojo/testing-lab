@@ -107,6 +107,12 @@ spec:
           > "${WORK}/containerDisk.json"
         buildah copy "${ctr}" "${WORK}/containerDisk.json" /containerDisk.json
         buildah commit "${ctr}" "${CONTAINERDISK}"
+        _registry_host="${CONTAINERDISK%%/*}"
+        _registry_host="${_registry_host%%:*}"
+        if [[ "${_registry_host}" == "ghcr.io" || "${_registry_host}" == *.ghcr.io ]]; then
+          echo "ERROR: GHCR push destination is forbidden: ${CONTAINERDISK}" >&2
+          exit 1
+        fi
         buildah push --tls-verify=false \
           --digestfile "${WORK}/containerdisk-digest.txt" "${CONTAINERDISK}"
 

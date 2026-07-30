@@ -98,16 +98,16 @@ spec:
             value: "{{inputs.parameters.image}}"
           - name: SOURCE_REGISTRY
             value: "192.168.1.102:30500"
-          - name: DESTINATION_REGISTRY
-            value: "ghcr.io/projectbluefin"
           - name: IMAGE_TAG
             value: testing
         source: |
           set -euo pipefail
 
+          echo "ERROR: GHCR push destination is forbidden; publish to local Zot instead." >&2
+          exit 1
+
           AUTH_FILE=/auth/config.json
           SOURCE_REF="${SOURCE_REGISTRY}/${IMAGE}:${IMAGE_TAG}"
-          DESTINATION_REF="${DESTINATION_REGISTRY}/${IMAGE}:${IMAGE_TAG}"
 
           SOURCE_DIGEST=$(skopeo inspect \
             --tls-verify=false \
@@ -223,38 +223,23 @@ spec:
           set -Eeuo pipefail
           trap 'rc=$?; echo "ERROR: Dakota publish history persistence failed (exit ${rc})" >&2; exit "${rc}"' ERR
 
-          AUTH_FILE=/auth/config.json
-          DESTINATION_REF=ghcr.io/projectbluefin/dakota:testing
           FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           RUN_URL="http://192.168.1.102:2746/workflows/argo/${WORKFLOW_NAME}"
           RECORD=/workspace/run.json
 
           if [ "${WORKFLOW_STATUS}" = Succeeded ]; then
-            ORAS_VERSION=1.2.3
-            mkdir -p /workspace/oras-bin
-            curl -sSfL \
-              "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" \
-              -o /workspace/oras.tar.gz
-            python3 -m tarfile -e /workspace/oras.tar.gz /workspace/oras-bin
-            rm -f /workspace/oras.tar.gz
-            DIGEST=$(/workspace/oras-bin/oras manifest fetch \
-              --descriptor \
-              --registry-config "${AUTH_FILE}" \
-              "${DESTINATION_REF}" | jq -r '.digest')
             jq -n \
               --arg workflow_name "${WORKFLOW_NAME}" \
               --arg started_at "${STARTED_AT}" \
               --arg finished_at "${FINISHED_AT}" \
               --arg run_url "${RUN_URL}" \
-              --arg digest "${DIGEST}" \
               '{
                 kind: "publish",
                 workflow_name: $workflow_name,
                 status: "passed",
                 started_at: $started_at,
                 finished_at: $finished_at,
-                run_url: $run_url,
-                digest: $digest
+                run_url: $run_url
               }' > "${RECORD}"
           else
             jq -n \

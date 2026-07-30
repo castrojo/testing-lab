@@ -288,42 +288,13 @@ spec:
           IMG_SLUG="aurora-${{inputs.parameters.containerdisk-tag}}"
         fi
 
-        # Push the first in-guest screenshot as the stable OCI artifact used by
-        # the dashboard. KubeVirt's virt-launcher exposes no QEMU monitor, so
-        # QEMU-level screendumps are intentionally not part of this workflow.
+        # Screenshot discovery; GHCR upload is disabled, retained locally only.
         SHOT=$(find /tmp/results -type f -name '*.png' -print -quit)
         if [[ -z "${SHOT}" || ! -f "${SHOT}" ]]; then
           echo "ERROR: KDE test did not produce a screenshot artifact" >&2
           ARTIFACT_RC=1
         else
-          ORAS_BIN=/workspace/oras-bin/oras
-          if [[ ! -x "${ORAS_BIN}" ]]; then
-            mkdir -p "$(dirname "${ORAS_BIN}")"
-            ORAS_ARCHIVE=/workspace/oras-bin/oras.tar.gz
-            curl --fail --silent --show-error --location \
-              --output "${ORAS_ARCHIVE}" \
-              "https://github.com/oras-project/oras/releases/download/v1.2.3/oras_1.2.3_linux_amd64.tar.gz"
-            python3 -m tarfile -e "${ORAS_ARCHIVE}" "$(dirname "${ORAS_BIN}")"
-            rm -f "${ORAS_ARCHIVE}"
-          fi
-          if ! {
-            if [[ ! -x "${ORAS_BIN}" ]]; then
-              echo "Required tool is unavailable: ${ORAS_BIN}" >&2
-              false
-            fi
-            export PATH="$(dirname "${ORAS_BIN}"):${PATH}"
-            SCREENSHOT_IMAGE="ghcr.io/projectbluefin/testsuite/desktop-screenshot"
-            PUSH_TAG="${IMG_SLUG}-${SUITE}-latest"
-            echo "${GITHUB_TOKEN}" | oras login ghcr.io \
-              -u github-actions --password-stdin
-            oras push "${SCREENSHOT_IMAGE}:${PUSH_TAG}" \
-              --annotation "org.opencontainers.image.description=Bluefin KDE desktop screenshot from lab e2e suite: ${SUITE}" \
-              --annotation "io.github.projectbluefin.caller_repo=projectbluefin/lab" \
-              "${SHOT}:image/png"
-          }; then
-            echo "ERROR: failed to publish KDE screenshot artifact" >&2
-            ARTIFACT_RC=1
-          fi
+          echo "GHCR screenshot publication disabled; retaining screenshot locally only." >&2
         fi
 
         PUBLISH_RC=0
