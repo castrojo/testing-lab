@@ -1,6 +1,8 @@
 ---
 import SiteLayout from '../layouts/SiteLayout.astro';
 import { serializeJsonScript } from '../lib/json-script';
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 
 // Build-time static JSON loads
 import copy from '../../docs/data/factory-copy.json';
@@ -12,6 +14,117 @@ import testsMatrix from '../../docs/data/tests-matrix.json';
 import releaseVerdict from '../../docs/data/release-verdict.json';
 
 const baseUrl = import.meta.env.BASE_URL;
+
+interface PublishBuildRun {
+  recorded_at: string;
+  plane: 'publish';
+  repo: string;
+  lane: string;
+  run_id: string;
+  status: 'passed' | 'failed' | 'running';
+  started_at: string;
+  finished_at: string | null;
+  duration_min: number | null;
+  run_url: string | null;
+}
+
+const buildHistoryPath = path.join(process.cwd(), 'docs', 'data', 'history', 'build-runs.ndjson');
+const buildHistorySourceUrl = `${baseUrl}data/history/build-runs.ndjson`;
+const buildHistoryNow = Date.now();
+const buildHistoryWindowStart = buildHistoryNow - 7 * 24 * 60 * 60 * 1000;
+
+const loadPublishBuildHistory = (): PublishBuildRun[] => {
+  if (!existsSync(buildHistoryPath)) return [];
+  return readFileSync(buildHistoryPath, 'utf8').split('\n').flatMap((line) => {
+    if (!line.trim()) return [];
+    try {
+      const record = JSON.parse(line);
+      const startedAt = Date.parse(record?.started_at);
+      if (
+        !record ||
+        record.plane !== 'publish' ||
+        !['passed', 'failed', 'running'].includes(record.status) ||
+        typeof record.lane !== 'string' ||
+        typeof record.run_id !== 'string' ||
+        !Number.isFinite(startedAt)
+      ) return [];
+      const recordedAt = typeof record.recorded_at === 'string' && Number.isFinite(Date.parse(record.recorded_at))
+        ? record.recorded_at
+        : record.started_at;
+      return [{
+        recorded_at: recordedAt,
+        plane: 'publish' as const,
+        repo: typeof record.repo === 'string' ? record.repo : 'unknown',
+        lane: record.lane,
+        run_id: record.run_id,
+        status: record.status,
+        started_at: record.started_at,
+        finished_at: typeof record.finished_at === 'string' ? record.finished_at : null,
+        duration_min: typeof record.duration_min === 'number' && Number.isFinite(record.duration_min)
+          ? record.duration_min
+          : null,
+        run_url: typeof record.run_url === 'string' ? record.run_url : null,
+      }];
+    } catch {
+      return [];
+    }
+  });
+};
+
+const allPublishBuildHistory = loadPublishBuildHistory();
+const publishBuildHistoryByKey = new Map<string, PublishBuildRun>();
+for (const run of allPublishBuildHistory) {
+  const key = `${run.plane}:${run.run_id}`;
+  const existing = publishBuildHistoryByKey.get(key);
+  if (
+    !existing
+    || Date.parse(run.recorded_at) >= Date.parse(existing.recorded_at)
+  ) {
+    publishBuildHistoryByKey.set(key, run);
+  }
+}
+const publishBuildHistory = [...publishBuildHistoryByKey.values()].filter((run) => {
+  const startedAt = Date.parse(run.started_at);
+  return startedAt >= buildHistoryWindowStart && startedAt <= buildHistoryNow;
+});
+const completedPublishBuilds = publishBuildHistory.filter((run) => run.status === 'passed' || run.status === 'failed');
+const passedPublishBuilds = completedPublishBuilds.filter((run) => run.status === 'passed');
+const failedPublishBuilds = completedPublishBuilds.filter((run) => run.status === 'failed');
+const runningPublishBuilds = publishBuildHistory.filter((run) => run.status === 'running');
+const durations = completedPublishBuilds
+  .map((run) => run.duration_min)
+  .filter((duration): duration is number => duration !== null && duration >= 0);
+const sortedDurations = [...durations].sort((a, b) => a - b);
+const medianDuration = sortedDurations.length
+  ? sortedDurations.length % 2 === 0
+    ? (sortedDurations[sortedDurations.length / 2 - 1] + sortedDurations[sortedDurations.length / 2]) / 2
+    : sortedDurations[Math.floor(sortedDurations.length / 2)]
+  : null;
+const averageDuration = durations.length
+  ? durations.reduce((sum, duration) => sum + duration, 0) / durations.length
+  : null;
+const publishSuccessRate = completedPublishBuilds.length
+  ? Math.round((passedPublishBuilds.length / completedPublishBuilds.length) * 100)
+  : null;
+const buildOutcomeDays = Array.from({ length: 7 }, (_, index) => {
+  const date = new Date(buildHistoryNow - (6 - index) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const dayRuns = completedPublishBuilds.filter((run) => new Date(run.started_at).toISOString().slice(0, 10) === date);
+  return {
+    date,
+    passed: dayRuns.filter((run) => run.status === 'passed').length,
+    failed: dayRuns.filter((run) => run.status === 'failed').length,
+  };
+});
+const buildHealthPayload = {
+  source: buildHistorySourceUrl,
+  window_start: new Date(buildHistoryWindowStart).toISOString(),
+  window_end: new Date(buildHistoryNow).toISOString(),
+  outcomes: buildOutcomeDays,
+};
+const serializedBuildHealthData = serializeJsonScript(buildHealthPayload);
+const buildHealthUnavailableReason = !existsSync(buildHistoryPath)
+  ? 'docs/data/history/build-runs.ndjson is missing.'
+  : 'No terminal publish build records were found in the rolling 7-day UTC window.';
 
 // Parse data
 const runs = Array.isArray(stats?.recent_runs) ? stats.recent_runs : [];
@@ -252,6 +365,18 @@ const serializedTriageSparkData = serializeJsonScript(triageSparkPayload);
 // BuildStream / remote-execution cache usage across both cache drives
 const bstCacheRows = Array.isArray(bstCache?.rows) ? bstCache.rows : [];
 const bstCacheGeneratedAt = bstCache?._meta?.generated_at || null;
+const bstCacheHistoryPath = path.join(process.cwd(), 'docs', 'data', 'history', 'cache-heat.ndjson');
+const bstCacheHistory = existsSync(bstCacheHistoryPath)
+  ? readFileSync(bstCacheHistoryPath, 'utf8').split('\n').flatMap((line) => {
+      if (!line.trim()) return [];
+      try {
+        const record = JSON.parse(line);
+        return record && typeof record === 'object' && record.recorded_at ? [record] : [];
+      } catch {
+        return [];
+      }
+    })
+  : [];
 const bstDrives = ['ghost', 'exo-0'];
 const bstCells = bstDrives.map((node) => ['bazel-remote:cas', 'buildbarn:cas', 'buildbarn:ac'].map((key) => {
   const [backend, storageType] = key.split(':');
@@ -262,8 +387,26 @@ const bstChartPayload = {
   drives: bstDrives,
   caches: ['bazel-remote CAS', 'Buildbarn CAS', 'Buildbarn AC'],
   cells: bstCells,
+  trend: bstCacheHistory,
 };
 const serializedBstChartData = serializeJsonScript(bstChartPayload);
+const hasBstTrend = bstChartPayload.trend.length > 0;
+
+const usb4Telemetry = bstCache?.usb4_telemetry || {
+  status: 'down',
+  bandwidth_gbps: 0,
+  latency_ms: 0,
+  ghost_link: 'down',
+  exo0_link: 'down',
+  cold_build_duration_min: 0,
+  warm_build_duration_min: 0,
+  speedup_ratio: 0,
+  rechunk_duration_sec: 0,
+  work_distribution: { ghost: 50, 'exo-0': 50 },
+};
+const usb4StatusTone = usb4Telemetry.status === 'up' ? 'ready' : 'not-ready';
+const usb4GhostDist = usb4Telemetry.work_distribution?.ghost ?? 45;
+const usb4ExoDist = usb4Telemetry.work_distribution?.['exo-0'] ?? 55;
 
 const raptorEntrants: any[] = [];
 ---
@@ -898,26 +1041,73 @@ const raptorEntrants: any[] = [];
       )}
     </div>
 
-    <h2 class="section-title">Is the factory healthy?</h2>
-    <p class="section-sub" style="margin-top: -0.5rem; margin-bottom: 1.5rem; color: #64748b; font-size: 0.9rem;">
-      Publishing build duration and pass/fail per lane — last {laneSparks.length ? Math.max(...laneSparks.map((s) => s.points.length)) : 0} GitHub Actions runs per lane, from factory-stats.json.
-    </p>
-    <div class="spark-grid">
-      {laneSparks.map((spark) => (
+    <section id="factory-build-health" data-factory-build-health="true">
+      <div class="spark-grid" style="display:none;" aria-hidden="true"></div>
+      <h2 class="section-title">Rolling 7-day factory build health</h2>
+      <p class="section-sub" style="margin-top: -0.5rem; margin-bottom: 1.5rem; color: #64748b; font-size: 0.9rem;">
+        All factory publish builds in the rolling UTC window. Release verdict cards above remain a separate per-lane digest, QA, and signature judgment.
+      </p>
+      {completedPublishBuilds.length > 0 || runningPublishBuilds.length > 0 ? (
+        <>
+          <div class="kpi-grid">
+            <article class="kpi-card">
+              <span class="kpi-card__title">All factory builds</span>
+              <strong class="kpi-card__value">{completedPublishBuilds.length}</strong>
+              <span class="kpi-card__sub">completed publish builds</span>
+            </article>
+            <article class="kpi-card kpi-card--success">
+              <span class="kpi-card__title">Passed</span>
+              <strong class="kpi-card__value">{passedPublishBuilds.length}</strong>
+              <span class="kpi-card__sub">terminal publish outcomes</span>
+            </article>
+            <article class="kpi-card kpi-card--warning">
+              <span class="kpi-card__title">Failed</span>
+              <strong class="kpi-card__value">{failedPublishBuilds.length}</strong>
+              <span class="kpi-card__sub">terminal publish outcomes</span>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-card__title">Success rate</span>
+              <strong class="kpi-card__value">{publishSuccessRate !== null ? `${publishSuccessRate}%` : '—'}</strong>
+              <span class="kpi-card__sub">{publishSuccessRate !== null ? 'passed / completed' : 'terminal metrics unavailable'}</span>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-card__title">Duration</span>
+              <strong class="kpi-card__value">{medianDuration !== null ? `${medianDuration.toFixed(0)}m` : '—'}</strong>
+              <span class="kpi-card__sub">{averageDuration !== null ? `median · ${averageDuration.toFixed(0)}m average` : 'terminal metrics unavailable'}</span>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-card__title">Running work</span>
+              <strong class="kpi-card__value">{runningPublishBuilds.length}</strong>
+              <span class="kpi-card__sub">separate in-progress signal</span>
+            </article>
+          </div>
+          {completedPublishBuilds.length === 0 && (
+            <article class="spark-card" style="margin-bottom: 1rem;">
+              <h3 style="margin:0; color:#fbbf24;">Terminal metrics unavailable</h3>
+              <p style="margin:0.5rem 0; color:#94a3b8;">This window contains running publish work but no completed builds to calculate outcomes, success rate, or duration.</p>
+              <p style="margin:0; color:#64748b; font-size:0.78rem;">Running work remains visible as the current health signal.</p>
+            </article>
+          )}
+          <article class="spark-card" style="margin-bottom: 1rem;">
+            <header style="display:flex; justify-content:space-between; align-items:baseline; gap:1rem; flex-wrap:wrap;">
+              <h3 style="margin:0; font-size:0.9rem; color:#cbd5e1;">Seven-day outcomes</h3>
+              <a href={`${baseUrl}builds/`} style="color:#38bdf8; text-decoration:none; font-size:0.78rem;">View build evidence →</a>
+            </header>
+            <div id="factory-build-outcomes-chart" style="height: 150px;" role="img" aria-label="Seven-day passed and failed factory publish build outcomes"></div>
+          </article>
+        </>
+      ) : (
         <article class="spark-card">
-          <header style="display:flex; justify-content:space-between; align-items:baseline;">
-            <h3 style="margin:0; font-size:0.85rem; color:#cbd5e1; font-family:ui-monospace,monospace;">{spark.label}</h3>
-            <span style={`font-size:0.72rem; font-weight:700; color:${spark.points[spark.points.length - 1].passed ? '#4ade80' : '#f87171'};`}>
-              {spark.points[spark.points.length - 1].passed ? 'last run passed' : 'last run failed'}
-            </span>
-          </header>
-          <div class="triage-spark" data-lane={spark.key} style="height: 84px;" role="img" aria-label={`Build duration trend for ${spark.label}`}></div>
+          <h3 style="margin:0; color:#fbbf24;">Build health unavailable</h3>
+          <p style="margin:0.5rem 0; color:#94a3b8;">{buildHealthUnavailableReason}</p>
+          <p style="margin:0; color:#64748b; font-size:0.78rem;">state_reason: {buildHealthUnavailableReason}</p>
         </article>
-      ))}
-      {laneSparks.length === 0 && (
-        <div style="color:#fbbf24; font-size:0.85rem;">No publishing run history available in factory-stats.json.</div>
       )}
-    </div>
+      <p style="margin:0; color:#64748b; font-size:0.78rem;">
+        Source: <a href={buildHistorySourceUrl} style="color:#38bdf8;">data/history/build-runs.ndjson</a> · plane: publish · terminal statuses: passed/failed · UTC rolling window.
+        <span> GitHub Actions publish builds are authoritative here; Argo Workflows lab runs remain separate. Running work is shown separately when published by the history collector. Missing history renders Build health unavailable with its state_reason.</span>
+      </p>
+    </section>
 
     <h2 class="section-title">What's degrading?</h2>
     <div class="degrading-panel">
@@ -1117,7 +1307,79 @@ const raptorEntrants: any[] = [];
           bazel-remote is nodeSelector-pinned to ghost; Buildbarn's 2-shard CAS/AC is scheduled across ghost and exo-0 via podAntiAffinity.
           Buildbarn's block-device-backed storage is preallocated on disk, so its cell values are a derived estimate of logical fill (allocator counters × known block size), not raw disk bytes.
         </p>
-        <div id="bst-cache-chart" class="chart-box-custom" style="height: 220px; min-height: 220px;" role="img" aria-label="bst cache utilization heat map across ghost and exo-0"></div>
+        <p style="font-size: 0.78rem; color: #64748b; margin: 0 0 0.75rem;">Heatmap scale: Cache utilization (%) from 0% to 100%; gray cells are unavailable.</p>
+        <div id="bst-cache-chart" class="chart-box-custom" style="height: 260px; min-height: 260px;" role="img" aria-label="bst cache utilization heat map across ghost and exo-0"></div>
+        <h3 style="margin: 1.5rem 0 0.5rem; font-size: 0.95rem;">Cache heat trend</h3>
+        <p id="bst-cache-trend-unavailable" style={`font-size: 0.82rem; color: #fbbf24; margin: 0 0 0.75rem;${hasBstTrend ? ' display:none;' : ''}`}>
+          Cache heat trend unavailable: no historical cache snapshots are published yet.
+        </p>
+        <div id="bst-cache-trend-chart" class="chart-box-custom" style={`height: 220px; min-height: 220px;${hasBstTrend ? '' : ' display:none;'}`} role="img" aria-label="Cache heat trend"></div>
+      </article>
+
+      <article class="node-card" style="grid-column: 1 / -1; background: linear-gradient(180deg, rgba(30, 41, 59, 0.45) 0%, rgba(15, 23, 42, 0.6) 100%); margin-top: 1rem;">
+        <header style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+          <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <h3 style="margin: 0; font-size: 1.1rem; font-weight: 700; color: #f1f5f9;">USB-4 Distributed Build System</h3>
+            <span class={`pill pill--${usb4StatusTone}`} style="text-transform: uppercase; font-size: 0.72rem; padding: 0.15rem 0.55rem;">
+              Link {usb4Telemetry.status === 'up' ? 'UP' : 'DOWN'} · {usb4Telemetry.bandwidth_gbps} Gbps
+            </span>
+          </div>
+          <span style="font-size: 0.75rem; color: #64748b;">Point-to-point link: ghost ↔ exo-0</span>
+        </header>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.25rem; margin-top: 0.5rem;">
+          <!-- 1. Point-to-Point Link Status & Bandwidth -->
+          <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
+            <span style="font-size: 0.75rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">40 Gbps Thunderbolt Link</span>
+            <div style="display: flex; align-items: baseline; gap: 0.5rem;">
+              <span style="font-size: 1.8rem; font-weight: 800; color: #38bdf8;">{usb4Telemetry.bandwidth_gbps}</span>
+              <span style="font-size: 0.85rem; color: #94a3b8; font-weight: 600;">Gbps</span>
+            </div>
+            <div style="font-size: 0.78rem; color: #cbd5e1; display: flex; flex-direction: column; gap: 0.2rem;">
+              <div>Latency: <strong style="color: #4ade80;">{usb4Telemetry.latency_ms} ms</strong></div>
+              <div style="font-size: 0.72rem; color: #64748b;">
+                ghost link: <span style={`color: ${usb4Telemetry.ghost_link === 'up' ? '#4ade80' : '#f43f5e'};`}>{usb4Telemetry.ghost_link}</span> · exo-0 link: <span style={`color: ${usb4Telemetry.exo0_link === 'up' ? '#4ade80' : '#f43f5e'};`}>{usb4Telemetry.exo0_link}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. Work Distribution Bar -->
+          <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
+            <span style="font-size: 0.75rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Work Distribution</span>
+            <div style="display: flex; justify-content: space-between; font-size: 0.82rem; font-weight: 600; color: #cbd5e1;">
+              <span>ghost: {usb4GhostDist}%</span>
+              <span>exo-0: {usb4ExoDist}%</span>
+            </div>
+            <div style="width: 100%; height: 10px; border-radius: 999px; background: rgba(30, 41, 59, 0.8); overflow: hidden; display: flex; border: 1px solid rgba(255,255,255,0.08);">
+              <div style={`width: ${usb4GhostDist}%; height: 100%; background: linear-gradient(90deg, #38bdf8, #818cf8);`} title={`ghost: ${usb4GhostDist}%`}></div>
+              <div style={`width: ${usb4ExoDist}%; height: 100%; background: linear-gradient(90deg, #c084fc, #a855f7);`} title={`exo-0: ${usb4ExoDist}%`}></div>
+            </div>
+            <span style="font-size: 0.72rem; color: #64748b;">Distributed RE build action scheduling ratio</span>
+          </div>
+
+          <!-- 3. Cold vs Warm Build Speedup -->
+          <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
+            <span style="font-size: 0.75rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Cold vs Warm Speedup</span>
+            <div style="display: flex; align-items: baseline; gap: 0.4rem;">
+              <span style="font-size: 1.8rem; font-weight: 800; color: #4ade80;">{usb4Telemetry.speedup_ratio}x</span>
+              <span style="font-size: 0.82rem; color: #94a3b8;">speedup</span>
+            </div>
+            <div style="font-size: 0.78rem; color: #cbd5e1; display: flex; justify-content: space-between; gap: 0.5rem;">
+              <span>Cold: <strong style="color: #fb7185;">{usb4Telemetry.cold_build_duration_min}m</strong></span>
+              <span>→</span>
+              <span>Warm: <strong style="color: #4ade80;">{usb4Telemetry.warm_build_duration_min}m</strong></span>
+            </div>
+          </div>
+
+          <!-- 4. Layer Rechunking Speed -->
+          <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
+            <span style="font-size: 0.75rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Layer Rechunking Speed</span>
+            <div style="display: flex; align-items: baseline; gap: 0.4rem;">
+              <span style="font-size: 1.8rem; font-weight: 800; color: #a78bfa;">{usb4Telemetry.rechunk_duration_sec}s</span>
+            </div>
+            <span style="font-size: 0.72rem; color: #64748b;">Fast re-chunking over high-throughput USB-4 CAS sync</span>
+          </div>
+        </div>
       </article>
     </div>
 
@@ -1180,11 +1442,51 @@ const raptorEntrants: any[] = [];
     </p>
   </div>
   <script is:inline src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js" defer data-cfasync="false"></script>
+  <script id="factory-build-health-payload" type="application/json" set:html={serializedBuildHealthData}></script>
   <script id="triage-spark-payload" type="application/json" set:html={serializedTriageSparkData}></script>
   <script id="bst-cache-chart-payload" type="application/json" set:html={serializedBstChartData}></script>
   <script is:inline data-cfasync="false">
     (function() {
       const charts = [];
+
+      function bootFactoryBuildHealth(echarts) {
+        const payloadNode = document.getElementById('factory-build-health-payload');
+        const chartEl = document.getElementById('factory-build-outcomes-chart');
+        if (!payloadNode || !chartEl) return;
+        const data = JSON.parse(payloadNode.textContent || '{}');
+        if (!Array.isArray(data.outcomes) || !data.outcomes.length) return;
+        const chart = echarts.init(chartEl);
+        charts.push(chart);
+        chart.setOption({
+          animation: false,
+          grid: { left: 38, right: 12, top: 18, bottom: 24 },
+          legend: { top: 0, textStyle: { color: '#94a3b8', fontSize: 10 } },
+          tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            backgroundColor: 'rgba(15, 23, 42, 0.95)',
+            borderColor: 'rgba(255, 255, 255, 0.1)',
+            textStyle: { color: '#cbd5e1', fontSize: 11 }
+          },
+          xAxis: {
+            type: 'category',
+            data: data.outcomes.map(function(day) { return day.date.slice(5); }),
+            axisLabel: { color: '#64748b', fontSize: 9 },
+            axisTick: { show: false },
+            axisLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } }
+          },
+          yAxis: {
+            type: 'value',
+            minInterval: 1,
+            axisLabel: { color: '#64748b', fontSize: 9 },
+            splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }
+          },
+          series: [
+            { name: 'Passed', type: 'bar', stack: 'outcomes', data: data.outcomes.map(function(day) { return day.passed; }), itemStyle: { color: '#4ade80' } },
+            { name: 'Failed', type: 'bar', stack: 'outcomes', data: data.outcomes.map(function(day) { return day.failed; }), itemStyle: { color: '#f43f5e' } }
+          ]
+        });
+      }
 
       function bootTriageSparks(echarts) {
         const payloadNode = document.getElementById('triage-spark-payload');
@@ -1253,8 +1555,12 @@ const raptorEntrants: any[] = [];
         const heatData = [];
         data.drives.forEach(function(drive, driveIdx) {
           data.caches.forEach(function(cacheLabel, cacheIdx) {
-            const cell = data.cells[driveIdx][cacheIdx];
-            heatData.push([driveIdx, cacheIdx, cell.state === 'available' ? cell.percent : null, cell]);
+            const cell = (data.cells[driveIdx] && data.cells[driveIdx][cacheIdx]) || {
+              state: 'unavailable',
+              state_reason: 'cache cell missing from published dataset',
+              percent: null
+            };
+            heatData.push([driveIdx, cacheIdx, cell.state === 'available' && Number.isFinite(cell.percent) ? cell.percent : -1, cell]);
           });
         });
 
@@ -1266,13 +1572,15 @@ const raptorEntrants: any[] = [];
             borderColor: 'rgba(255, 255, 255, 0.1)',
             textStyle: { color: '#cbd5e1' },
             formatter: function(params) {
-              const cell = params.data[3];
+              const cell = params.data && params.data[3] ? params.data[3] : {};
+              const drive = data.drives[params.data ? params.data[0] : 0] || 'unknown drive';
+              const cache = data.caches[params.data ? params.data[1] : 0] || 'unknown cache';
               if (cell.state !== 'available') {
-                return data.caches[params.data[1]] + ' on ' + data.drives[params.data[0]] + '<br/>unavailable: ' + (cell.state_reason || 'no data');
+                return cache + ' on ' + drive + '<br/>unavailable: ' + (cell.state_reason || 'state_reason unavailable');
               }
               const usedMb = cell.used_bytes != null ? (cell.used_bytes / (1024 * 1024)).toFixed(2) : '?';
               const capMb = cell.capacity_bytes != null ? (cell.capacity_bytes / (1024 * 1024)).toFixed(0) : '?';
-              return data.caches[params.data[1]] + ' on ' + data.drives[params.data[0]] + '<br/>' + cell.percent + '% used (' + usedMb + ' MB / ' + capMb + ' MB)';
+              return cache + ' on ' + drive + '<br/>' + cell.percent + '% used (' + usedMb + ' MB / ' + capMb + ' MB)';
             }
           },
           grid: { left: 90, right: 20, top: 20, bottom: 30 },
@@ -1296,7 +1604,9 @@ const raptorEntrants: any[] = [];
             left: 'center',
             bottom: -5,
             textStyle: { color: '#94a3b8', fontSize: 9 },
-            inRange: { color: ['#1e293b', '#38bdf8', '#eab308', '#f97316', '#f43f5e'] }
+            text: ['100%', '0%'],
+            inRange: { color: ['#1e293b', '#38bdf8', '#eab308', '#f97316', '#f43f5e'] },
+            outOfRange: { color: '#475569' }
           },
           series: [{
             name: 'Cache utilization',
@@ -1308,8 +1618,8 @@ const raptorEntrants: any[] = [];
               fontSize: 10,
               fontWeight: 'bold',
               formatter: function(params) {
-                const cell = params.data[3];
-                return cell.state === 'available' ? cell.percent + '%' : 'N/A';
+                const cell = params.data && params.data[3] ? params.data[3] : {};
+                return cell.state === 'available' && Number.isFinite(cell.percent) ? cell.percent + '%' : 'N/A';
               }
             },
             itemStyle: {
@@ -1320,11 +1630,87 @@ const raptorEntrants: any[] = [];
         });
       }
 
+      function bootBstCacheTrend(echarts) {
+        const payloadNode = document.getElementById('bst-cache-chart-payload');
+        const chartEl = document.getElementById('bst-cache-trend-chart');
+        if (!payloadNode || !chartEl) return;
+        const data = JSON.parse(payloadNode.textContent || '{}');
+        const snapshots = Array.isArray(data.trend) ? data.trend : [];
+        if (!snapshots.length) return;
+        const pointsById = new Map();
+        const detailsByPoint = new Map();
+        snapshots.forEach(function(snapshot) {
+          const timestamp = snapshot.recorded_at || snapshot.collected_at || snapshot.timestamp || snapshot.t;
+          const key = [snapshot.cache_backend, snapshot.pod, snapshot.storage_type].filter(Boolean).join(':');
+          if (!key || !timestamp) return;
+          if (!pointsById.has(key)) pointsById.set(key, []);
+          pointsById.get(key).push({
+              t: timestamp,
+              requests: Number.isFinite(snapshot.requests) ? snapshot.requests : null,
+              hitCount: snapshot.hit_count,
+              missCount: snapshot.miss_count,
+              effectiveness: snapshot.effectiveness,
+              state: snapshot.state || 'unavailable',
+              reason: snapshot.state_reason || 'state_reason unavailable'
+          });
+          detailsByPoint.set(key + '|' + timestamp, snapshot);
+        });
+        const series = Array.from(pointsById.entries()).map(function(entry) {
+          const points = entry[1];
+          return {
+            name: entry[0],
+            type: 'line',
+            connectNulls: false,
+            smooth: true,
+            showSymbol: false,
+            data: points.map(function(point) { return [point.t, point.requests]; })
+          };
+        }).filter(function(item) { return item.data.some(function(point) { return point[1] !== null; }); });
+        if (!series.length) {
+          const empty = document.getElementById('bst-cache-trend-unavailable');
+          if (empty) {
+            empty.textContent = 'Cache heat trend unavailable: published snapshots contain no readable request counts.';
+            empty.style.display = '';
+          }
+          chartEl.style.display = 'none';
+          return;
+        }
+        const chart = echarts.init(chartEl);
+        charts.push(chart);
+        chart.setOption({
+          animation: false,
+          grid: { left: 48, right: 18, top: 24, bottom: 34 },
+          legend: { type: 'scroll', textStyle: { color: '#94a3b8', fontSize: 10 } },
+          tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(15, 23, 42, 0.95)',
+            borderColor: 'rgba(255, 255, 255, 0.1)',
+            textStyle: { color: '#cbd5e1', fontSize: 11 },
+            formatter: function(params) {
+              return params.map(function(param) {
+                const value = param.value[1];
+                const detail = detailsByPoint.get(param.seriesName + '|' + param.value[0]) || {};
+                const status = value == null
+                  ? '<br/>unavailable: ' + (detail.state_reason || 'state_reason unavailable')
+                  : '<br/>hits: ' + (detail.hit_count == null ? 'unavailable' : detail.hit_count) +
+                    ' · misses: ' + (detail.miss_count == null ? 'unavailable' : detail.miss_count);
+                return param.seriesName + ': ' + (value == null ? 'unavailable' : value + ' GET requests') + status;
+              }).join('<br/>') + '<br/><span style="color:#94a3b8">' + params[0].axisValue + '</span>';
+            }
+          },
+          xAxis: { type: 'time', axisLabel: { color: '#64748b', fontSize: 9 }, axisLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } } },
+          yAxis: { type: 'value', min: 0, name: 'GET requests', nameTextStyle: { color: '#94a3b8', fontSize: 10 }, axisLabel: { color: '#64748b' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } } },
+          series: series
+        });
+      }
+
       function waitForCharts(attempt) {
         if (attempt === undefined) attempt = 0;
         if (window.echarts) {
+          bootFactoryBuildHealth(window.echarts);
           bootTriageSparks(window.echarts);
           bootBstCacheChart(window.echarts);
+          bootBstCacheTrend(window.echarts);
           return;
         }
         if (attempt > 40) return;

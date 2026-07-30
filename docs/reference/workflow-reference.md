@@ -44,6 +44,16 @@ bridge that submits Argo Workflows from ephemeral ARC runners, see
 ### dakota-qa-pipeline
 - **Purpose:** Run Dakota suites directly inside the published bootc OCI image using
   the same container-only fan-out model as `bluefin-qa-pipeline`.
+- **VM boundary:** Dakota's composefs-oci image declares `bootloader = "systemd"`
+  but does not ship a UKI. The standard `build-containerdisk` →
+  `bootc install to-disk` path therefore stops with
+  `bootupd is required for ostree-based installs`; changing the bootloader
+  setting in the lab would not produce a bootable image. A VM path remains
+  blocked pending an upstream Dakota UKI/bootupd capability or a maintainer
+  decision to adopt a separate golden-disk/export path.
+- **Current coverage:** `dakota-container-qa-pipeline` is the safe repository-local
+  stopgap for image-level, non-GUI checks. It does not provide VM-boot, reboot, or
+  qecore-headless GUI evidence because a pod lacks the full systemd/GDM session.
 - **Parameters:** `image`, `image-tag`, `suites`, `variant`, `branch`, `pr-number`, `sha`,
   `repo`, `testsuite-branch`, `testsuite-repo`.
 - **DAG:** `validate-suites` → parallel `test-lane` items (`smoke`, `common`, `developer`,
@@ -91,7 +101,7 @@ infrastructure blockers and repair the lab before retrying.
 - **Purpose:** Publish the local Zot `dakota:testing` and
   `dakota-nvidia:testing` images to the corresponding
   `ghcr.io/projectbluefin` packages without changing their digests.
-- **Source:** `192.168.1.102:30500` (the cluster-reachable Zot NodePort).
+- **Source:** `<zot-registry>:30500` (the cluster-reachable Zot NodePort).
 - **Authentication:** operator-managed `ghcr-publish-auth` Secret, type
   `kubernetes.io/dockerconfigjson`, mounted as an auth file. It is never
   committed or printed.
