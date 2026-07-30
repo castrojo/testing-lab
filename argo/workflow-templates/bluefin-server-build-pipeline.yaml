@@ -392,6 +392,15 @@ spec:
               artifact checkout "${ELEMENT}" \
               --directory "${EXPORT_DIR}"
 
+          _PUSH_DEST="{{inputs.parameters.registry}}"
+          registry_host="${_PUSH_DEST#*://}"
+          registry_host="${registry_host%%/*}"
+          registry_host="${registry_host%%:*}"
+          if [[ "${registry_host}" == "ghcr.io" || "${registry_host}" == *.ghcr.io ]]; then
+            echo "ERROR: GHCR push destination is forbidden: ${_PUSH_DEST}" >&2
+            exit 1
+          fi
+
           echo "=== Pushing to local Zot ==="
           if [ -f "${EXPORT_DIR}/index.json" ] && [ -f "${EXPORT_DIR}/oci-layout" ]; then
             IMAGE_ID=$(podman pull "oci:${EXPORT_DIR}" | tail -1)

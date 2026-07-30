@@ -461,6 +461,15 @@ spec:
             exit 1
           fi
 
+          _PUSH_DEST="{{inputs.parameters.registry}}"
+          registry_host="${_PUSH_DEST#*://}"
+          registry_host="${registry_host%%/*}"
+          registry_host="${registry_host%%:*}"
+          if [[ "${registry_host}" == "ghcr.io" || "${registry_host}" == *.ghcr.io ]]; then
+            echo "ERROR: GHCR push destination is forbidden: ${_PUSH_DEST}" >&2
+            exit 1
+          fi
+
           echo "=== Pushing to local Zot ==="
           if command -v skopeo >/dev/null 2>&1; then
             skopeo copy --dest-tls-verify=false "oci:${EXPORT_DIR}" "docker://{{inputs.parameters.registry}}/${TAG}:latest"
