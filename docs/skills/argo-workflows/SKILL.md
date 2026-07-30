@@ -63,10 +63,6 @@ The workflow authoring guidance is split by topic:
   workflow `parallelism` — that limit does not cover simultaneous workflows.
   Put a template-level `synchronization.semaphores` reference on the shared
   template and define its capacity in the GitOps-managed ConfigMap.
-- A privileged container runner assuming `groupadd` success creates a local
-  `/etc/group` entry. NSS-only groups can make `groupadd` return success without
-  changing the file; re-check `/etc/group` and materialize the NSS or fallback
-  entry before invoking `useradd -G`.
 - A `synchronization` block placed directly on a `dag.tasks[]` entry — Argo's
   schema rejects it. Wrap the `templateRef` in a local `steps` template and put
   the ConfigMap-backed semaphore on that wrapper when only one DAG task needs
@@ -84,9 +80,6 @@ The workflow authoring guidance is split by topic:
   the matching `volumeClaimTemplates` entry; define the claim at workflow scope
   and set `volumeClaimGC.strategy: OnWorkflowCompletion` so failed builds do not
   leave staging storage behind.
-- A runner that clones or writes publication helpers into a read-only workspace
-  mount; keep source checkout mounts read-only and clone helper code into a
-  writable results volume instead.
 - A workflow that declares `volumeClaimTemplates` without
   `volumeClaimGC.strategy: OnWorkflowCompletion` — completed runs leave staging
   PVCs behind.
@@ -139,7 +132,6 @@ The workflow authoring guidance is split by topic:
 - A digest-comparison poller (`digest-watch`, `dakota-commit-poller`, etc.) treated as a guarantee that a downstream artifact exists — it only reacts to source digest *changes*, not to the artifact disappearing out-of-band (disk wipe, registry GC). After any disk/registry event, force-rebuild manually; don't wait for the poller.
 - A BuildStream poller relying only on the `bst-build` semaphore — execution is serialized, but waiting workflows can still grow without bound. Automated callers must enforce the two-workflow `bluefin.io/bst-workload=true` admission ceiling before submission.
 - **Queue Starvation / `activeDeadlineSeconds` Trap**: Leaving a workflow's `activeDeadlineSeconds` at default (or unspecified) when it queues under a template-level semaphore or resource limit. The workflow-level deadline starts ticking upon *submission/creation*, not *execution/scheduling*. If a workflow queues for longer than the global default deadline (e.g., 2h), it gets instantly canceled with `DeadlineExceeded` as soon as it begins running. Always set a generous workflow-level deadline (e.g., 4h/14400s) on queueable templates and dynamic API submission specs.
-- A cache-cold BuildStream child pod with a short template-level `activeDeadlineSeconds` can be killed while it is still fetching upstream artifacts, even when the parent WorkflowTemplate has a generous deadline. Size the child deadline for the cold-cache fetch/compile path, not only the expected warm-cache runtime, and add a regression test for the value.
 - **Clock-only Cron serialization**: Spacing a CronWorkflow away from other schedules is not a concurrency guard. When a scheduled workflow shares a scarce VM namespace or runner, reference a ConfigMap-backed template semaphore and document the key; keep the schedule as a trigger only.
 - **Secret leakage via shell tracing**: Never use `set -x`/`set -eux` in a script that invokes authenticated APIs or expands secret-bearing variables. Argo retains command output in workflow logs. Disable tracing for the whole script or bracket only non-secret diagnostics with explicit `set +x`/`set -x` boundaries, then inspect logs for credentials before publishing evidence.
 - **Assuming registry tools exist in `lab-runner`**: the image does not include
@@ -150,9 +142,6 @@ The workflow authoring guidance is split by topic:
   Python, `curl`, and `jq`, but not `tar`. Download archives to a workspace,
   extract them with `python3 -m tarfile`, and remove the archive afterward, or
   use a pinned image that provides the required utility.
-- **Bootstrapping tools with a `tar` pipe in `lab-runner`**: `lab-runner` does
-  not include `tar`, so an otherwise valid download fails with exit 127. Use
-  `curl -o` followed by `python3 -m tarfile -e`, then remove the archive.
 - **Doubling braces for generated child workflows**: `{{{{workflow.*}}}}`
   reaches a child Workflow literally and its `when` expressions compare the
   wrong value. When an outer script must emit an Argo expression, build the
@@ -238,8 +227,6 @@ Before marking any WorkflowTemplate change done:
 - [ ] KDE GUI runners preserve the GNOME runner's parameter/result contract,
       use `selenium-webdriver-at-spi-run`, forward `4723:4723`, and wait for
       WebDriver readiness before Behave execution
-- [ ] KDE result publication clones helper code into a writable results volume;
-      the testsuite checkout remains read-only during execution
 - [ ] Aurora/KDE sabotage runs are explicit, restricted to `aurora-test`, and
       exercise both the nonexistent-binary and killed-`plasmashell` red paths;
       failure results and `kde_faillog` artifacts must be retained before

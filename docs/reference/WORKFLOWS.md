@@ -164,9 +164,8 @@ persistence, reachability, redeploy, and teardown assertions.
 
 Downloads the published KDE Linux hybrid ISO pinned by SHA256, wraps it as a
 containerDisk, boots it under KubeVirt OVMF, forwards SSH and port 4723 with
-virtctl, and runs the `testsuite` `kde-smoke` suite in the dedicated
-`kde-test` namespace. The lane identifies itself as `kde-linux` in persisted
-evidence, and the VM is deleted by the mandatory `onExit` teardown.
+virtctl, and runs the `testsuite` `kde-smoke` suite. The VM is deleted by the
+mandatory `onExit` teardown.
 
 ```
 just run-kde-linux
@@ -222,9 +221,9 @@ testsuite branch, forwards SSH and WebDriver port 4723 through `virtctl`,
 starts the VM's `selenium-webdriver-at-spi-run` service, waits for its
 `/status` endpoint, and runs `tests/kde-smoke/features` with Behave. Results
 and in-guest PNG screenshots are copied back even when Behave fails, then
-persisted under the standard ghost test-results host path. `kde_faillog`
-directories are retained alongside `.tar.gz` bundles, and screenshots are
-pushed through the public OCI artifact path. The GitHub
+persisted under the standard ghost test-results host path. `faillog_*`
+directories are retained alongside `.tar.gz` bundles, and the first screenshot
+is pushed as the stable `desktop-screenshot` OCI artifact. The GitHub
 credential, ORAS tool, screenshot, artifact persistence, and result publication
 are required and fail the runner when unavailable. QEMU-level screendumps are
 not used because
@@ -286,9 +285,10 @@ triggers, and retains failed workflows for seven days.
 Each live run must publish the structured result and screenshot through
 `run-kde-tests`, and persist the result/artifact bundle before teardown. A
 qualified 30-run window is evidence only: retain the Argo workflow URL, the
-published result history, screenshot URL, and any filed issue URL for every
-classified infrastructure flake. Live-run evidence is required after ArgoCD
-reconciles the Git change; local lint cannot substitute for that evidence.
+published `docs/results/aurora-testing-smoke.json` history, screenshot URL,
+and any filed issue URL for every classified infrastructure flake. Live-run
+evidence is required after ArgoCD reconciles the Git change; local lint cannot
+substitute for that evidence.
 
 ### `aurora-kde-sabotage`
 
@@ -441,8 +441,8 @@ installation must grant `checks: write`.
 
 ### `dakota-publish-pipeline`
 
-Publishes `<zot-registry>:30500/dakota:testing` and
-`<zot-registry>:30500/dakota-nvidia:testing` to the matching
+Publishes `192.168.1.102:30500/dakota:testing` and
+`192.168.1.102:30500/dakota-nvidia:testing` to the matching
 `ghcr.io/projectbluefin/*:testing` tags. Each lane resolves and copies the Zot
 image by digest, then fails unless GHCR reports the same digest. The lanes run
 independently; a final result task reports both statuses and fails the workflow

@@ -150,17 +150,13 @@ However, for complex updates (such as parsing BDD/behave test results, merging w
 #### KDE GUI runner: persist guest artifacts before re-raising failures
 
 KDE GUI tests run through a WebDriver service inside the VM, so screenshots and
-`kde_faillog` diagnostics are written in the guest session. Set the shared
+`faillog_*` diagnostics are written in the guest session. Set the shared
 results directory in both environments, copy it back with `scp` after Behave
 returns (including non-zero returns), archive each failure directory with
 `python3 -m tarfile` (the runner has no `tar`), then copy the complete directory
 to the runner's `/var/mnt/ghost-data/test-results` hostPath. Surface archive
 failures after persistence and publication instead of silently dropping them;
 re-raise the saved Behave status only after that cleanup.
-
-The testsuite workspace is mounted read-only in the runner container. Clone the
-lab repository used for result publication into a writable volume such as
-`/results/lab-code`, never beneath `/workspace`.
 
 Require the GitHub credential, screenshot, and ORAS CLI. Publish the in-guest
 screenshot with the ORAS CLI's `path:media-type` syntax (verified against
