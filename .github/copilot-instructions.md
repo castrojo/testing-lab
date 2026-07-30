@@ -1,6 +1,6 @@
 # Testing Lab Copilot Instructions
 
-Use [`../AGENTS.md`](/agents.md) for repo policy and architecture, and use [`../docs/agent-cheatsheet.md`](/docs/reference/agent-cheatsheet.md) for the canonical command reference.
+Use [`../AGENTS.md`](/AGENTS.md) for repo policy and architecture, and use [`../docs/agent-cheatsheet.md`](/docs/reference/agent-cheatsheet.md) for the canonical command reference.
 
 Keep only these repo-specific inline reminders:
 
