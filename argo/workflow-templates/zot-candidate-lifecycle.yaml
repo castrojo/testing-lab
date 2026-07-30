@@ -228,6 +228,14 @@ spec:
           TESTING_REF="${REGISTRY}/${REPOSITORY}:testing"
           REVISION="${CANDIDATE_TAG#candidate-}"
 
+          registry_host="${REGISTRY#*://}"
+          registry_host="${registry_host%%/*}"
+          registry_host="${registry_host%%:*}"
+          if [[ "${registry_host}" == "ghcr.io" || "${registry_host}" == *.ghcr.io ]]; then
+            echo "ERROR: GHCR push destination is forbidden: ${REGISTRY}" >&2
+            exit 1
+          fi
+
           /bin/oras manifest fetch \
             --plain-http \
             ${AUTH_ARGS} \

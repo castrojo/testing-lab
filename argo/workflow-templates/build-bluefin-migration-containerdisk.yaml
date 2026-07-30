@@ -476,6 +476,13 @@ spec:
           '    rm -f /tmp/findmnt-wrapper' \
           > "${BOOTABLE_CTX}/Containerfile"
         echo "[BUILD] deriving bootable source image ${BOOTABLE_IMAGE_LOCAL}"
+        registry_host="${BOOTABLE_IMAGE_REMOTE#*://}"
+        registry_host="${registry_host%%/*}"
+        registry_host="${registry_host%%:*}"
+        if [[ "${registry_host}" == "ghcr.io" || "${registry_host}" == *.ghcr.io ]]; then
+          echo "ERROR: GHCR push destination is forbidden: ${BOOTABLE_IMAGE_REMOTE}" >&2
+          exit 1
+        fi
         podman build --tls-verify=false -t "${BOOTABLE_IMAGE_LOCAL}" -f "${BOOTABLE_CTX}/Containerfile" "${BOOTABLE_CTX}"
         podman push --tls-verify=false "${BOOTABLE_IMAGE_LOCAL}" "docker://${BOOTABLE_IMAGE_REMOTE}"
         SOURCE_IMGREF="docker://${BOOTABLE_IMAGE_REMOTE}"
@@ -600,6 +607,13 @@ spec:
         RAW="${STAGING}/disk.raw"
         QCOW="${STAGING}/containerdisk.qcow2"
         DEST="192.168.1.102:30500/{{inputs.parameters.containerdisk-repo}}:${TAG}"
+        registry_host="${DEST#*://}"
+        registry_host="${registry_host%%/*}"
+        registry_host="${registry_host%%:*}"
+        if [[ "${registry_host}" == "ghcr.io" || "${registry_host}" == *.ghcr.io ]]; then
+          echo "ERROR: GHCR push destination is forbidden: ${DEST}" >&2
+          exit 1
+        fi
 
         echo "Converting ${RAW} to qcow2..."
         qemu-img convert -f raw -O qcow2 -p "${RAW}" "${QCOW}"
