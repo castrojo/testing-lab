@@ -21,6 +21,44 @@ def load_yaml(path: Path):
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
+def collect_env_entries(template_path: Path) -> list[tuple[str, str, str, str, str]]:
+    """
+    Collect all env entries from script and container blocks in a template file.
+
+    Returns:
+        List of tuples: (template_path, file_stem, template_name, env_name, env_value)
+    """
+    results = []
+    try:
+        doc = load_yaml(template_path)
+    except Exception:
+        return results
+
+    if not isinstance(doc, dict):
+        return results
+
+    file_stem = template_path.stem
+    for tmpl in doc.get("spec", {}).get("templates", []):
+        if not isinstance(tmpl, dict):
+            continue
+        tmpl_name = tmpl.get("name", "")
+        for section in ("script", "container"):
+            block = tmpl.get(section, {})
+            if not block or not isinstance(block, dict):
+                continue
+            for env in block.get("env", []) or []:
+                if isinstance(env, dict):
+                    results.append((
+                        str(template_path),
+                        file_stem,
+                        tmpl_name,
+                        env.get("name", ""),
+                        str(env.get("value", "")),
+                    ))
+
+    return results
+
+
 def collect_script_sources(template_path: Path, template_name: str) -> list[tuple[str, str, str]]:
     """
     Recursively collect script sources from a template.
@@ -145,59 +183,64 @@ def is_executable_oras_push(source: str) -> bool:
     return False
 
 
+def test_script_env_no_ghcr_destinations():
+    """
+    Test that no script/container env blocks hard-code a ghcr.io destination.
+
+    This catches cases where DESTINATION_REGISTRY (or similar) is set to a
+    ghcr.io value in the YAML env: stanza rather than inline in script source,
+    which source-text checks would miss entirely.
+    """
+    for template_file in sorted(TEMPLATES_PATH.glob("*.yaml")):
+        for path, file_stem, tmpl_name, env_name, env_value in collect_env_entries(template_file):
+            assert "ghcr.io" not in env_value, (
+                f"{file_stem}::{tmpl_name}: env '{env_name}' hard-codes "
+                f"ghcr.io destination: '{env_value}'"
+            )
+
+
 def test_push_scripts_reject_ghcr_before_upload():
     """
-    Test that all push-producing scripts have guards against GHCR before uploads.
-    
-    Expected failures (as per task brief):
-    - Dakota publish script: has hard-coded ghcr.io DESTINATION_REGISTRY
-    - KDE/GNOME screenshot scripts: have executable oras push to ghcr.io
-    - Other push scripts: missing GHCR guard (if they reference ghcr.io)
+    Test that all push-producing scripts have a GHCR rejection guard before uploads.
+
+    Every script that invokes skopeo copy / podman push / buildah push / oras push
+    / oras cp must contain the sentinel string 'GHCR push destination is forbidden'
+    BEFORE its first push command, regardless of whether the script source contains
+    a literal 'ghcr.io' reference.  Destination variables (e.g. $DESTINATION_REGISTRY)
+    can be redirected at call time, so the guard is required unconditionally.
+
+    The only exemptions are the screenshot scripts (run-kde-tests, run-gnome-tests),
+    which must instead carry an explicit 'GHCR screenshot publication disabled'
+    diagnostic and must not contain an executable oras push block.
     """
     for path, template_name, source in push_scripts():
-        # Skip screenshot scripts, they have special handling
         if template_name in {"run-kde-tests", "run-gnome-tests"}:
-            # Screenshot scripts must be explicitly disabled
             assert (
                 "GHCR screenshot publication disabled" in source
             ), f"{template_name}: missing 'GHCR screenshot publication disabled' diagnostic"
-            
-            # Screenshot scripts must not have executable oras push
-            # (they may reference oras in error messages)
+
             if is_executable_oras_push(source):
                 assert False, f"{template_name}: contains executable oras push (should be disabled)"
             continue
-        
-        # For Dakota publish script, check the specific restrictions
-        if template_name == "dakota-publish-pipeline":
-            # Must not have hard-coded GHCR DESTINATION_REGISTRY
-            assert (
-                'DESTINATION_REGISTRY="ghcr.io/projectbluefin"' not in source
-            ), f"{template_name}: has hard-coded DESTINATION_REGISTRY set to ghcr.io/projectbluefin"
-            
-            # Must not have skopeo copy destinations beginning with ghcr.io
-            # (Check for patterns like "docker://ghcr.io")
-            if re.search(r'docker://ghcr\.io', source):
-                assert False, f"{template_name}: contains hard-coded skopeo destination to ghcr.io"
-            
-            continue
-        
-        # For all other push scripts that reference ghcr.io, require the GHCR guard
-        if "ghcr.io" not in source:
-            # If the script doesn't reference ghcr.io, it's using a different registry
-            # and doesn't need our guard (no GHCR-specific guard needed)
-            continue
-        
+
+        # All other push-producing scripts need the guard — independently of whether
+        # 'ghcr.io' appears literally in the source, because the destination may be
+        # supplied via a variable that could be set to ghcr.io at invocation time.
         assert (
             "GHCR push destination is forbidden" in source
-        ), f"{template_name}: references ghcr.io but missing 'GHCR push destination is forbidden' guard"
-        
-        # Guard must appear before the first push command
+        ), (
+            f"{template_name}: push-producing script missing "
+            f"'GHCR push destination is forbidden' guard"
+        )
+
         guard_index = source.index("GHCR push destination is forbidden")
         push_index = first_push_index(source)
         assert (
             guard_index < push_index
-        ), f"{template_name}: GHCR guard appears AFTER first push command (guard@{guard_index}, push@{push_index})"
+        ), (
+            f"{template_name}: GHCR guard appears AFTER first push command "
+            f"(guard@{guard_index}, push@{push_index})"
+        )
 
 
 def test_push_scripts_inventory():
