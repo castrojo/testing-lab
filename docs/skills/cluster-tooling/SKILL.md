@@ -178,7 +178,7 @@ Do not guess flags, chart schema, or MCP method names. The K8sGPT MCP server exp
 
 ## Key references
 
-- Cluster topology: `/agents.md`
+- Cluster topology: `/AGENTS.md`
 - Bootstrap procedure: `/docs/ops/bootstrap.md`
 - Recovery: `docs/skills/k3s-cluster-ops` (user skill, load before any cluster recovery)
 - K8sGPT MCP config: `~/.copilot/mcp-config.json` on this machine, with `k8sgpt serve --mcp` or `--mcp --mcp-http` as the client target

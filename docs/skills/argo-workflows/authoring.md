@@ -252,7 +252,7 @@ Step-level hooks are fully supported on DAG tasks and steps inside `WorkflowTemp
 
 ### 6. Resource limits — required on all script/container templates
 
-Every pod-running template needs explicit resource requests and limits. Reference values from /agents.md:
+Every pod-running template needs explicit resource requests and limits. Reference values from /AGENTS.md:
 
 ```yaml
 resources:
