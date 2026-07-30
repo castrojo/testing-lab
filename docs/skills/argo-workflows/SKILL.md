@@ -84,6 +84,9 @@ The workflow authoring guidance is split by topic:
   the matching `volumeClaimTemplates` entry; define the claim at workflow scope
   and set `volumeClaimGC.strategy: OnWorkflowCompletion` so failed builds do not
   leave staging storage behind.
+- A runner that clones or writes publication helpers into a read-only workspace
+  mount; keep source checkout mounts read-only and clone helper code into a
+  writable results volume instead.
 - A workflow that declares `volumeClaimTemplates` without
   `volumeClaimGC.strategy: OnWorkflowCompletion` — completed runs leave staging
   PVCs behind.
@@ -235,6 +238,8 @@ Before marking any WorkflowTemplate change done:
 - [ ] KDE GUI runners preserve the GNOME runner's parameter/result contract,
       use `selenium-webdriver-at-spi-run`, forward `4723:4723`, and wait for
       WebDriver readiness before Behave execution
+- [ ] KDE result publication clones helper code into a writable results volume;
+      the testsuite checkout remains read-only during execution
 - [ ] Aurora/KDE sabotage runs are explicit, restricted to `aurora-test`, and
       exercise both the nonexistent-binary and killed-`plasmashell` red paths;
       failure results and `kde_faillog` artifacts must be retained before

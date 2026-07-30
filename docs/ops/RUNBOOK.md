@@ -135,6 +135,8 @@ Argo Workflow (argo namespace)
 | VM stuck `Terminating` | KubeVirt controller race with launcher cleanup | Delete the `virt-launcher-*` pod and let reconciliation finish |
 | `run-gnome-tests` pod fails at startup | Workflow template structure error, often misplaced `volumes:` | Fix the template in git and let ArgoCD reconcile it |
 | WorkflowTemplate change appears ignored | Workflow was submitted before the new template was reconciled | Verify ArgoCD revision, wait or sync, then submit a new workflow |
+| Container QA exits 1 before `useradd` | NSS-only `video`, `render`, or `input` groups can make `groupadd` succeed without adding `/etc/group` entries | Re-check `/etc/group` after `groupadd`; materialize the NSS entry or a fallback GID before calling `useradd -G`, then reconcile `run-container-tests` |
+| `pr-image-gc` exits 127 while bootstrapping ORAS | `lab-runner` does not provide `tar`, so a `curl | tar` pipeline fails | Download the archive and extract it with `python3 -m tarfile -e`; reconcile the GitOps-managed manifest before retrying |
 | Service-catalog deploy step fails with "No manifests found" | Lane directory missing `manifests.yaml` | Create `tests/service_catalog/<lane>/manifests.yaml` per the contract |
 | Service-catalog test step fails with "No test suite" | Lane directory missing under `tests/service_catalog/` | Create the lane test directory with at least one `test_*.py` file |
 | Service-catalog namespace stuck terminating | Finalizer or PVC not released | Check for stuck PVCs or pods with `kubectl get all -n <ns>`, delete manually if needed |

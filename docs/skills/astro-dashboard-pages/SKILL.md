@@ -96,6 +96,13 @@ Read the published JSON contract at prerender time, join any linked result JSON 
 89. Wrap detailed historical run tables inside collapsible `<details>` blocks to keep page layouts clean and compact, preserving full data visibility on user demand.
 90. For high-density registry/OCI dashboards, embed ECharts micro-sparklines (height ~30px, margin-less, axis hidden) inside grid card lists to visualize pulls and build durations inline, alongside expert CLI snippet tools (e.g. `.buildstream.conf`) for immediate copy-pasting.
 
+91. For Dakota build trends, keep `docs/data/history/build-runs.ndjson` as the
+raw append-only source and derive `docs/data/dakota-build-trends.json` during
+page dataset generation. Aggregate only canonical `projectbluefin/dakota`
+schema `1.0` records, bucket by UTC start date, and preserve provenance plus
+explicit unavailable states when no validated records remain in the retention
+window.
+
 
 ## Common Rationalizations
 
@@ -155,6 +162,7 @@ Read the published JSON contract at prerender time, join any linked result JSON 
 - [ ] Overview image cards preserve row-level evidence/state from `docs/data/upstream-status.json`
 - [ ] Contributor cluster cards show node-to-node link context directly on or near each node card
 - [ ] Missing screenshots display high-fidelity 16:9 placeholder blocks with educational copy and run commands instead of hiding the visual evidence section
+- [ ] Cache heatmaps use an explicit 0–100% utilization scale, render unavailable cells with a visible gray sentinel rather than null points, and keep `state_reason` in tooltips; historical `docs/data/history/cache-heat.ndjson` trend panels remain visible with an explicit unavailable message when no snapshots exist
 
 ## Release verdict triage (index)
 
@@ -211,6 +219,10 @@ Guidelines:
   network round trips.
 - For unavailable or empty history, render an explicit empty-state panel that
   names the missing file and reason instead of omitting the chart section.
+- For homepage build-health aggregates, read `docs/data/history/build-runs.ndjson`
+  directly and filter `plane: publish` terminal outcomes inside the UTC rolling
+  window; keep running work separate and never substitute `recent_runs` or
+  `image_builds` for the authoritative counts.
 - Do not parse GitHub Actions artifacts directly. Artifacts hold screenshots,
   logs, and SBOMs; link to them from the page but derive chart data from the
   repo-tracked NDJSON lines.

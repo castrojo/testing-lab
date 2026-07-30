@@ -1,0 +1,75 @@
+{
+  "schema_version": "v1",
+  "_meta": {
+    "page": "dakota-build-trends",
+    "description": "Derived Dakota throughput and duration trends from raw build history.",
+    "generated_at": "2026-07-29T22:49:43Z",
+    "starter_artifact": false,
+    "status": "ready",
+    "state_reason": null
+  },
+  "lane": "dakota-testing",
+  "window_days": 180,
+  "summary_metrics": [
+    {
+      "id": "dakota_runs",
+      "label": "Dakota runs in trend window",
+      "value": 3,
+      "unit": "count",
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/build-runs.ndjson",
+      "collected_at": "2026-07-29T22:49:43Z",
+      "state": "available",
+      "state_reason": null,
+      "derivation": "Count validated Dakota records retained in the trailing 180-day window."
+    },
+    {
+      "id": "trend_days",
+      "label": "Days with Dakota runs",
+      "value": 2,
+      "unit": "count",
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/build-runs.ndjson",
+      "collected_at": "2026-07-29T22:49:43Z",
+      "state": "available",
+      "state_reason": null,
+      "derivation": "Count UTC dates represented by the derived Dakota trend rows."
+    }
+  ],
+  "rows": [
+    {
+      "id": "publish-2026-07-27",
+      "record_type": "publish",
+      "date": "2026-07-27",
+      "throughput": 2,
+      "passed": 2,
+      "failed": 0,
+      "duration_seconds": {
+        "p50": 47.5,
+        "p95": 58.75,
+        "avg": 47.5
+      },
+      "state": "available",
+      "state_reason": null,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/build-runs.ndjson",
+      "collected_at": "2026-07-29T22:49:43Z",
+      "derivation": "Aggregate validated Dakota publish records by UTC start date; retain the trailing 180-day window."
+    },
+    {
+      "id": "publish-2026-07-28",
+      "record_type": "publish",
+      "date": "2026-07-28",
+      "throughput": 1,
+      "passed": 1,
+      "failed": 0,
+      "duration_seconds": {
+        "p50": 38.0,
+        "p95": 38.0,
+        "avg": 38.0
+      },
+      "state": "available",
+      "state_reason": null,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/build-runs.ndjson",
+      "collected_at": "2026-07-29T22:49:43Z",
+      "derivation": "Aggregate validated Dakota publish records by UTC start date; retain the trailing 180-day window."
+    }
+  ]
+}

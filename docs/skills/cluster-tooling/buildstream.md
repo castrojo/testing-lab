@@ -215,6 +215,13 @@ FreeDesktop-SDK work item 1961 (`freedesktop-sdk#1961`).
 - **Role**: CAS/AC artifact writes and reads; execute-forwarding for BuildStream actions that use the in-cluster execution grid
 - **Deployment**: Frontend, scheduler, storage shards, and workers are defined under `manifests/buildbarn-*.yaml` and run in the `buildbarn` namespace
 
+Cache heat is persisted by `scripts/collect_bst_cache.py` in
+`docs/data/history/cache-heat.ndjson`. BuildBarn's current diagnostics expose
+`Get` counts, byte sums, duration sums, and gRPC status counts. The collector
+treats `OK` as a hit and `NotFound` as a miss; if those status counters are unavailable, it keeps
+`hit_count`, `miss_count`, and `effectiveness` null rather than estimating from
+storage occupancy or allocator counters.
+
 ### 2. BuildStream client config
   The build pods should generate a deterministic `buildstream.conf` that keeps upstream source caches read-only and pushes artifacts to the shared Buildbarn frontend first. Dakota's coordinator remains bounded by its two one-slot BuildBarn workers; do not increase BuildStream jobs, worker count, or semaphore capacity while remote execution or CAS materialization is unhealthy:
  

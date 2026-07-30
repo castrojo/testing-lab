@@ -26,6 +26,10 @@ automation — `bluefin-lts` has no `:latest` tag.
 
 All Bluefin image test scenarios live in **[`projectbluefin/testsuite`](https://github.com/projectbluefin/testsuite)** — the single source of truth. The lab's `run-container-tests` WorkflowTemplate clones `testsuite` (main or a branch) and runs qecore-headless + behave directly inside the published bootc OCI image. VM-backed KubeVirt coverage remains for the workflows that explicitly still need it, but the image-poll path no longer boots or installs a guest.
 
+For the desktop epic's ownership boundary and actionable GNOME coverage
+slices, see [`desktop-coverage.md`](desktop-coverage.md). Do not add Bluefin
+desktop scenarios to this repository.
+
 Each pipeline run executes one or more suites via the `suites` parameter (comma-separated).
 
 ### smoke
