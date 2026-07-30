@@ -7,7 +7,7 @@
 > - [`/docs/ops/lab-operations.md`](/docs/ops/lab-operations.md) — long-form procedures
 > - [`/docs/reference/WORKFLOWS.md`](/docs/reference/WORKFLOWS.md) — WorkflowTemplate parameter contracts
 > - [`/docs/ops/RUNBOOK.md`](/docs/ops/RUNBOOK.md) — architecture + failure-mode index
-> - [`/docs/skills/test-authoring/dogtail-patterns.md`](/docs/skills/test-authoring/dogtail-patterns.md) — writing GUI tests
+> - [`projectbluefin/testsuite`](https://github.com/projectbluefin/testsuite) — writing GUI tests
 > - [`/AGENTS.md`](/AGENTS.md) — hard policy and tenets
 
 > [!NOTE]
@@ -48,6 +48,19 @@ are prohibited. Confirm the generated BuildStream configuration, both Ready
 BuildBarn workers, and live worker action activity before calling a run
 distributed.
 
+## AMD ROCm GPU readiness — quick checks
+
+If the AMD GPU exists on the host but Kubernetes still refuses to schedule `amd.com/gpu` workloads, confirm the ROCm device plugin is installed and the node is labeled for it:
+
+```bash
+kubectl label node exo-0 lab.projectbluefin.io/amd-gpu=true --overwrite
+kubectl apply -f manifests/amdgpu-device-plugin.yaml
+kubectl rollout status daemonset/amdgpu-device-plugin -n kube-system --timeout=300s
+kubectl get node exo-0 -o jsonpath='{.status.allocatable.amd\.com/gpu}{"\n"}'
+```
+
+Expected outcome: the node advertises `1` or more `amd.com/gpu` allocatable units, and the `amdgpu-device-plugin` DaemonSet pod is `Running` on the GPU node.
+
 ## Flatcar kernel lifecycle — quick checks
 
 Use these for lifecycle-state inspection and manual gate runs:
@@ -70,7 +83,7 @@ Run `just logs` first. Then match a row. **Bluefin and Dakota image-poll QA are 
 | Dakota GHCR publish fails before copying | Confirm the operator-managed contract without printing its data: `kubectl get secret ghcr-publish-auth -n argo -o jsonpath='{.type}{"\n"}'` must report `kubernetes.io/dockerconfigjson`; then inspect the lane status with `argo get -n argo @latest`. |
 | Dakota GHCR publish reports a digest mismatch | Compare source and destination with authenticated operator tooling; never print or decode `ghcr-publish-auth`. A lane is successful only when Zot and GHCR report the same digest. |
 | VMI `NotFound` 1 second after VM creation | Same as above — KubeVirt refused to start VM due to missing accessCredentials secret; VM status will be `Stopped` |
-| `TypeError: ... requireResult` | Fix the step per [`/docs/skills/test-authoring/dogtail-patterns.md`](/docs/skills/test-authoring/dogtail-patterns.md) §6.2 (`findChildren(...)` / `retry=False`) |
+| `TypeError: ... requireResult` | Fix the step in the upstream `projectbluefin/testsuite` patterns (`findChildren(...)` / `retry=False`) |
 | `Application "gnome-shell" is running` step fails | Replace it with `* GNOME Shell is accessible via AT-SPI` |
 | All top-bar scenarios fail | Confirm `wait_for_shell.py` is present in the copied suite and that the runner re-asserts `unsafe_mode` |
 | `outputs.result` is `Waiting...` or other debug text | Send debug output to `>&2`; keep stdout for the result only |
@@ -339,10 +352,13 @@ Expected steady state:
 
 ---
 
-## 13. llm-d hive node — disabled by default
+## 13. llm-d local inference node — disabled by default
 
 `llm-d` is kept **off by default** in GitOps (`manifests/llm-d.yaml` sets `replicas: 0`).
 Namespace remains managed by `lab-infra`; no pod should run unless explicitly enabled.
+
+**Model choice:** the deployment serves `unsloth/Llama-3.2-3B-Instruct` through vLLM on the OpenAI-compatible endpoint at `http://<ghost-ip>:30800/v1`.
+The pod uses a dedicated `PriorityClass` so it can preempt lower-priority work when you explicitly enable it, then return the cluster to its normal scheduling baseline when you scale it back to 0.
 
 **Check status (expected default):**
 ```bash
@@ -362,7 +378,7 @@ kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=0
 
 **If pod is stuck Pending:** Check two things:
 1. AMD ROCm device plugin registered: `kubectl get pods -n kube-system | grep amdgpu` — look for `amdgpu-device-plugin`. After a k3s restart the plugin needs a pod delete/respawn to re-register with kubelet. Verify `amd.com/gpu` appears in `kubectl get node ghost -o jsonpath='{.status.allocatable}'`.
-2. Memory fits: ghost has ~62.5Gi allocatable. Manifest requests 48Gi — check for other large pods consuming RAM if you see `Insufficient memory`.
+2. Memory fits: ghost has ~62.5Gi allocatable; the manifest requests 16Gi/24Gi and 1 GPU. Check for other large pods consuming RAM if you see `Insufficient memory`.
 
 **If k3s is down** (kubectl returns "connection refused"):
 k3s can stop after host sleep/resume. Recovery:
@@ -373,129 +389,23 @@ After restart, delete the `amdgpu-device-plugin` pod so it re-registers with the
 
 **kubelet device-plugin socket path:** `/var/lib/kubelet/device-plugins/kubelet.sock` (standard path — NOT the rancher/k3s path). Verify with: `ssh core@<control-plane> "sudo ss -lx | grep kubelet"`.
 
-**If pod is CrashLoopBackOff:** Check init container logs first — it downloads the GGUF on first start:
+**If pod is CrashLoopBackOff:** Check the container logs first:
 ```bash
-kubectl logs -n llm-d <pod-name> -c download-gguf
+kubectl logs -n llm-d <pod-name> -c modelserver
 ```
-The GGUF (`Qwen3.6-35B-A3B-Q4_K_M.gguf`) is cached at `/var/tmp/llm-models/` on ghost.
-If the file is missing, delete the pod and let the init container re-download it (~21GB from HuggingFace).
+The model will be cached in the pod's `emptyDir` at `/root/.cache/huggingface` until the pod is deleted.
 
 **Key constraints:**
-- `ROCBLAS_USE_HIPBLASLT=1` for best matmul throughput on gfx1151 (strixhalo.wiki)
-- `hostNetwork: true` + `hostIPC: true` required for ROCm IPC
-- `HSA_OVERRIDE_GFX_VERSION=11.5.1` required — gfx1151 is RDNA 3.5, not RDNA 4
-- Qwen3 uses chain-of-thought thinking by default; add `/no_think` prefix or increase `max_tokens`
+- The default deployment stays baseline-compliant and uses ordinary pod networking; if you revisit this later for tighter ROCm IPC tuning, you may need to re-test with host-network settings in a dedicated namespace
+- The pod is intentionally not pinned to a specific node, so it can land on whichever node later exposes the GPU resource
+- `unsloth/Llama-3.2-3B-Instruct` is intentionally small enough to be practical on the local lab node while still giving a useful chat experience
+- For long prompts, raise `--max-model-len` or use a larger model later; for short local use, the current defaults are a good fit
 
 ---
 
-## 14. Node onboarding — adding a worker to the cluster
+## 14. Node onboarding
 
-All nodes in this cluster run image-based, atomic operating systems (Bluefin, Dakota, Bazzite — ostree-based).
-`/usr/local/bin` is a symlink to `/var/usrlocal/bin` (the writable overlay). The k3s install
-script must be told to use this path or it fails on a fresh system.
-
-### Get the join token (run from ghost or this workstation)
-
-```bash
-ssh core@<control-plane-ip> "sudo cat /var/lib/rancher/k3s/server/node-token"
-```
-
-### Bootstrap a new worker node (run ON the new node, with sudo)
-
-```bash
-# 1. Ensure writable bin directory exists (required on ostree image-based systems)
-sudo mkdir -p /var/usrlocal/bin
-
-# 2. Install k3s agent — joins the cluster immediately
-curl -sfL https://get.k3s.io | \
-  K3S_URL="https://<control-plane-ip>:6443" \
-  K3S_TOKEN="<token from above>" \
-  INSTALL_K3S_BIN_DIR="/var/usrlocal/bin" \
-  sh -s -
-
-# 3. Disable auto-start — nodes opt in to the cluster (see Justfile below)
-sudo systemctl disable k3s-agent
-
-# 4. Install sleep inhibitor (prevents suspend while k3s is active — critical for laptops)
-sudo tee /etc/systemd/system/k3s-sleep-inhibit.service << 'EOF'
-[Unit]
-Description=Inhibit sleep while k3s agent is running
-BindsTo=k3s-agent.service
-After=k3s-agent.service
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/systemd-inhibit --what=sleep:handle-lid-switch --who=k3s --why="k3s running - use just k8s-off before travel" --mode=block sleep infinity
-Restart=on-failure
-RestartSec=5
-EOF
-
-sudo mkdir -p /etc/systemd/system/k3s-agent.service.d
-sudo tee /etc/systemd/system/k3s-agent.service.d/sleep-inhibit.conf << 'EOF'
-[Unit]
-Wants=k3s-sleep-inhibit.service
-EOF
-
-sudo systemctl daemon-reload
-```
-
-### Install the cluster Justfile in the node's home directory
-
-```bash
-cat > ~/Justfile << 'EOF'
-# Cluster controls — opt in/out of the ghost k3s cluster
-# k8s-on  — join the cluster (laptop stays awake while connected)
-# k8s-off — leave the cluster (safe to travel, close lid, suspend)
-
-k8s-on:
-    sudo systemctl enable --now k3s-agent
-    @echo "k3s agent started — sleep/lid inhibited while connected"
-
-k8s-off:
-    sudo systemctl stop k3s-agent
-    sudo systemctl disable k3s-agent
-    @echo "k3s agent stopped — normal sleep restored"
-
-k8s-status:
-    @systemctl is-active k3s-agent 2>/dev/null && echo "k8s: ON (inhibiting sleep)" || echo "k8s: OFF (normal sleep)"
-EOF
-```
-
-### Label the node and verify
-
-```bash
-# From workstation / ghost
-KUBECONFIG=~/.kube/bluespeed.yaml kubectl label node <hostname> \
-  node-role.kubernetes.io/worker=true --overwrite
-
-KUBECONFIG=~/.kube/bluespeed.yaml kubectl get nodes -o wide
-```
-
-Expected: new node appears as `Ready  worker`.
-
-### Passwordless sudo for agents
-
-```bash
-sudo bash -c 'echo -e "Defaults:jorge !requiretty\njorge ALL=(ALL) NOPASSWD: ALL" \
-  > /etc/sudoers.d/zzz-jorge && chmod 440 /etc/sudoers.d/zzz-jorge'
-```
-
-### Node offboarding — removing a worker
-
-```bash
-# 1. Drain node
-KUBECONFIG=~/.kube/bluespeed.yaml kubectl drain <hostname> --ignore-daemonsets --delete-emptydir-data
-
-# 2. Delete from cluster
-KUBECONFIG=~/.kube/bluespeed.yaml kubectl delete node <hostname>
-
-# 3. Clean up node
-sudo /var/usrlocal/bin/k3s-agent-uninstall.sh
-```
-
-### Key facts for atomic OS nodes
-
-- **Binary path:** `/var/usrlocal/bin/k3s` (`INSTALL_K3S_BIN_DIR=/var/usrlocal/bin`)
-- **Flannel backend:** `host-gw` (pure L2 routes, all nodes on `<lab-subnet>/24`)
-- **Upgrades:** managed by system-upgrade-controller via `manifests/k3s-upgrade-plans.yaml`
-- **Version skew:** agents must not be newer than the server (ghost)
+Use [`docs/skills/node-lifecycle/SKILL.md`](../skills/node-lifecycle/SKILL.md) as the
+single operator procedure for shared-cluster node joins, WEC registration,
+draining, and removal. This cheatsheet intentionally does not duplicate host
+access or credential-handling instructions.

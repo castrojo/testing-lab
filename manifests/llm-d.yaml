@@ -1,3 +1,12 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: llm-d-preempt
+value: 1000000
+preemptionPolicy: PreemptLowerPriority
+globalDefault: false
+description: "Higher scheduling priority for local LLM inference so it can preempt lower-priority work when needed."
+---
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -24,51 +33,67 @@ spec:
       labels:
         app.kubernetes.io/name: llm-d-modelserver
     spec:
+      priorityClassName: llm-d-preempt
       containers:
         - name: modelserver
-          image: ghcr.io/ggml-org/llama.cpp:server
+          image: vllm/vllm-openai-rocm:latest
           imagePullPolicy: IfNotPresent
-          command: ["/app/llama-server"]
           args:
-            - "-hf"
-            - "ggml-org/gemma-3-1b-it-GGUF:Q4_K_M"
-            - "--alias"
-            - "gpt-4o"
-            - "--host"
-            - "0.0.0.0"
-            - "--port"
+            - --model
+            - unsloth/Llama-3.2-3B-Instruct
+            - --served-model-name
+            - local-llm
+            - --host
+            - 0.0.0.0
+            - --port
             - "8000"
-            - "--ctx-size"
-            - "8192"
-            - "--threads"
-            - "8"
-            - "--parallel"
-            - "2"
+            - --tensor-parallel-size
+            - "1"
+            - --max-model-len
+            - "4096"
+            - --gpu-memory-utilization
+            - "0.90"
+            - --trust-remote-code
+          env:
+            - name: HF_HOME
+              value: /root/.cache/huggingface
+            - name: VLLM_LOGGING_LEVEL
+              value: INFO
           ports:
             - name: http
               containerPort: 8000
               protocol: TCP
+          volumeMounts:
+            - name: hf-cache
+              mountPath: /root/.cache/huggingface
           resources:
             requests:
-              cpu: "2"
-              memory: 4Gi
+              cpu: "4"
+              memory: 16Gi
+              amd.com/gpu: "1"
             limits:
-              cpu: "6"
-              memory: 8Gi
+              cpu: "8"
+              memory: 24Gi
+              amd.com/gpu: "1"
           readinessProbe:
             httpGet:
-              path: /v1/models
+              path: /health
               port: 8000
-            periodSeconds: 10
+            initialDelaySeconds: 60
+            periodSeconds: 15
             timeoutSeconds: 5
-            failureThreshold: 6
+            failureThreshold: 10
           livenessProbe:
             httpGet:
               path: /health
               port: 8000
+            initialDelaySeconds: 120
             periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 3
+      volumes:
+        - name: hf-cache
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

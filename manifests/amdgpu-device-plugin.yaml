@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: amdgpu-device-plugin
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: amdgpu-device-plugin
+    app.kubernetes.io/part-of: lab
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: amdgpu-device-plugin
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: amdgpu-device-plugin
+        app.kubernetes.io/part-of: lab
+    spec:
+      nodeSelector:
+        lab.projectbluefin.io/amd-gpu: "true"
+      priorityClassName: system-node-critical
+      containers:
+        - name: amdgpu-device-plugin
+          image: docker.io/rocm/k8s-device-plugin:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          env:
+            - name: KUBELET_ROOT_DIR
+              value: /var/lib/kubelet
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: device-plugin
+              mountPath: /var/lib/kubelet/device-plugins
+            - name: dev
+              mountPath: /dev
+            - name: sys
+              mountPath: /sys
+      volumes:
+        - name: device-plugin
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+            type: DirectoryOrCreate
+        - name: dev
+          hostPath:
+            path: /dev
+            type: Directory
+        - name: sys
+          hostPath:
+            path: /sys
+            type: Directory
