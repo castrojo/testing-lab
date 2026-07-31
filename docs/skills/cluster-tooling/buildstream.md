@@ -198,6 +198,13 @@ grid; do not fall back to a runner-local or cache-only build. The
 the generated BuildStream configuration. A healthy run has two Ready workers,
 two action slots, and observable current worker actions.
 
+The isolated `bst2` RECC pilot is a nested sandbox workload and must run its
+script container with `privileged: true` and `seLinuxOptions.type: spc_t`.
+Without that runtime contract, BuildStream's bubblewrap sandbox fails before
+compiler execution with `Can't mount proc on /newroot/proc: Operation not
+permitted`. This requirement is specific to the pilot container; it does not
+enable nested RECC or relax the production runner admission gate.
+
 **RECC (Remote Execution C/C++ Compiler) integration:**
 The build grid supports fine-grained C/C++ compiler distribution via RECC
 (`recc` wrapper) following GNOME `gnome-build-meta` MR 4704 (`!4704`) and
