@@ -47,7 +47,7 @@ BUILDBARN_CAS_METRICS = (
 )
 
 RECC_PREFIX = re.compile(
-    r"^\s*(?:\[(?:RECC|RECC_VERBOSE)\]|(?:RECC|RECC_VERBOSE)"
+    r"^\s*(?:\[(?:RECC|RECC_VERBOSE|RECC_METRICS)\]|(?:RECC|RECC_VERBOSE|RECC_METRICS)"
     r"(?:\s*[:|]|\s+))\s*(?P<body>.*)$",
     re.IGNORECASE,
 )
@@ -244,6 +244,22 @@ def _extract_recc_text(text: str) -> tuple[str | None, str]:
     if not any(line.strip() for line in lines):
         return None, "RECC marker or dedicated section contained no evidence lines"
     return "\n".join(lines), ""
+
+
+RECC_STATSD = re.compile(
+    r"^\s*recc\.(?P<name>[A-Za-z0-9_]+):"
+    r"(?P<value>-?(?:\d+(?:\.\d*)?|\.\d+))\|(?P<kind>[a-z]+)"
+)
+
+
+def _parse_recc_statsd(text: str) -> dict[str, list[float]]:
+    metrics: dict[str, list[float]] = {}
+    for line in text.splitlines():
+        match = RECC_STATSD.match(line)
+        if not match:
+            continue
+        metrics.setdefault(match.group("name"), []).append(float(match.group("value")))
+    return metrics
 
 
 def _structured_recc_source(decoded: Any) -> tuple[dict[str, Any] | None, str]:
@@ -632,9 +648,38 @@ def parse_recc_verbose(text: Any) -> dict[str, Any]:
         "link_seconds": _duration_from_mapping(
             timings_source, "link_seconds", "link", "link_duration"
         ),
+        "metrics": None,
     }
 
     if not source and isinstance(text, str) and text:
+        statsd = _parse_recc_statsd(text)
+        if statsd:
+            values["metrics"] = {
+                name: sum(samples) for name, samples in sorted(statsd.items())
+            }
+            for metric_name, field in (
+                ("action_cache_hit", "cache_hits"),
+                ("action_cache_miss", "cache_misses"),
+                ("fallback", "local_fallbacks"),
+            ):
+                if metric_name in statsd:
+                    values[field] = sum(statsd[metric_name])
+            if values["cache_hits"] is not None or values["cache_misses"] is not None:
+                values["action_count"] = sum(
+                    value or 0
+                    for value in (values["cache_hits"], values["cache_misses"])
+                )
+            compile_values = [
+                value
+                for metric_name in (
+                    "execute_local_no_action_result",
+                    "execute_local_with_action_result",
+                    "execute_remote_with_action_result",
+                )
+                for value in statsd.get(metric_name, [])
+            ]
+            if compile_values:
+                values["compile_seconds"] = sum(compile_values) / 1000
         lines = text.splitlines()
         detected_started_actions = 0
         detected_completed_actions = 0

@@ -138,6 +138,26 @@ def test_recc_dedicated_section_is_accepted_without_per_line_markers():
     assert result["state"] == "available"
 
 
+def test_recc_statsd_metrics_provide_action_cache_evidence():
+    result = collector.parse_recc_verbose(
+        """
+        === BEGIN RECC_VERBOSE LOG ===
+        [RECC_METRICS] recc.action_cache_hit:2|c
+        [RECC_METRICS] recc.action_cache_miss:1|c
+        [RECC_METRICS] recc.fallback:1|c
+        [RECC_METRICS] recc.execute_local_no_action_result:125|ms
+        === END RECC_VERBOSE LOG ===
+        """
+    )
+
+    assert result["action_count"] == 3
+    assert result["cache_hits"] == 2
+    assert result["cache_misses"] == 1
+    assert result["local_fallbacks"] == 1
+    assert result["compile_seconds"] == 0.125
+    assert result["state"] == "available"
+
+
 def test_prometheus_names_are_discovered_and_deltas_are_label_aware():
     before = """
     # HELP bb_actions_total actions

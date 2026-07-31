@@ -451,7 +451,7 @@ spec:
               printf '%s phase: failed (exit %s)\n' "${phase}" "${rc}" >> "${phase_log}"
               printf -v "${status_var}" '%s' failed
             fi
-            grep -Eio '(^|[[:space:]\[\(])RECC(_VERBOSE)?([[:space:]:\]\)]|$).*' \
+            grep -Eio '(^|[[:space:]\[\(])RECC(_VERBOSE|_METRICS)?([[:space:]:\]\)]|$).*' \
               "${phase_log}" > "${phase_raw_recc}" || true
             {
               printf '=== BEGIN RECC_VERBOSE LOG ===\n'
