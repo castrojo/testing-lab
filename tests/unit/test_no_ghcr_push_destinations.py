@@ -108,26 +108,40 @@ def collect_script_sources(template_path: Path, template_name: str) -> list[tupl
     return results
 
 
+# Registry-upload verbs.  Every pattern here writes bytes (or a reference) to a
+# remote registry.  Read-only verbs (oras manifest fetch, oras discover, oras
+# pull, skopeo inspect, docker pull, cosign verify) are deliberately excluded so
+# the guard requirement does not produce false positives.
+PUSH_PATTERNS = [
+    r"skopeo\s+copy\b",
+    r"skopeo\s+sync\b",
+    r"podman\s+push\b",
+    r"buildah\s+push\b",
+    r"docker\s+push\b",
+    r"oras\s+push\b",
+    r"oras\s+cp\b",
+    r"oras\s+attach\b",
+    r"oras\s+manifest\s+push\b",
+    r"oras\s+blob\s+push\b",
+    r"cosign\s+(sign|attach)\b",
+]
+
+SCREENSHOT_TEMPLATES = ("run-kde-tests", "run-gnome-tests")
+
+
 def push_scripts() -> list[tuple[str, str, str]]:
     """
-    Find all templates with push commands.
-    
+    Find all templates with registry-upload commands.
+
     Yields:
         Tuples of (path, template_name, script_source) for scripts containing
-        push commands: skopeo copy, podman push, buildah push, oras push, oras cp
+        any of PUSH_PATTERNS.
     """
-    push_patterns = [
-        r"skopeo\s+copy",
-        r"podman\s+push",
-        r"buildah\s+push",
-        r"oras\s+push",
-        r"oras\s+cp",
-    ]
-    combined_pattern = "|".join(f"({p})" for p in push_patterns)
-    
+    combined_pattern = "|".join(f"({p})" for p in PUSH_PATTERNS)
+
     for template_file in sorted(TEMPLATES_PATH.glob("*.yaml")):
         template_name = template_file.stem
-        
+
         for path, name, source in collect_script_sources(template_file, template_name):
             if re.search(combined_pattern, source):
                 yield path, template_name, source
@@ -135,25 +149,17 @@ def push_scripts() -> list[tuple[str, str, str]]:
 
 def first_push_index(source: str) -> int:
     """
-    Find the index of the first push command in the script source.
-    
+    Find the index of the first registry-upload command in the script source.
+
     Returns:
         The character index of the first occurrence of any push command.
     """
-    push_patterns = [
-        r"skopeo\s+copy",
-        r"podman\s+push",
-        r"buildah\s+push",
-        r"oras\s+push",
-        r"oras\s+cp",
-    ]
-    
     min_index = len(source)
-    for pattern in push_patterns:
+    for pattern in PUSH_PATTERNS:
         match = re.search(pattern, source)
         if match:
             min_index = min(min_index, match.start())
-    
+
     return min_index
 
 
@@ -203,24 +209,22 @@ def test_push_scripts_reject_ghcr_before_upload():
     """
     Test that all push-producing scripts have a GHCR rejection guard before uploads.
 
-    Every script that invokes skopeo copy / podman push / buildah push / oras push
-    / oras cp must contain the sentinel string 'GHCR push destination is forbidden'
+    Every script that invokes a registry-upload verb (see PUSH_PATTERNS: skopeo
+    copy/sync, podman/buildah/docker push, oras push/cp/attach/manifest push/blob
+    push, cosign sign/attach) must contain the sentinel
+    string 'GHCR push destination is forbidden'
     BEFORE its first push command, regardless of whether the script source contains
     a literal 'ghcr.io' reference.  Destination variables (e.g. $DESTINATION_REGISTRY)
     can be redirected at call time, so the guard is required unconditionally.
 
     The only exemptions are the screenshot scripts (run-kde-tests, run-gnome-tests),
-    which must instead carry an explicit 'GHCR screenshot publication disabled'
-    diagnostic and must not contain an executable oras push block.
+    which are covered unconditionally by
+    test_screenshot_templates_are_disabled_unconditionally.
     """
     for path, template_name, source in push_scripts():
-        if template_name in {"run-kde-tests", "run-gnome-tests"}:
-            assert (
-                "GHCR screenshot publication disabled" in source
-            ), f"{template_name}: missing 'GHCR screenshot publication disabled' diagnostic"
-
-            if is_executable_oras_push(source):
-                assert False, f"{template_name}: contains executable oras push (should be disabled)"
+        if template_name in SCREENSHOT_TEMPLATES:
+            # Screenshot publication is disabled unconditionally; see
+            # test_screenshot_templates_are_disabled_unconditionally.
             continue
 
         # All other push-producing scripts need the guard — independently of whether
@@ -285,3 +289,74 @@ def test_push_scripts_inventory():
     assert re.search(r"exit\s+1", lane_source), (
         "publish-lane is missing exit 1 after the disable guard"
     )
+
+
+def test_screenshot_templates_are_disabled_unconditionally():
+    """
+    KDE and GNOME screenshot publication must stay explicitly disabled.
+
+    Asserted by template file name rather than through push_scripts() so the
+    diagnostic is still required once the last upload verb is removed from the
+    source (otherwise these templates would silently drop out of coverage).
+    """
+    for template_name in SCREENSHOT_TEMPLATES:
+        template_file = TEMPLATES_PATH / f"{template_name}.yaml"
+        assert template_file.exists(), f"{template_name}.yaml is missing"
+
+        sources = [
+            source
+            for _, _, source in collect_script_sources(template_file, template_name)
+        ]
+        combined = "\n".join(sources)
+
+        assert "GHCR screenshot publication disabled" in combined, (
+            f"{template_name}: missing 'GHCR screenshot publication disabled' diagnostic"
+        )
+
+        for source in sources:
+            assert not is_executable_oras_push(source), (
+                f"{template_name}: contains executable oras push (should be disabled)"
+            )
+
+
+def test_push_patterns_do_not_match_read_only_commands():
+    """The upload-verb patterns must not fire on pull/read registry commands."""
+    combined_pattern = "|".join(f"({p})" for p in PUSH_PATTERNS)
+    read_only = [
+        "oras manifest fetch --plain-http localhost:5000/x:tag",
+        "oras discover --plain-http localhost:5000/x:tag",
+        "oras pull localhost:5000/x:tag",
+        "skopeo inspect docker://localhost:5000/x:tag",
+        "docker pull localhost:5000/x:tag",
+        "cosign verify localhost:5000/x:tag",
+        "podman pull localhost:5000/x:tag",
+    ]
+
+    for command in read_only:
+        assert not re.search(combined_pattern, command), (
+            f"read-only command incorrectly matched as a push: {command}"
+        )
+
+
+def test_push_patterns_match_known_upload_verbs():
+    """Sanity check that each upload verb is actually detected."""
+    combined_pattern = "|".join(f"({p})" for p in PUSH_PATTERNS)
+    uploads = [
+        "skopeo copy docker://a docker://b",
+        "skopeo sync --src docker --dest docker a b",
+        "podman push localhost:5000/x:tag",
+        "buildah push localhost:5000/x:tag",
+        "docker push localhost:5000/x:tag",
+        "oras push localhost:5000/x:tag file",
+        "oras cp localhost:5000/x:tag localhost:5000/y:tag",
+        "oras attach --artifact-type app/x localhost:5000/x@sha256:0 file",
+        "oras manifest push localhost:5000/x:tag manifest.json",
+        "oras blob push localhost:5000/x blob.bin",
+        "cosign sign localhost:5000/x@sha256:0",
+        "cosign attach signature localhost:5000/x:tag",
+    ]
+
+    for command in uploads:
+        assert re.search(combined_pattern, command), (
+            f"upload command not detected as a push: {command}"
+        )

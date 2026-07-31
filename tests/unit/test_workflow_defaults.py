@@ -364,10 +364,9 @@ def test_kde_runner_persists_failure_artifacts_and_pushes_guest_screenshots():
     assert "evidence artifacts were not fully retained" in kde
     assert "scp" in kde
     assert "BEHAVE_RC=0" in kde
-    assert "SCREENSHOT_IMAGE=" in kde
-    assert "oras push" in kde
-    assert "ERROR: failed to publish KDE screenshot artifact" in kde
-    assert "Warning: failed" not in kde
+    assert "SCREENSHOT_IMAGE=" not in kde
+    assert "oras login" not in kde
+    assert "oras push" not in kde
     assert "TESTSUITE_RESULTS_DIR" in kde
     assert "qemu_screendump" not in kde
 
