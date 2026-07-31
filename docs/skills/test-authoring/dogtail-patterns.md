@@ -648,7 +648,7 @@ shape for new suites.
       details (child indices, CSS classes).
 - [ ] `@regression` scenarios cite a real issue with `@<repo>_<issue#>`.
 - [ ] Scenario passes from a cold image, not just on a re-run.
-- [ ] New `@regression` proven stable via `STABILITY=10` (§7.6).
+- [ ] New `@regression` validated with the targeted `behave-tags` check (§7.6).
 
 **Mechanics:**
 - [ ] Every GUI scenario starts with `* GNOME Shell is accessible via AT-SPI`.
