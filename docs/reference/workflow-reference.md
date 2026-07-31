@@ -243,9 +243,9 @@ the next cycle.
 | CronWorkflow | Time (UTC) | Pipeline | Parameters |
 | --- | --- | --- | --- |
 | `nightly-smoke` | 02:00 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin`, `image-tag=testing`, `suites=smoke,developer,system`, `variant=bluefin` |
-| `nightly-smoke-stable` | 03:00 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin`, `image-tag=stable`, `suites=smoke,developer,system`, `variant=bluefin` |
+| `nightly-smoke-stable` | 03:00 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin`, `image-tag=stable`, `suites=smoke`, `variant=bluefin` |
 | `nightly-smoke-lts` | 02:30 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin-lts`, `image-tag=testing`, `suites=smoke,developer,system`, `variant=bluefin-lts` |
-| `nightly-smoke-lts-stable` | 03:30 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin-lts`, `image-tag=stable`, `suites=smoke,developer,system`, `variant=bluefin-lts` |
+| `nightly-smoke-lts-stable` | 03:30 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin-lts`, `image-tag=stable`, `suites=smoke`, `variant=bluefin-lts` |
 | `nightly-dakota` | 03:00 | `dakota-qa-pipeline` | Tests pre-built `dakota:latest` only; currently `suspend: true`. |
 | `nightly-knuckle` | 03:30 | `knuckle-qa-pipeline` | `branch=main`, `namespace=knuckle-test`, `suite=smoke`, `tests-branch=main` |
 
