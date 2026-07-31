@@ -1,7 +1,7 @@
 # Homelab Validation Contracts
 
 This document defines the in-cluster workload validation contracts for the
-testing-lab QA factory. It covers the workload matrix (#57), shared-storage
+lab QA factory. It covers the workload matrix (#57), shared-storage
 and RWX limits (#62), storage observability surface (#70, #78), the
 fleet-client vs. cluster-node boundary (#72), the HTTPS service-exposure lane (#58), and the deferred non-core service follow-up for Home Assistant-class workloads (#69).
 
@@ -147,7 +147,7 @@ The lab hardware has two distinct roles that **must not be conflated**:
 
 | Role | Hosts | k3s member | KubeVirt capable | In scope for cluster workload validation |
 |---|---|---|---|---|
-| **Cluster node** | ghost, exo-1 | Yes | ghost only | Yes |
+| **Cluster node** | ghost, exo-0 | Yes | ghost only | Yes |
 | **Bootc client** | jorge's Bluefin laptop, other contributor machines | No | No | No |
 
 ### What this repo validates for bootc clients

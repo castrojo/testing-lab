@@ -372,7 +372,7 @@ When a template is renamed, merged, or deleted, standalone submit Workflows that
 2. Push to `main` and let ArgoCD sync, or force sync with a port-forward:
    ```bash
    kubectl port-forward svc/argocd-server -n argocd 18080:443 &
-   argocd app sync testing-lab
+   argocd app sync lab
    ```
 3. Verify the live template exists before resubmitting dependent workflows:
    ```bash
@@ -391,11 +391,13 @@ When a WorkflowTemplate is superseded:
 1. Delete the file from `argo/workflow-templates/` in the same PR that removes the dependency
 2. Automated sync with `prune: true` will remove it on the next ArgoCD cycle, but a manual `argocd app sync` without `--prune` will report "requires pruning" and leave the old template in the cluster. To prune immediately:
    ```bash
-   argocd app sync testing-lab --prune
+   argocd app sync lab --prune
    ```
 3. Do not leave templates with `DEPRECATED` annotations in git — they accumulate and confuse agents
 
-One-shot bootstrap templates (`install-*`, `setup-*`, `titan-disk-cleanup`) should not persist indefinitely in the cluster. If they have no git backing, `kubectl delete workflowtemplate -n argo <name>` is safe since ArgoCD won't recreate what isn't in git.
+One-shot bootstrap templates (`install-*`, `setup-*`) should not persist indefinitely
+in the cluster. If they have no git backing, `kubectl delete workflowtemplate -n argo
+<name>` is safe since ArgoCD won't recreate what isn't in git.
 
 Two CronWorkflows at the same schedule covering overlapping namespaces → consolidate into one. Check `kubectl get cronworkflows -n argo` before adding a new cleanup job.
 

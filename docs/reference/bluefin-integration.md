@@ -1,9 +1,9 @@
 # Bluefin Integration
 
-This homelab instance is the CI backend for Project Bluefin. Every image publish
-results in a full acceptance test run with zero human intervention; structured
-per-suite results are published back into this repo for dashboard and release
-consumers.
+This homelab instance is the CI backend for Project Bluefin. Selected image-poll
+lanes trigger container-only acceptance runs when their registry digest changes;
+structured per-suite results are published back into this repo for dashboard and
+release consumers.
 
 ---
 
@@ -11,14 +11,16 @@ consumers.
 
 | Image | Tag | Trigger | QA path |
 |---|---|---|---|
-| `ghcr.io/projectbluefin/bluefin` | `testing` | Nightly 02:00 UTC + digest change | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` |
-| `ghcr.io/projectbluefin/bluefin-lts` | `testing` | Nightly 02:30 UTC + digest change | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` |
+| `ghcr.io/projectbluefin/bluefin` | `testing` | Nightly 02:00 UTC + 10-minute digest polling | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` |
+| `ghcr.io/projectbluefin/bluefin` | `stable` | Nightly 03:00 UTC + 10-minute digest polling | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` |
+| `ghcr.io/projectbluefin/bluefin-lts` | `testing` | Nightly 02:30 UTC + 10-minute digest polling | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` |
+| `ghcr.io/projectbluefin/bluefin-lts` | `stable` | Nightly 03:30 UTC + 10-minute digest polling | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` |
 | `ghcr.io/frostyard/snow` | `latest` | Every 3 hours + digest change | Poller → `bluefin-qa-pipeline` container lane |
-| `ghcr.io/projectbluefin/dakota` | latest BST build | Nightly 03:00 UTC + BST build | `dakota-qa-pipeline` → `run-container-tests` |
+| `ghcr.io/projectbluefin/dakota` | `testing` | 10-minute digest polling; nightly trigger suspended | `image-poll-dakota` → `dakota-qa-pipeline` → `run-container-tests` |
 
-`:testing` is the only production branch tested continuously. `:stable` runs are
-supported but not scheduled by default. Never use `:latest` or date tags in
-automation — `bluefin-lts` has no `:latest` tag.
+Bluefin and Bluefin-LTS `:testing` and `:stable` lanes are scheduled continuously.
+Dakota's nightly CronWorkflow is suspended; its active digest-poll lane tests the
+published `:testing` image. Never use date tags in automation.
 
 ---
 
@@ -68,8 +70,8 @@ Flatcar OS substrate tests. Not part of the Bluefin image pipelines; runs via
 
 ## Image-Poll Trigger
 
-Hourly CronWorkflows (`image-poll-bluefin-testing`, `image-poll-lts-testing`) call
-the `image-poller` WorkflowTemplate. Each run:
+The Bluefin, Bluefin-LTS, and Dakota image-poll CronWorkflows run every 10 minutes
+and call the `image-poller` WorkflowTemplate. Each run:
 
 1. Pulls the current digest for the target image from ghcr.io
 2. Reads the last-known digest from `image-polling-digests` in namespace `argo`
@@ -78,8 +80,8 @@ the `image-poller` WorkflowTemplate. Each run:
 5. Each selected suite publishes its structured results back into this repo
 6. Only after the downstream workflow succeeds does `image-poller` persist the new digest
 
-This means every new Bluefin image publish triggers container-only validation
-within one hour, automatically, with no human action.
+This means a changed Bluefin, Bluefin-LTS, or Dakota digest triggers
+container-only validation within 10 minutes, automatically, with no human action.
 
 ---
 
@@ -95,8 +97,8 @@ merge the new suite outcome into the tracked results data. The publication flow 
 4. Run `scripts/publish_test_results.py` for the image/suite/workflow tuple
 5. Push the updated structured results back to the repo for dashboard consumers
 
-The result: a Bluefin release is published → tests run in containers → the repo
-receives per-suite QA results without any VM-specific artifact handling.
+The result: a Bluefin or Dakota image is published → tests run in containers →
+the repo receives per-suite QA results without any VM-specific artifact handling.
 
 ---
 
@@ -154,6 +156,7 @@ To force a run outside `AUTO_REPOS`: add the `test-on-lab` label to a PR in the
 ## Dakota
 
 Dakota runs through `dakota-qa-pipeline` rather than `bluefin-qa-pipeline`, but
-the QA lane now uses the same container-only fan-out through `run-container-tests`.
-BuildStream artifact builds remain separate in `dakota-build-pipeline`. Dakota PRs
-can also use the `test-on-lab` label via the PR label poller.
+the QA lane uses the same container-only fan-out through `run-container-tests`.
+BuildStream artifact builds remain separate in `dakota-build-pipeline`; the active
+`image-poll-dakota` lane tests the resulting `:testing` image. Dakota PRs can also
+use the `test-on-lab` label via the PR label poller.
