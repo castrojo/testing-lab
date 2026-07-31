@@ -47,6 +47,19 @@ metadata:
    PVC provisioning fails on an unconfigured node instead of falling back to
    that node's root disk.
 
+## ROCm inference pause
+
+The local `llm-d` inference workload may be intentionally paused in
+`manifests/llm-d.yaml` with `replicas: 0` and no Service. Treat that as the
+expected stopped state, not a failed deployment. Do not use `kubectl scale` for
+a durable pause because ArgoCD self-heal restores the declared state; restore
+the Deployment replica and Service in git to re-enable inference.
+
+If an old ArgoCD operation is still waiting for the pre-pause Deployment,
+terminate only that stale operation before syncing the current revision. Remove
+only explicitly identified stuck workload pods after the Deployment is scaled
+to zero.
+
 ## Lightweight Prometheus backend
 
 `manifests/prometheus-lightweight.yaml` is the lab's backend-only metrics
