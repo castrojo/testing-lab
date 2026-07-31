@@ -121,7 +121,7 @@ Both applications use `automated: { prune: true, selfHeal: true }` — resources
 removed from git are removed from the cluster, and manual changes are reverted.
 This is the [recommended Argo CD GitOps model](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/).
 
-`testing-lab-infra` also creates the `kubestellar-applications` app-of-apps,
+`lab-infra` also creates the `kubestellar-applications` app-of-apps,
 which reconciles PostgreSQL, KubeStellar core, and KubeStellar Console in that
 order. Do not apply the child Applications manually.
 
@@ -144,20 +144,9 @@ if already present.
 
 ## 7. Configure Ghost-Specific Settings (Strix Halo hardware)
 
-For the Ryzen AI MAX+ Strix Halo node, set performance kernel args. This is a
-one-time operation (requires reboot):
-
-```bash
-just run-kernel-args
-# Schedule a maintenance window and reboot ghost when ready
-```
-
-Install the API-only warning banner on ghost's SSH login (prevents operators from
-running kubectl/argo from the host shell):
-
-```bash
-just setup-ghost-ssh-banner
-```
+Kernel arguments and SSH login policy are host-level maintenance, not
+Argo WorkflowTemplate operations. Do not submit retired workflow-based
+helpers for those changes; follow the maintainer-approved host procedures.
 
 ---
 
@@ -200,11 +189,8 @@ Run a smoke test end-to-end to verify the full pipeline:
 just run-tests
 ```
 
-This will:
-1. Pull (or reuse) the containerDisk from Zot
-2. Boot a KubeVirt VM from the containerDisk
-3. SSH in, run behave + qecore GNOME tests
-4. Delete the VM on exit
+This submits the container-only `bluefin-qa-pipeline`, which runs the selected
+suite directly inside the published OCI image and cleans up its pods on exit.
 
 ---
 
@@ -218,8 +204,6 @@ Run them once during initial cluster setup.
 | `install-kubevirt` | `workflowtemplate/install-kubevirt` | Install KubeVirt (CNCF Incubating) |
 | `install-cdi` | `workflowtemplate/install-cdi` | Install CDI for disk import |
 | `install-kubevirt-manager` | `workflowtemplate/install-kubevirt-manager` | Web UI at :30180 |
-| `ghost-kernel-args` | `workflowtemplate/ghost-kernel-args` | Strix Halo kernel tuning |
-| `setup-ghost-ssh-banner` | `workflowtemplate/setup-ghost-ssh-banner` | API-only SSH warning |
 | `setup-otel` | `workflowtemplate/setup-otel` | OTel observability stack |
 
 > These templates must be applied to the cluster before they can be run:

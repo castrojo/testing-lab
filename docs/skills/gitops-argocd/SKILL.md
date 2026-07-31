@@ -138,7 +138,7 @@ the scheduler; do not add a hostname selector. Size application retention below
 PVC capacity so WAL, compaction, or other temporary files cannot fill the
 volume.
 
-**Subdirectories and namespaces:** `testing-lab-infra` runs with
+**Subdirectories and namespaces:** `lab-infra` runs with
 `directory.recurse: true` (live-patched 2026-07-25; the Application object is
 manually applied, not git-tracked) so nested paths like
 `manifests/catalog-apps/<app>/manifest.yaml` sync. It also sets
@@ -170,9 +170,9 @@ If a template change is in git but not yet live:
 #### The WorkflowTemplate Snapshot Gotcha (CRITICAL):
 - **Snapshot at Submit Time**: In Argo Workflows, a WorkflowTemplate is snapshotted inside the cluster at the *exact moment a workflow is submitted*.
 - **Sync Race Condition**: If you push a fix to git and immediately run `argo submit` or trigger a build, the workflow may snapshot a stale template version if ArgoCD has not yet completed its poll or sync loop.
-- **Native Kubernetes Hard Sync Patch**: When a port-forward is unavailable or the local CLI config is out-of-sync, you can bypass the `argocd` CLI and trigger an immediate hard refresh and synchronization of the `testing-lab` (or other) Application directly via `kubectl`:
+- **Native Kubernetes Hard Sync Patch**: When a port-forward is unavailable or the local CLI config is out-of-sync, you can bypass the `argocd` CLI and trigger an immediate hard refresh and synchronization of the `lab` (or other) Application directly via `kubectl`:
   ```bash
-  kubectl patch app testing-lab -n argocd -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}' --type=merge
+  kubectl patch app lab -n argocd -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}' --type=merge
   ```
   Always run this patch (or `just argocd-sync`) and verify that the target template's live version (`argo-mcp-get_workflow_template`) incorporates your changes **before** submitting or resubmitting any workflow runs.
 

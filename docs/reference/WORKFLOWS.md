@@ -7,12 +7,12 @@ invocation. No bash, no `kubectl apply`, no SSH.
 Conventions:
 
 - All templates live in `argo/workflow-templates/*.yaml` and are reconciled
-  to namespace `argo` by the ArgoCD `testing-lab` Application.
+  to namespace `argo` by the ArgoCD `lab` Application.
 - Workflow-level parameters listed below are passed via `-p name=value`.
 - Wall-clock targets are warm-cache numbers; cold-cache figures (BIB build
   on a missing golden disk) add ~5–10 min.
 - The agent contract: prefer the **top-level** templates (`bluefin-qa-pipeline`,
-  `bluefin-titan-smoke`). The supporting templates (provision, run, teardown)
+  `dakota-qa-pipeline`). The supporting templates (provision, run, teardown)
   are called as `templateRef` and rarely submitted directly.
 
 ---
@@ -21,23 +21,25 @@ Conventions:
 
 ### `bluefin-qa-pipeline`
 
-Full pipeline: ensure golden disk → reflink + boot a fresh KubeVirt VM →
-run test suites → teardown VM on exit.
+Container-only pipeline: validate the requested suites, fan out
+`run-container-tests` inside the published OCI image, publish selected results,
+and return a summary. This path does not build a containerDisk, boot a VM, or
+SSH into a guest.
 
 | Parameter | Default | Notes |
 |---|---|---|
-| `image` | `ghcr.io/ublue-os/bluefin` | Source image. Tag is appended from `image-tag` for some callers; pass with tag if invoking directly. |
-| `image-tag` | `latest` | `latest`, `lts`, etc. Also used as the golden-disk dir name. |
-| `namespace` | `bluefin-test` | KubeVirt VM namespace. Use `bluefin-lts-test` for LTS. |
-| `suites` | `smoke,developer` | Comma list; valid: `smoke`, `developer`, `software`. |
-| `variant` | `bluefin` | Selects test fixtures (e.g. `dakota` for Ghostty). |
-| `ssh-key-secret` | `bluefin-test-ssh-key` | Secret in `argo` ns with `id_ed25519`. |
+| `image` | `ghcr.io/projectbluefin/bluefin` | Published OCI image repository. |
+| `image-tag` | `testing` | Image tag to test. |
+| `suites` | `smoke,common,developer,software,system` | Comma list of supported suites. |
+| `variant` | `bluefin` | Selects test fixtures. |
+| `branch` | `main` | Lab branch passed to the workflow metadata. |
+| `testsuite-branch` | `main` | `projectbluefin/testsuite` branch to clone. |
 
-Wall-clock: ~5 min (warm), ~10–14 min (cold BIB rebuild).
+Wall-clock: depends on the selected suite set and container-qa semaphore.
 
 ```
 argo submit --from workflowtemplate/bluefin-qa-pipeline \
-  -p image-tag=latest -p suites=smoke --wait
+  -p image-tag=testing -p suites=smoke --wait
 ```
 
 ### `knuckle-qa-pipeline`
@@ -53,7 +55,7 @@ smoke tests against the installed system.
 | `namespace` | `knuckle-test` | KubeVirt namespace for the ephemeral installer VM. |
 | `suite` | `smoke` | Single GNOME test suite to run after install. |
 | `ssh-key-secret` | `bluefin-test-ssh-key` | Secret in `argo` ns used for installer access and installed-system SSH. |
-| `tests-branch` | `main` | `testing-lab` branch cloned by `run-gnome-tests`. |
+| `tests-branch` | `main` | Lab branch cloned by `run-gnome-tests`. |
 
 Wall-clock: ~12–20 min depending on ISO build cache and Flatcar download time.
 
@@ -85,43 +87,6 @@ argo submit --from workflowtemplate/iso-e2e-pipeline \
   -p iso-sha256=<sha256> -p iso-ref=<immutable-iso-sha> --wait
 ```
 
-### `bluefin-titan-smoke`
-
-Runs smoke tests against the **persistent** titan VMs (`titan-bluefin`,
-`titan-lts`). Skips BIB and VM provisioning entirely. Use when iterating on
-tests or when BIB is slow/broken.
-
-Prerequisites: both titan VMs running. Fetch IPs:
-
-```
-kubectl get vmi titan-bluefin -n bluefin-test -o jsonpath='{.status.interfaces[0].ipAddress}'
-kubectl get vmi titan-lts    -n bluefin-lts-test -o jsonpath='{.status.interfaces[0].ipAddress}'
-```
-
-| Parameter | Default | Notes |
-|---|---|---|
-| `vm-ip-latest` | *(required)* | titan-bluefin IP |
-| `vm-ip-lts` | *(required)* | titan-lts IP |
-| `suite` | `smoke` | Single suite name. |
-| `ssh-key-secret` | `bluefin-test-ssh-key` | |
-| `issue-title` | `titan smoke run` | Free-text label, appears in pod annotation. |
-
-Wall-clock: ~3 min (test-only, no provisioning).
-
-```
-argo submit --from workflowtemplate/bluefin-titan-smoke \
-  -p vm-ip-latest=10.42.x.y -p vm-ip-lts=10.42.x.z --wait
-```
-
-### `patch-golden-disk`
-
-One-shot maintenance: re-runs the disk configuration step (SSH key,
-selinux=0, sudoers) on an existing golden disk without rebuilding it.
-
-| Parameter | Default | Notes |
-|---|---|---|
-| `image-tag` | `latest` | Disk dir under `/var/tmp/bluefin-golden/`. |
-
 ### `service-catalog-pipeline`
 
 K8s-native service-catalog validation pipeline. Deploys a lane's workload
@@ -133,7 +98,7 @@ directly against k8s-hosted workloads.
 |---|---|---|
 | `lane` | `media` | Lane name — must match a directory under `tests/service_catalog/<lane>/` and `tests/service_catalog/<lane>/manifests.yaml` |
 | `image-tag` | `latest` | Passed to lane manifests (available for future per-lane image selection) |
-| `branch` | `main` | testing-lab branch to clone for manifests and tests |
+| `branch` | `main` | Lab branch to clone for manifests and tests |
 
 Wall-clock: ~3–5 min (depends on image pull and test count).
 
@@ -176,7 +141,7 @@ submit them directly only for diagnosis.
 
 ### `run-service-tests` (template: `run-pytest`)
 
-Non-GNOME test runner for service-catalog lanes. Clones testing-lab,
+Non-GNOME test runner for service-catalog lanes. Clones this lab repository,
 discovers the test suite under `tests/service_catalog/<lane>/`, and runs
 pytest with JUnit XML output. Emits a summary line (`N/M pytest checks
 passed`) to stdout for Argo/Loki consumption.
@@ -207,7 +172,7 @@ of relying on the bluefin-test secret for cloud-init injection.
 
 ### `run-gnome-tests` (template: `run-gnome-tests`)
 
-`git-sync` initContainer clones testing-lab → main container SSHes to the VM
+`git-sync` initContainer clones this lab repository → main container SSHes to the VM
 IP → installs deps (skipped if present) → runs qecore-headless + behave →
 captures `results.json` to pod stdout (Loki + `argo logs`).
 
@@ -490,12 +455,16 @@ Installed apps are tracked in `docs/data/catalog/installed.json`.
 
 ## CronWorkflows
 
-Lives in `manifests/`, applied via the `testing-lab-infra` ArgoCD app:
+Lives in `manifests/`, applied via the `lab-infra` ArgoCD app:
 
 | Schedule | Cron | Template called | Purpose |
 |---|---|---|---|
-| `nightly-smoke` | 02:00 UTC | `bluefin-qa-pipeline` (latest) | Catch upstream regressions |
-| `nightly-smoke-lts` | 02:30 UTC | `bluefin-qa-pipeline` (lts)    | Same, for LTS branch; first fire builds the missing golden disk |
+| `nightly-smoke` | 02:00 UTC | `bluefin-qa-pipeline` (`testing`) | Catch upstream regressions |
+| `nightly-smoke-stable` | 03:00 UTC | `bluefin-qa-pipeline` (`stable`, `smoke`) | Stable image regression coverage |
+| `nightly-smoke-lts` | 02:30 UTC | `bluefin-qa-pipeline` (`testing`) | LTS regression coverage |
+| `nightly-smoke-lts-stable` | 03:30 UTC | `bluefin-qa-pipeline` (`stable`, `smoke`) | Stable LTS regression coverage |
+| `image-poll-dakota` | Every 10 min | `dakota-qa-pipeline` (`testing`) | Active Dakota digest-triggered QA |
+| `nightly-dakota` | 03:00 UTC | `dakota-qa-pipeline` (`latest`) | Suspended; does not provide active coverage |
 | `orphan-vm-cleanup` | every 2h | inline | GC stale per-run hostDisks in bluefin, flatcar, and knuckle namespaces |
 
 ---
@@ -503,7 +472,7 @@ Lives in `manifests/`, applied via the `testing-lab-infra` ArgoCD app:
 ## KubeStellar workflows
 
 Reusable WorkflowTemplates in `argo/workflow-templates/`, reconciled by the
-`testing-lab` ArgoCD Application. KubeStellar installation and upgrades are
+`lab` ArgoCD Application. KubeStellar installation and upgrades are
 owned by the `kubestellar-applications` ArgoCD parent Application.
 
 ### `register-wec`

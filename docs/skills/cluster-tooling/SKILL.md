@@ -171,7 +171,7 @@ Do not guess flags, chart schema, or MCP method names. The K8sGPT MCP server exp
 ## Verification
 
 - [ ] `just lint` passes after any WorkflowTemplate change.
-- [ ] ArgoCD reports `Synced` for `testing-lab` after the push.
+- [ ] ArgoCD reports `Synced` for `lab` after the push.
 - [ ] The submitted build pod is scheduler-admitted without a node selector:
       `kubectl get pod -n argo <pod> -o jsonpath='{.spec.nodeName}'` returns
       a Ready node with adequate allocatable resources.

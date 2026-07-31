@@ -50,9 +50,10 @@ bridge that submits Argo Workflows from ephemeral ARC runners, see
   setting in the lab would not produce a bootable image. A VM path remains
   blocked pending an upstream Dakota UKI/bootupd capability or a maintainer
   decision to adopt a separate golden-disk/export path.
-- **Current coverage:** `dakota-container-qa-pipeline` is the safe repository-local
-  stopgap for image-level, non-GUI checks. It does not provide VM-boot, reboot, or
-  qecore-headless GUI evidence because a pod lacks the full systemd/GDM session.
+- **Current coverage:** `run-container-tests` provides the container-only suite
+  fan-out, including the nested systemd/Wayland session used by qecore-headless.
+  This lane provides image and GUI-session evidence, but not VM boot or reboot
+  evidence.
 - **Parameters:** `image`, `image-tag`, `suites`, `variant`, `branch`, `pr-number`, `sha`,
   `repo`, `testsuite-branch`, `testsuite-repo`.
 - **DAG:** `validate-suites` → parallel `test-lane` items (`smoke`, `common`, `developer`,
@@ -197,6 +198,8 @@ must fail for repair; it must not use an Ethernet, local, or cache-only fallback
 | `dakota-commit-poller` | every 5 min at minute +2 | shared `bst-commit-poller` → `dakota-build-pipeline` when `dakota:testing` changes | Dakota BuildStream cache/execution path |
 | `cosmic-commit-poller` | every 5 min at minute +4 | shared `bst-commit-poller` → `cosmic-build-pipeline` when `cosmic-build-meta:main` changes | Cosmic BuildStream cache/execution path |
 | `image-poll-bluefin-{testing,stable}` / `image-poll-lts-{testing,stable}` | 10 min | `image-poller` when the respective GHCR tag digest changes | Bluefin/LTS container-only QA freshness plus result publication |
+| `image-poll-dakota` | 10 min | `image-poller` when `dakota:testing` changes | Dakota container-only QA plus result publication |
+| `image-poll-bluefin-main` | 3h | `image-poller` when `bluefin:latest` changes | Bluefin latest container-only QA |
 | `image-poll-snosi-latest` | 30 min past every 3 hours | `bluefin-qa-pipeline` when `ghcr.io/frostyard/snow:latest` changes | Snosi GNOME desktop image coverage |
 | `flatcar-kernel-poller` | 10 min | `flatcar-kernel-build` when kernel.org's latest stable version changes | Flatcar kernel build cache |
 | `flatcar-kernel-gate` | 30 min | (gate/promotion check, see `/docs/skills/flatcar-node-onboarding/SKILL.md`) | N/A |
@@ -240,8 +243,10 @@ the next cycle.
 | CronWorkflow | Time (UTC) | Pipeline | Parameters |
 | --- | --- | --- | --- |
 | `nightly-smoke` | 02:00 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin`, `image-tag=testing`, `suites=smoke,developer,system`, `variant=bluefin` |
+| `nightly-smoke-stable` | 03:00 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin`, `image-tag=stable`, `suites=smoke`, `variant=bluefin` |
 | `nightly-smoke-lts` | 02:30 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin-lts`, `image-tag=testing`, `suites=smoke,developer,system`, `variant=bluefin-lts` |
-| `nightly-dakota` | — | `dakota-qa-pipeline` | Tests pre-built images only — does not build/warm cache. Currently `suspend: true`. |
+| `nightly-smoke-lts-stable` | 03:30 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin-lts`, `image-tag=stable`, `suites=smoke`, `variant=bluefin-lts` |
+| `nightly-dakota` | 03:00 | `dakota-qa-pipeline` | Tests pre-built `dakota:latest` only; currently `suspend: true`. |
 | `nightly-knuckle` | 03:30 | `knuckle-qa-pipeline` | `branch=main`, `namespace=knuckle-test`, `suite=smoke`, `tests-branch=main` |
 
 ## Priority Classes

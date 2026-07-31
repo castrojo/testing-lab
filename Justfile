@@ -65,14 +65,14 @@ setup-arc-github-secret pem="" app_id="" installation_id="" namespace="arc-runne
 
 # Force ArgoCD to sync now instead of waiting for the next poll interval
 argocd-sync:
-    argocd app sync testing-lab testing-lab-infra --timeout 120
-    argocd app wait testing-lab --health --timeout 120
-    argocd app wait testing-lab-infra --health --timeout 120
+    argocd app sync lab lab-infra --timeout 120
+    argocd app wait lab --health --timeout 120
+    argocd app wait lab-infra --health --timeout 120
 
 # Show ArgoCD sync status for the test suite
 argocd-status:
-    argocd app get testing-lab
-    argocd app get testing-lab-infra
+    argocd app get lab
+    argocd app get lab-infra
 
 # ── Test execution ───────────────────────────────────────────────────────────
 
@@ -117,13 +117,6 @@ run-migration-test tag=image_tag:
         -p image-tag="{{ tag }}" \
         -n {{ argo_ns }} \
         --watch
-
-# One-time: write SSH banner on ghost.
-setup-ghost-ssh-banner:
-    argo submit --from workflowtemplate/setup-ghost-ssh-banner \
-        -n {{ argo_ns }} \
-        --wait --log
-
 
 # —— [REMOVED] titan VM recipes ——
 # run-titan-smoke, run-titan-system, run-titan-developer, run-titan-software,
@@ -246,11 +239,6 @@ run-otel-patch:
 # Clear stale podman containers-storage lock files on ghost (run when no BIB workflows active)
 run-ghost-cleanup:
     argo submit --from workflowtemplate/ghost-cleanup \
-      -n {{ argo_ns }} --wait --log
-
-# Set Strix Halo performance kernel args on ghost via rpm-ostree (reboot required after)
-run-kernel-args:
-    argo submit --from workflowtemplate/ghost-kernel-args \
       -n {{ argo_ns }} --wait --log
 
 # ── Dakota BST builds ────────────────────────────────────────────────────────
