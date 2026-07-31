@@ -88,6 +88,12 @@ spec:
             items:
               - key: dakota-buildstream.conf
                 path: buildstream.conf
+              - key: remote-execution.conf
+                path: remote-execution.conf
+              - key: recc-environment.conf
+                path: recc-environment.conf
+              - key: apply_recc_overlay.py
+                path: apply_recc_overlay.py
       script:
         image: 192.168.1.102:30500/bst2:64eb0b4930d57a92710822898fb73af6cc1ae35d
         command: [bash]
@@ -117,6 +123,11 @@ spec:
             value: "{{inputs.parameters.element}}"
           - name: REMOTE_EXECUTION_SERVICE
             value: "{{inputs.parameters.remote-execution-service}}"
+          - name: RECC_ENDPOINT
+            valueFrom:
+              configMapKeyRef:
+                name: buildstream-remote-cache
+                key: recc-endpoint
           # Avoid the FUSE staging backend; BuildStream exits 255 in this lab
           # environment when the FUSE stager crashes during source staging.
           - name: BUILDBOX_STAGER
@@ -130,6 +141,18 @@ spec:
           cd src
           git sparse-checkout set "${PROJECT_SUBDIR}"
           cd "${PROJECT_SUBDIR}"
+
+          echo "=== Applying lab RECC overlay (bst-qa) ==="
+          # Mandatory admission, no mode flags: the shared overlay refuses this
+          # lane while nested RECC is unavailable, and this lane must fail
+          # closed rather than continue with outer remote execution only.
+          # --runner-capability may only be added once a BuildBarn runner is
+          # proven to honor BuildStream's remoteApisSocketPath, and
+          # --pilot-cache-only is operator-only for the prototype baseline.
+          python3 /etc/buildstream/apply_recc_overlay.py . \
+            --project-kind bst-qa \
+            --endpoint "${RECC_ENDPOINT}" \
+            --json
 
           cp /etc/buildstream/buildstream.conf /tmp/buildstream-cluster.conf
           BST_CONF=/tmp/buildstream-cluster.conf

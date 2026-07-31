@@ -302,4 +302,12 @@ data:
       // Keep this config aligned with bb_runner ApplicationConfiguration fields.
       chrootIntoInputRoot: true,
       runCommandsAs: { userId: 0, groupId: 0 },
+      // Outer BuildBarn worker readiness is deliberately NOT gated on the
+      // pod-local RECC preparation socket. No runner consumes
+      // remoteApisSocketPath yet, so the socket is unused by outer remote
+      // execution; coupling admission to it would take both workers out of
+      // service for a capability nothing depends on. The recc-casd sidecar
+      // keeps its own readiness/liveness probes on that socket, which is the
+      // separate health boundary. Add readinessCheckingPathnames back only
+      // when a runner actually stages that socket into action sandboxes.
     }
