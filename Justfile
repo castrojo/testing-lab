@@ -6,7 +6,8 @@
 #   - These recipes are the canonical interface for all routine lifecycle operations.
 #   - Agents use these recipes or call argo/kubectl directly. No MCP required.
 #   - No workstation SSH to ghost or exo-0; use just/argo/kubectl/API-driven operations.
-#   - SSH in this repo is reserved for workflow pods connecting to explicit test VMs.
+#   - Routine/public-agent SSH is only from workflow/probe pods to explicit test VMs.
+#   - Retained host-maintenance SSH is operator-only via an approved private channel.
 #   - Cluster bootstrap (setup-ssh-secret, setup-argocd) runs once from workstation.
 
 image     := env_var_or_default("BLUEFIN_IMAGE", "ghcr.io/projectbluefin/bluefin:testing")

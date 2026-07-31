@@ -12,8 +12,10 @@
 
 > [!NOTE]
 > **CLI/API-first.** Tool hierarchy: `just` (lifecycle recipes) → `argo`/`kubectl`
-> (cluster ops). Never use workstation SSH to `ghost` or `exo-0`; SSH examples
-> in this repository are for workflow pods connecting to explicit test VMs.
+> (cluster ops). Routine/public-agent SSH is limited to workflow/probe pods
+> connecting to explicit test VMs. Retained host-maintenance SSH is
+> operator-only through an approved private channel; never use workstation SSH
+> to administer `ghost` or `exo-0`.
 > MCP tools are optional — never block on them. One bash call beats a tool search + MCP roundtrip every time.
 
 ## 1. Command selector — what should I run?

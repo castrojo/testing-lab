@@ -13,9 +13,11 @@ Pair with:
 > [!WARNING]
 > **Use the CLI-first hierarchy for cluster operations:** `just` for routine
 > lifecycle actions, then `argo` or `kubectl` for direct inspection and control.
-> MCP is optional and must not block an operation. The only acceptable SSH path
-> in this repo is **in-cluster** access from workflow/probe pods into test VMs
-> when the test harness or post-mortem artifact collection requires it.
+> MCP is optional and must not block an operation. Routine/public-agent SSH is
+> limited to **in-cluster** workflow/probe pods accessing explicit test VMs when
+> the test harness or post-mortem artifact collection requires it. Retained
+> host-maintenance SSH is operator-only through an approved private channel;
+> never use workstation SSH to administer `ghost` or `exo-0`.
 >
 > There is no workstation-SSH exception for host maintenance. Starting or
 > stopping k3s is a private maintainer procedure and is intentionally not
