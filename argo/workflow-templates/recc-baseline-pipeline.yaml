@@ -339,7 +339,7 @@ spec:
           echo "=== Staging bst-prototype from ${REPO}@${REF} ==="
           git clone --depth=1 --branch "${REF}" --filter=blob:none --sparse "${REPO}" /work/src
           cd /work/src
-          git sparse-checkout set bst-prototype scripts/collect_recc_run.py
+          git sparse-checkout set --no-cone bst-prototype scripts/collect_recc_run.py
           echo "=== Checkout staged ==="
           cd /work/src/bst-prototype
           ELEMENT="recc-baseline.bst"
