@@ -2,9 +2,53 @@
 name: cluster-buildstream
 description: >
   USB4 admission rules, BuildStream distributed builds, and Buildbarn recovery.
+metadata:
+  context7-sources:
+    - /apache/buildstream
 ---
 
 # BuildStream and Distributed Builds
+
+## When to Use
+
+- Editing BuildStream project or element configuration.
+- Changing the lab's BuildBarn-backed remote-execution or RECC contract.
+- Diagnosing USB4 admission, worker capacity, CAS, or BuildStream cache behavior.
+
+## When NOT to Use
+
+- Argo WorkflowTemplate authoring → `../argo-workflows/SKILL.md`.
+- ArgoCD ownership or sync behavior → `../gitops-argocd/SKILL.md`.
+- KubeVirt VM provisioning or boot failures → `../kubevirt-vms/SKILL.md`.
+
+## Core Process
+
+1. Verify both nodes are Ready, the USB4 link is up, and the BuildBarn workers
+   are Ready before submitting a distributed build.
+2. Inspect the generated BuildStream project configuration and confirm outer
+   remote execution is present; never silently fall back to local execution.
+3. Keep workflow-local state on the declared PVC or local-path workspace and
+   use BuildBarn for shared artifacts and action results.
+4. For RECC pilots, mount the shared environment contract, add the
+   toolchain-specific compiler digest, and keep nested socket settings disabled
+   until the pinned runner advertises support.
+5. Run the smallest relevant unit tests, `just lint`, and inspect live worker
+   actions before reporting success.
+
+## Common Rationalizations
+
+| Rationalization | Reality |
+|---|---|
+| "Ethernet is good enough for this build." | USB4 is a hard admission gate; repair it first. |
+| "RECC can use the nested socket because the sidecar exists." | The runner must consume the nested-socket platform property too. |
+| "A local fallback keeps the lane moving." | A fallback hides a broken remote-execution grid and violates lane policy. |
+
+## Red Flags
+
+- A BuildStream build starts without fresh USB4-up observations on both nodes.
+- A workflow claims distributed execution without a `remote-execution` block.
+- `sandbox.remote-apis-socket` is enabled without verified runner support.
+- A new node-local root-backed cache bypasses the managed storage contract.
 
 ## USB4 is a hard BuildStream admission requirement
 
@@ -199,16 +243,24 @@ the generated BuildStream configuration. A healthy run has two Ready workers,
 two action slots, and observable current worker actions.
 
 **RECC (Remote Execution C/C++ Compiler) integration:**
-The build grid supports fine-grained C/C++ compiler distribution via RECC
-(`recc` wrapper) following GNOME `gnome-build-meta` MR 4704 (`!4704`) and
-FreeDesktop-SDK work item 1961 (`freedesktop-sdk#1961`).
-- **Macro level:** BuildStream schedules element builds across BuildBarn workers.
-- **Micro level (RECC):** C/C++ compilation commands (`gcc`, `g++`, `clang`)
-  inside build elements fan out as parallel remote execution actions directly
-  to `frontend.buildbarn.svc.cluster.local:8980`.
-- **Configuration:** Injected via `recc-environment.conf` ConfigMap in
-  `manifests/buildstream-remote-cache-config.yaml` (`RECC_SERVER=frontend.buildbarn.svc.cluster.local:8980`,
-  `RECC_PROJECT_ROOT=/workspace`, `RECC_PREFIX=recc`).
+The lab provides a live, lab-owned overlay and a worker-local preparation seam to support fine-grained C/C++ compiler distribution via RECC (`recc` wrapper). The current deployment exposes the shared RECC environment contract and a `buildbox-casd` sidecar on workers, and the overlay/adapter helper (`scripts/apply_recc_overlay.py`) is mounted into build pods by the WorkflowTemplates. However, nested RECC remote execution is not enabled in production workflows until the pinned BuildBarn runner demonstrably honors BuildStream's `remoteApisSocketPath` platform property; until then only cache-only or upload-local modes are permitted for pilot runs.
+
+- **Macro level:** BuildStream schedules element-level builds across BuildBarn workers (outer REAPI).
+- **Micro level (RECC):** RECC distributes individual C/C++ compiler invocations inside an element; this is distinct from outer BuildStream remote execution. Linking steps, Rust, and other language toolchains are not remotely executed unless a specific wrapper exists (e.g., `RECC_LINK` or a language-specific launcher).
+- **Configuration:** The shared `recc-environment.conf` ConfigMap (`manifests/buildstream-remote-cache-config.yaml`) supplies `RECC_SERVER`, `RECC_CAS_SERVER`, `RECC_ACTION_CACHE_SERVER`, `RECC_PROJECT_ROOT`, and cache policy. Toolchain integrations must add `RECC_REMOTE_PLATFORM_chrootRootDigest`; the lab will not invent or globally supply that digest.
+- **Checkout overlay:** Use `scripts/apply_recc_overlay.py` with an explicit project kind after cloning (`dakota`, `cosmic`, `bluefin-server`, or `bst-prototype`/`bst-qa`). The helper is fail-closed and checkout-local and must not be committed upstream. By default the overlay leaves `sandbox.remote-apis-socket` disabled; pass a runner capability only after the selected runner is proven to honor the nested-socket platform property.
+
+Health checks and evidence boundaries: worker readiness now distinguishes outer BuildBarn readiness from nested-socket readiness (see docs/reference/recc-runner-seam.md); a successful outer BuildStream build alone is not evidence of nested RECC operation. Follow the documented GitOps rollback path (revert ConfigMaps/manifests and let ArgoCD reconcile) when disabling the overlay or sidecar.
+
+For a lab-owned RECC pilot, use a `manual` element when local sources need
+BuildStream build/install commands; the `script` element is for staging
+dependencies and does not accept `sources`. Select experimental modes with a
+project enum option and conditional environment values. BuildStream's
+`sandbox.remote-apis-socket` exposes a UNIX REAPI socket to nested clients such
+as RECC; enabling it is only valid when the worker honors the corresponding
+platform property. The pinned lab runner does not, so keep it disabled. See
+`docs/reference/recc-baseline.md` for the isolated fixture and measurement
+contract.
 
 ### 1. Shared Buildbarn frontend
 - **Endpoint**: `grpc://frontend.buildbarn.svc.cluster.local:8980`
@@ -264,7 +316,15 @@ Repeat the same override and server ordering at the project level so the primary
 
 **Registry publication verified 2026-07-22:** the local Zot registry accepts anonymous pushes over its configured insecure HTTP endpoint. Publish with Podman (`podman push --tls-verify=false localhost/dakota:testing docker://<ghost-ip>:30500/dakota:testing`) rather than rootful Skopeo, which may look at `/run/containers/storage` and fail for a rootless session. Verify the registry digest with `skopeo inspect --tls-verify=false` and pull the registry tag back before smoke testing.
 
-**GPU validation boundary (verified 2026-07-22):** the NVIDIA image contains `/usr/sbin/nvidia-smi`, but the lab's nodes advertise neither `nvidia.com/gpu` nor `amd.com/gpu`, and no NVIDIA device plugin is running. Docker's `--gpus all` fails because the host has no communicating NVIDIA driver; Podman CDI fails because `nvidia.com/gpu=all` is unresolvable. Install GPU hardware, drivers, NVIDIA Container Toolkit/CDI, and the Kubernetes device plugin before treating GPU runtime validation as actionable.
+**GPU validation boundary:** `exo-0` advertises one `amd.com/gpu` resource for
+the ArgoCD-managed ROCm local-inference workload. The distributed BuildStream
+pipelines do not consume that resource, and the media GPU validation lane
+remains NVIDIA-specific. The NVIDIA image contains `/usr/sbin/nvidia-smi`, but
+the lab has no NVIDIA device plugin or allocatable `nvidia.com/gpu` capacity.
+Docker's `--gpus all` fails because the host has no communicating NVIDIA
+driver; Podman CDI fails because `nvidia.com/gpu=all` is unresolvable. Install
+NVIDIA hardware, drivers, NVIDIA Container Toolkit/CDI, and the Kubernetes
+device plugin before treating NVIDIA runtime validation as actionable.
 
 ### Verified CAS materialization findings (2026-07-22)
 
@@ -443,3 +503,15 @@ When `buildbarn-config` changes, also bump the `buildbarn-config-revision` pod-t
 - `manifests/buildbarn-scheduler.yaml`
 - `manifests/buildbarn-storage.yaml`
 - `manifests/buildbarn-worker.yaml`
+
+## Verification
+
+- [ ] Both nodes are Ready and have fresh
+      `lab.projectbluefin.io/usb4-link=up` observations.
+- [ ] The BuildBarn worker pods are Ready on both nodes.
+- [ ] Generated BuildStream configuration contains outer `remote-execution`.
+- [ ] RECC contract consumers mount `recc-environment.conf` without inventing
+      a toolchain digest or enabling unsupported nested sockets.
+- [ ] `python -m pytest -q tests/unit/test_recc_runner_seam.py
+      tests/unit/test_workflow_defaults.py` passes.
+- [ ] `just lint` passes before a GitOps handoff.

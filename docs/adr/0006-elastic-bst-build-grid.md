@@ -91,10 +91,7 @@ matches the user policy of scheduler-driven, no-pinning placement.
 - The `workflow-controller` PriorityClass on the worker is unchanged. Large
   `bst-build` pods (PriorityClass `bst-build`, higher) can still preempt a
   worker if a node is overcommitted.
-- Fine-grained C/C++ compilation distribution is enabled via RECC (`recc` wrapper)
-  targeting `frontend.buildbarn.svc.cluster.local:8980` (following GNOME `gnome-build-meta!4704`
-  and FreeDesktop-SDK `freedesktop-sdk#1961`), fanning out compiler commands across
-  the active worker pool.
+- The lab prepares fine-grained C/C++ compiler distribution via RECC (`recc` wrapper) and provides the overlay and worker-local preparation seam, but nested RECC remote execution is not enabled until the pinned runner demonstrably honors BuildStream's `remoteApisSocketPath` platform property. Outer BuildStream remote execution (element-level REAPI) remains separate from RECC: RECC distributes only individual C/C++ compiler invocations. Rust, linking, and other language toolchains remain local unless an equivalent wrapper/launcher is provided. See docs/reference/recc-runner-seam.md and docs/reference/recc-baseline.md for health checks, evidence boundaries, and the lab's GitOps rollback path.
 
 ## Connection to the onboarding mission
 
