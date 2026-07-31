@@ -388,6 +388,7 @@ spec:
           EOF
           BST_CONF=/work/buildstream.conf
           echo "=== BuildStream configuration ready ==="
+          RECC_LOG_PATTERN='(^|[^[:alnum:]_])RECC(_VERBOSE|_METRICS)?([^[:alnum:]_-]|$)'
 
           collect_recc_buildstream_logs() {
             local destination="$1"
@@ -399,10 +400,10 @@ spec:
               return
             fi
             while IFS= read -r -d '' log; do
-              if grep -Eiq 'RECC(_VERBOSE|_METRICS)?|recc\.' "${log}"; then
+              if grep -Eiq "${RECC_LOG_PATTERN}" "${log}"; then
                 found=1
                 printf '\n=== BuildStream element log: %s ===\n' "${log}" >> "${destination}"
-                grep -Ei 'RECC(_VERBOSE|_METRICS)?|recc\.' "${log}" >> "${destination}"
+                grep -Ei "${RECC_LOG_PATTERN}" "${log}" >> "${destination}"
               fi
             done < <(find "${BST_LOGDIR}" -type f -print0 | sort -z)
             if [[ "${found}" -eq 0 ]]; then
@@ -439,7 +440,7 @@ spec:
               build "${ELEMENT}" >> "${phase_log}" 2>&1 || rc=$?
             collect_recc_buildstream_logs "${phase_log}"
             if [[ "${MODE}" != "buildstream-only" ]] && \
-              ! grep -Eiq '\[RECC_METRICS\]|RECC_VERBOSE|recc\.' "${phase_log}"; then
+              ! grep -Eiq "${RECC_LOG_PATTERN}" "${phase_log}"; then
               echo "RECC metrics/log evidence missing from BuildStream logdir" >> "${phase_log}"
               EVIDENCE_FAILED=1
             fi
