@@ -308,7 +308,7 @@ just run-tests
 | `bluefin-lts-test` | `lts` test VMs |
 | `flatcar-test` | Flatcar test VMs |
 | `gnomeos-test` | GNOME OS test VMs |
-| `llm-d` | Local inference namespace (disabled by default; scale deployment up only when needed) |
+| `llm-d` | Local inference namespace (vLLM on ROCm; managed by ArgoCD with 1 GPU-backed replica) |
 | `local-registry` | Zot writable registry (30500) + pull-through cache (30501) |
 | `arc-systems` | ARC controller + listener pods |
 | `arc-runners` | ARC ephemeral runner pods (empty when no jobs queued) |
@@ -350,7 +350,7 @@ This lets ArgoCD own the template lifecycle while keeping submission flexible.
 3. Tag new scenarios `@wip` until stable.
 4. Submit a run: `just run-tests` (smoke) or `just run-tests-tag lts-testing`.
 
-See [/docs/skills/test-authoring/dogtail-patterns.md](/docs/skills/test-authoring/dogtail-patterns.md) for AT-SPI test authoring.
+See [`projectbluefin/testsuite`](https://github.com/projectbluefin/testsuite) for AT-SPI test authoring.
 
 ---
 
@@ -367,7 +367,7 @@ See [/docs/skills/test-authoring/dogtail-patterns.md](/docs/skills/test-authorin
 | [docs/ops/RUNBOOK.md](/docs/ops/RUNBOOK.md) | Timeless architecture + failure-mode reference |
 | [docs/reference/agent-cheatsheet.md](/docs/reference/agent-cheatsheet.md) | Canonical command reference |
 | [docs/ops/lab-operations.md](/docs/ops/lab-operations.md) | Long-form operator procedures |
-| [docs/skills/test-authoring/dogtail-patterns.md](/docs/skills/test-authoring/dogtail-patterns.md) | GUI test authoring + debugging |
+| [projectbluefin/testsuite](https://github.com/projectbluefin/testsuite) | GUI test authoring + debugging |
 
 ---
 
