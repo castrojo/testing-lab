@@ -43,6 +43,7 @@ config:
   - |
     set -eu
     mkdir -p "%{build-root}"
+    mkdir -p "%{install-root}"
     run_cxx() {
       if [ -n "${CXX_LAUNCHER}" ]; then
         "${CXX_LAUNCHER}" "${CXX}" "$@"
