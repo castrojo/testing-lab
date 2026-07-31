@@ -332,6 +332,14 @@ spec:
             }
           }
           EOF
+            if [[ -s /work/buildstream.log ]]; then
+              echo "=== BuildStream evidence tail ==="
+              tail -200 /work/buildstream.log
+            fi
+            if [[ -s /work/recc.log ]]; then
+              echo "=== RECC evidence tail ==="
+              tail -100 /work/recc.log
+            fi
             exit "${exit_code}"
           }
           trap finalize EXIT
