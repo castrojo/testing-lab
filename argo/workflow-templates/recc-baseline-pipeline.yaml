@@ -17,7 +17,7 @@ spec:
   serviceAccountName: argo
   activeDeadlineSeconds: 3600
   podGC:
-    strategy: OnWorkflowCompletion
+    strategy: OnPodSuccess
   ttlStrategy:
     secondsAfterSuccess: 3600
     secondsAfterFailure: 86400
@@ -128,10 +128,11 @@ spec:
           - name: PROMETHEUS_URL
             value: "http://prometheus.kube-system:9090"
         source: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
           RUN_ID="${REQUESTED_RUN_ID:-{{workflow.name}}}"
           RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          FAILURE_LINE=0
           WORKFLOW_STATUS=failed
           COLD_STATUS=not-run
           WARM_STATUS=not-run
@@ -158,6 +159,7 @@ spec:
             buildbarn_blobstore_blob_access_operations_duration_seconds_count
             buildbarn_blobstore_blob_access_operations_duration_seconds_sum
           )
+          trap 'FAILURE_LINE=${BASH_LINENO[0]}' ERR
 
           case "${MODE}" in
             buildstream-only|passthrough|cache-only|upload-local-build)
@@ -315,6 +317,7 @@ spec:
               "finished_at": "${RUN_FINISHED_AT}"
             },
             "status": "${WORKFLOW_STATUS}",
+            "failure_line": ${FAILURE_LINE},
             "phases": {
               "cold": {"state": "${COLD_STATUS}", "timings": {"wall_seconds": ${COLD_SECONDS_JSON}}},
               "warm": {"state": "${WARM_STATUS}", "timings": {"wall_seconds": ${WARM_SECONDS_JSON}}}
@@ -339,6 +342,7 @@ spec:
           git clone --depth=1 --branch "${REF}" --filter=blob:none --sparse "${REPO}" /work/src
           cd /work/src
           git sparse-checkout set bst-prototype scripts/collect_recc_run.py
+          echo "=== Checkout staged ==="
           cd /work/src/bst-prototype
           ELEMENT="recc-baseline.bst"
           [[ -f "elements/${ELEMENT}" ]] || {
@@ -370,6 +374,7 @@ spec:
                 servers: []
           EOF
           BST_CONF=/work/buildstream.conf
+          echo "=== BuildStream configuration ready ==="
 
           run_phase() {
             local phase="$1"
