@@ -31,7 +31,7 @@ spec:
       labels:
         app: worker
       annotations:
-        buildbarn-config-revision: "2026-07-23-1"
+        buildbarn-config-revision: "2026-07-30-recc-seam"
         prometheus.io/scrape: "true"
         prometheus.io/port: "9980"
     spec:
@@ -48,7 +48,7 @@ spec:
           command:
             - sh
             - -c
-            - mkdir -pm 0777 /worker/build && mkdir -pm 0700 /worker/cache && mkdir -p /worker/dev && chmod 0777 /worker && (mknod -m 666 /worker/dev/null c 1 3 || test -c /worker/dev/null) && (mknod -m 666 /worker/dev/zero c 1 5 || test -c /worker/dev/zero) && (mknod -m 666 /worker/dev/random c 1 8 || test -c /worker/dev/random) && (mknod -m 666 /worker/dev/urandom c 1 9 || test -c /worker/dev/urandom) && ln -sfn /proc/self/fd/0 /worker/dev/stdin && ln -sfn /proc/self/fd/1 /worker/dev/stdout && ln -sfn /proc/self/fd/2 /worker/dev/stderr
+            - mkdir -pm 0777 /worker/build && mkdir -pm 0700 /worker/cache && mkdir -pm 0770 /worker/recc-casd && mkdir -p /worker/dev && chmod 0777 /worker && (mknod -m 666 /worker/dev/null c 1 3 || test -c /worker/dev/null) && (mknod -m 666 /worker/dev/zero c 1 5 || test -c /worker/dev/zero) && (mknod -m 666 /worker/dev/random c 1 8 || test -c /worker/dev/random) && (mknod -m 666 /worker/dev/urandom c 1 9 || test -c /worker/dev/urandom) && ln -sfn /proc/self/fd/0 /worker/dev/stdin && ln -sfn /proc/self/fd/1 /worker/dev/stdout && ln -sfn /proc/self/fd/2 /worker/dev/stderr
           volumeMounts:
             - mountPath: /worker
               name: worker
@@ -98,6 +98,59 @@ spec:
               name: fuse
             - mountPath: /bb
               name: bb-runner-bin
+        - name: recc-casd
+          # This is the existing BuildStream image contract: it contains the
+          # LocalCAS proxy used by the lab's historical buildbox-casd manifest.
+          # The current bb_runner still cannot consume remoteApisSocketPath;
+          # this sidecar only makes the worker-local endpoint available for a
+          # compatible runner image.
+          image: 192.168.1.102:30500/bst2@sha256:ce272e0ae4b59251680b8a70645740640ced17689e21268ddc037614c755f734
+          imagePullPolicy: IfNotPresent
+          # PATH lookup, not an absolute path: the bst2 image install prefix
+          # is not pinned by anything in this repo, and the lab's historical
+          # buildbox-casd manifest resolved the binary through PATH against
+          # the same image family. Only pin an absolute path once the pinned
+          # digest is proven to ship it there.
+          command: [buildbox-casd]
+          args:
+            - --cas-remote=grpc://frontend.buildbarn.svc.cluster.local:8980
+            - --ac-remote=grpc://frontend.buildbarn.svc.cluster.local:8980
+            - --exec-remote=grpc://frontend.buildbarn.svc.cluster.local:8980
+            - --bind=unix:/run/buildbarn/recc/casd.sock
+            - --unix-socket-mode=0660
+            - --quota-high=8G
+            - --quota-low=6G
+            - /worker/recc-casd
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            exec:
+              command: [test, -S, /run/buildbarn/recc/casd.sock]
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            exec:
+              command: [test, -S, /run/buildbarn/recc/casd.sock]
+            periodSeconds: 15
+            timeoutSeconds: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          volumeMounts:
+            - mountPath: /run/buildbarn/recc
+              name: nested-reapi
+            - mountPath: /worker
+              name: worker
         - name: runner
           image: cgr.dev/chainguard/wolfi-base@sha256:02dab76bd852a70556b5b2002195c8a5fdab77d323c433bf6642aab080489795
           command: [/bb/bb_runner, /config/runner.jsonnet]
@@ -139,8 +192,15 @@ spec:
               name: fuse
             - mountPath: /bb
               name: bb-runner-bin
+            - mountPath: /run/buildbarn/recc
+              name: nested-reapi
       volumes:
         - name: bb-runner-bin
+          emptyDir: {}
+        # Pod-local only: the socket must never become a host or cluster
+        # endpoint. A future LocalCAS-capable runner can stage this endpoint
+        # into the BuildStream sandbox without hostPID or hostIPC.
+        - name: nested-reapi
           emptyDir: {}
         - name: fuse
           hostPath:

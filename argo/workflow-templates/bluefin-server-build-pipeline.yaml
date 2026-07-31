@@ -221,13 +221,32 @@ spec:
             fi
           done
 
-          WORKERS="$(kubectl get pods -n buildbarn -l app=worker -o jsonpath='{range .items[*]}{.spec.nodeName}{"|"}{.status.phase}{"|"}{.status.containerStatuses[*].ready}{"\n"}{end}')"
+          # Match the BuildBarn worker containers by name, not by container
+          # count: the DaemonSet also runs preparation sidecars whose readiness
+          # is a separate health boundary from outer remote execution.
+          WORKERS="$(kubectl get pods -n buildbarn -l app=worker -o jsonpath='{range .items[*]}{.spec.nodeName}{"|"}{.status.phase}{"|worker="}{range .status.containerStatuses[?(@.name=="worker")]}{.ready}{end}{"|runner="}{range .status.containerStatuses[?(@.name=="runner")]}{.ready}{end}{"\n"}{end}')"
           for NODE in ghost exo-0; do
-            if ! grep -Eq "^${NODE}\|Running\|true true$" <<<"${WORKERS}"; then
+            if ! grep -Eq "^${NODE}\|Running\|worker=true\|runner=true$" <<<"${WORKERS}"; then
               echo "USB4 BuildBarn gate rejected: no Ready worker on ${NODE}" >&2
               exit 1
             fi
           done
+
+          # Mandatory nested RECC admission, checked before the expensive
+          # build work: the lab-owned overlay refuses every mandatory-RECC
+          # lane while no BuildBarn runner consumes BuildStream's
+          # remoteApisSocketPath. Probe the deployed runner configuration so
+          # this lane fails here with an actionable message instead of
+          # silently running with outer remote execution only. Restoring an
+          # outer-RE-only build is a deliberate GitOps rollback, not a normal
+          # path; see docs/reference/recc-runner-seam.md.
+          RUNNER_CONFIG="$(kubectl get configmap buildbarn-config -n buildbarn -o jsonpath='{.data.runner\.jsonnet}')"
+          # Match a real jsonnet field, not the explanatory comments.
+          if ! grep -Eq '^[[:space:]]*remoteApisSocketPath[[:space:]]*:' <<<"${RUNNER_CONFIG}"; then
+            echo "RECC admission rejected: the deployed bb_runner does not consume BuildStream's remoteApisSocketPath, so nested RECC cannot run; this lane must not fall back to outer-RE-only or cache-only execution (docs/reference/recc-runner-seam.md)" >&2
+            exit 1
+          fi
+          echo "Nested RECC runner capability observed in buildbarn-config"
 
           echo "USB4-backed BuildBarn remote execution admitted"
           printf '%s' re > /tmp/mode
@@ -297,6 +316,8 @@ spec:
                 path: remote-execution.conf
               - key: recc-environment.conf
                 path: recc-environment.conf
+              - key: apply_recc_overlay.py
+                path: apply_recc_overlay.py
       script:
         image: "{{inputs.parameters.registry}}/bst2:64eb0b4930d57a92710822898fb73af6cc1ae35d"
         command: [bash]
@@ -325,6 +346,11 @@ spec:
           # environment when the FUSE stager crashes during source staging.
           - name: BUILDBOX_STAGER
             value: copy-or-link
+          - name: RECC_ENDPOINT
+            valueFrom:
+              configMapKeyRef:
+                name: buildstream-remote-cache
+                key: recc-endpoint
         volumeMounts:
           - name: fuse
             mountPath: /dev/fuse
@@ -345,6 +371,17 @@ spec:
           rm -rf /src
           git clone --depth=1 --branch "${REF}" "https://x-access-token:${GITHUB_TOKEN}@${REPO#https://}" /src
           cd /src
+          echo "=== Applying lab RECC overlay (bluefin-server) ==="
+          # Mandatory admission, no mode flags: the shared overlay refuses this
+          # lane while nested RECC is unavailable, and this lane must fail
+          # closed rather than continue with outer remote execution only.
+          # --runner-capability may only be added once a BuildBarn runner is
+          # proven to honor BuildStream's remoteApisSocketPath, and
+          # --pilot-cache-only is operator-only for the prototype baseline.
+          python3 /etc/buildstream/apply_recc_overlay.py /src \
+            --project-kind bluefin-server \
+            --endpoint "${RECC_ENDPOINT}" \
+            --json
           PROJECT_NAME=$(awk -F': *' '/^name:/{print $2; exit}' project.conf | tr -d '\r')
 
           cp /etc/buildstream/buildstream.conf /tmp/buildstream-cluster.conf
