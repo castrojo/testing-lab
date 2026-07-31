@@ -349,6 +349,34 @@ run-bluefin-server-build ref="main" repo="https://github.com/projectbluefin/serv
       -p repo={{ repo }} \
       -n {{ argo_ns }} --watch
 
+# Run the isolated operator-only RECC baseline.
+# Usage: just run-recc-baseline mode=cache-only cache-policy=both recc-provider=components/buildbox.bst
+run-recc-baseline *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    MODE="buildstream-only"
+    RUN_ID=""
+    CACHE_POLICY="cold"
+    RECC_PROVIDER="freedesktop-sdk.bst:components/buildbox.bst"
+    for arg in {{ args }}; do
+      case "${arg}" in
+        mode=*) MODE="${arg#mode=}" ;;
+        run-id=*) RUN_ID="${arg#run-id=}" ;;
+        cache-policy=*) CACHE_POLICY="${arg#cache-policy=}" ;;
+        recc-provider=*) RECC_PROVIDER="${arg#recc-provider=}" ;;
+        *)
+          echo "Unsupported run-recc-baseline argument: ${arg}" >&2
+          exit 2
+          ;;
+      esac
+    done
+    exec argo submit --from workflowtemplate/recc-baseline-pipeline \
+      -p mode="${MODE}" \
+      -p run-id="${RUN_ID}" \
+      -p cache-policy="${CACHE_POLICY}" \
+      -p recc-provider="${RECC_PROVIDER}" \
+      -n {{ argo_ns }} --watch
+
 # ── Validation ───────────────────────────────────────────────────────────────
 
 # Validate the reusable BuildStream OCI rechunk transform.
