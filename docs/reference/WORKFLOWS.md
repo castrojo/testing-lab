@@ -193,8 +193,9 @@ QA pipelines.
 
 ### `provision-flatcar-vm` (template: `provision-vm`)
 
-Same shape for Flatcar — accepts an `ssh-pubkey` parameter directly instead
-of relying on the bluefin-test secret for cloud-init injection.
+Same shape for Flatcar — `flatcar-smoke-test` leaves `ssh-pubkey` empty by
+default. After cloud-init, `bluefin-test-ssh-key` supplies `id_ed25519.pub`
+through the QEMU guest agent before the readiness step returns the VM IP.
 
 ### `run-gnome-tests` (template: `run-gnome-tests`)
 

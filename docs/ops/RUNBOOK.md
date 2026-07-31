@@ -143,7 +143,7 @@ Argo Workflow (argo namespace)
 
 | Symptom | Root cause | Durable fix |
 |---|---|---|
-| `Permission denied (publickey)` during SSH wait | Ephemeral VM cloud-init or installer key provisioning did not install the expected authorized key | Verify the `ssh-pubkey`/`ssh-key-secret` inputs and cloud-init or installer completion, then inspect VMI and runner logs before rerunning |
+| `Permission denied (publickey)` during SSH wait | Ephemeral VM cloud-init or installer key provisioning did not install the expected authorized key | Verify the `ssh-pubkey`/`ssh-key-secret` inputs and cloud-init or installer completion. For the `bluefin-migration-test`/`provision-containerdisk-vm` path, confirm `bluefin-test-ssh-pubkey` is wired through `accessCredentials.sshPublicKey` with `qemuGuestAgent`, then wait for VMI `AccessCredentialsSynchronized=True` before retrying SSH; inspect VMI and runner logs |
 | Workflow hangs before GUI steps start | VM boot or SSH readiness never completed | Inspect VMI readiness and runner logs, then re-run the appropriate recovery path |
 | `TypeError` involving `requireResult` | Stale dogtail step pattern | Replace with `findChildren(...)` or `findChild(..., retry=False)` |
 | Clock / quick-settings scenarios miss their targets | GNOME Shell AT-SPI geometry gap | Drive the interaction via `Shell.Eval` |
