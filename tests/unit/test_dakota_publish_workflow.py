@@ -47,6 +47,7 @@ def test_publish_lane_preserves_and_verifies_digest_without_logging_credentials(
     assert lane["retryStrategy"]["backoff"]["maxDuration"] == "2m"
     assert lane["script"]["image"].startswith("quay.io/skopeo/stable@sha256:")
     assert secret["secretName"] == "ghcr-publish-auth"
+    assert secret["optional"] is True
     assert secret["items"][0]["key"] == ".dockerconfigjson"
     assert (
         workflow["metadata"]["annotations"][
@@ -55,8 +56,10 @@ def test_publish_lane_preserves_and_verifies_digest_without_logging_credentials(
         == "kubernetes.io/dockerconfigjson"
     )
     assert "192.168.1.102:30500" in str(lane["script"]["env"])
-    assert '"docker://${SOURCE_REGISTRY}/${IMAGE}@${SOURCE_DIGEST}"' in source
-    assert 'if [ "${DESTINATION_DIGEST}" != "${SOURCE_DIGEST}" ]' in source
+    assert "GHCR push destination is forbidden" in source
+    assert "exit 1" in source
+    assert "skopeo copy" not in source
+    assert "oras" not in source
     assert "set -x" not in source
     assert "set -eux" not in source
 
@@ -64,14 +67,10 @@ def test_publish_lane_preserves_and_verifies_digest_without_logging_credentials(
 def test_publish_lane_handles_oci_referrers_explicitly():
     source = template_named(load_yaml(PIPELINE_PATH), "publish-lane")["script"]["source"]
 
-    assert "oras discover" in source
-    assert "oras cp" in source
-    assert "--recursive" in source
-    assert "ORAS_VERSION=1.2.3" in source
-    assert "oras_${ORAS_VERSION}_linux_amd64.tar.gz" in source
-    assert "OCI referrers: none present" in source
-    assert "OCI referrers: discovery unavailable" in source
-    assert "OCI referrers: ORAS bootstrap unavailable" in source
+    assert "oras discover" not in source
+    assert "oras cp" not in source
+    assert "skopeo copy" not in source
+    assert "GHCR push destination is forbidden" in source
 
 
 def test_publish_pipeline_persists_compact_history_from_on_exit():
