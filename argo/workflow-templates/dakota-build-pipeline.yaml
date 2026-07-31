@@ -501,7 +501,25 @@ spec:
           path = Path('/src/elements/gnomeos-deps/bootc.bst')
           text = path.read_text()
           old = 'kind: make\n\nsources:\n'
-          new = 'kind: make\n\nconfig:\n  build-commands:\n  - python3 -c \'from pathlib import Path; p=Path("Makefile"); t=p.read_text(); old=".PHONY: manpages\\nmanpages:\\n\\tcargo run --release --package xtask -- manpages\\n"; new=".PHONY: manpages\\nmanpages:\\n\\t@true\\n"; assert old in t, "bootc Makefile layout changed unexpectedly"; p.write_text(t.replace(old, new, 1))\'\n  - make PREFIX="/usr"\n\nsources:\n'
+          new = r"""kind: make
+
+          config:
+            build-commands:
+            - |
+              python3 - <<'PY'
+              from pathlib import Path
+              p = Path("Makefile")
+              t = p.read_text()
+              old = ".PHONY: manpages\nmanpages:\n\tcargo run --release --package xtask -- manpages\n"
+              new = ".PHONY: manpages\nmanpages:\n\t@true\n"
+              assert old in t, "bootc Makefile layout changed unexpectedly"
+              p.write_text(t.replace(old, new, 1))
+              PY
+            - make PREFIX="/usr"
+
+          sources:
+          """
+
           if old not in text:
               raise SystemExit('bootc element layout changed unexpectedly')
           path.write_text(text.replace(old, new, 1))

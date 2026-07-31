@@ -1,4 +1,7 @@
 from pathlib import Path
+import subprocess
+import sys
+import textwrap
 
 import yaml
 
@@ -82,6 +85,63 @@ def test_dakota_production_lane_has_no_local_fallback():
     assert "name: bst-build-re" in pipeline
     assert "name: bst-build-local" not in pipeline
     assert "template: bst-build-local" not in pipeline
+
+
+def test_dakota_bootc_patch_emits_parseable_element_yaml(tmp_path):
+    pipeline = yaml.safe_load(
+        (ROOT / "argo/workflow-templates/dakota-build-pipeline.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    def find_script(value):
+        if isinstance(value, dict):
+            for child in value.values():
+                result = find_script(child)
+                if result is not None:
+                    return result
+        elif isinstance(value, list):
+            for child in value:
+                result = find_script(child)
+                if result is not None:
+                    return result
+        elif isinstance(value, str) and "Patching bootc element" in value:
+            return value
+        return None
+
+    source = find_script(pipeline)
+    assert source is not None
+    start = source.index("python3 - <<'BOOTC_PATCH'\n") + len(
+        "python3 - <<'BOOTC_PATCH'\n"
+    )
+    end = source.index("\nBOOTC_PATCH", start)
+    patch = textwrap.dedent(source[start:end])
+
+    element = tmp_path / "bootc.bst"
+    element.write_text("kind: make\n\nsources:\n- kind: local\n  path: .\n", encoding="utf-8")
+    patch = patch.replace(
+        "Path('/src/elements/gnomeos-deps/bootc.bst')",
+        f"Path({str(element)!r})",
+    )
+    subprocess.run([sys.executable, "-c", patch], check=True)
+
+    parsed = yaml.safe_load(element.read_text(encoding="utf-8"))
+    assert parsed["config"]["build-commands"][-1] == 'make PREFIX="/usr"'
+
+
+def test_buildbarn_chroot_supplies_standard_stdio_devices():
+    worker = yaml.safe_load(
+        (ROOT / "manifests/buildbarn-worker.yaml").read_text(encoding="utf-8")
+    )
+    init_container = next(
+        container
+        for container in worker["spec"]["template"]["spec"]["initContainers"]
+        if container["name"] == "volume-init"
+    )
+    command = init_container["command"][-1]
+
+    for name, fd in (("stdin", 0), ("stdout", 1), ("stderr", 2)):
+        assert f"ln -sfn /proc/self/fd/{fd} /worker/dev/{name}" in command
 
 
 def test_usb4_monitor_publishes_a_fresh_observation_on_every_probe():
