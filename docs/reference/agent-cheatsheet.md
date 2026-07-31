@@ -61,6 +61,19 @@ kubectl get node exo-0 -o jsonpath='{.status.allocatable.amd\.com/gpu}{"\n"}'
 
 Expected outcome: the node advertises `1` or more `amd.com/gpu` allocatable units, and the `amdgpu-device-plugin` DaemonSet pod is `Running` on the GPU node.
 
+## Local LLM deployment — quick checks
+
+The lab also has a repo-managed vLLM deployment in `manifests/llm-d.yaml` for `unsloth/Llama-3.2-3B-Instruct`. It stays disabled by default and is pinned to `exo-0`; when enabled it uses host GPU device mounts and a preemptive priority class so it can take over the node when needed.
+
+```bash
+kubectl -n llm-d get deploy llm-d-modelserver
+kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=1
+kubectl -n llm-d get pods -w
+kubectl -n llm-d get svc llm-d-modelserver
+```
+
+The endpoint is exposed on NodePort `30800` and can be queried at `http://<exo-0-ip>:30800/v1/models` after the pod reaches `Running`.
+
 ## Flatcar kernel lifecycle — quick checks
 
 Use these for lifecycle-state inspection and manual gate runs:
