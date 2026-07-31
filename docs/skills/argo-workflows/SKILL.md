@@ -92,6 +92,14 @@ The workflow authoring guidance is split by topic:
   that consumes it — especially disk/image and host-root parameters. Trace
   every contract parameter through the call-site arguments.
 - Any `script:` template without `resources:` limits
+- The isolated `recc-baseline-pipeline` script missing
+  `privileged: true` with `seLinuxOptions.type: spc_t`; BuildStream's
+  bubblewrap sandbox then fails mounting `/newroot/proc` before compiler
+  execution. This privilege is for the pilot sandbox only and does not prove
+  nested RECC runner support.
+- A production lane passing `--pilot-cache-only` or `--runner-capability`
+  without the corresponding isolated-pilot boundary and live
+  `remoteApisSocketPath` proof.
 - Templates in `argo/workflow-templates/` applied with `kubectl apply` (not via git)
 - A `pr-poller` (or any PR-gating workflow) that skips on ANY existing commit status — it must skip only `pending` (in-flight) and `success` (already passed), and re-test on `error`/`failure`. Skipping `error` means stale statuses from deleted workflows permanently block retests.
 - A VM or build pipeline that uses a node selector to reach local storage. Use
@@ -205,6 +213,12 @@ Before marking any WorkflowTemplate change done:
 - [ ] File name matches `metadata.name` (e.g. `provision-containerdisk-vm.yaml` for `name: provision-containerdisk-vm`)
 - [ ] Any VM pipeline semaphore is justified by documented cross-workflow
       memory contention and is attached at template level, not workflow scope
+- [ ] The isolated RECC pilot uses the privileged `bst2` sandbox contract and
+      its live template has been re-read after GitOps reconciliation
+- [ ] RECC evidence keeps missing action-level fields unavailable; a successful
+      outer BuildStream build is not reported as nested RECC success
+- [ ] Production RECC lanes remain fail-closed until the runner's
+      `remoteApisSocketPath`/LocalCAS handoff is proven by a canary
 - [ ] VM pipeline spec has `activeDeadlineSeconds` (1h or 2h) so stuck VMs self-evict
 - [ ] No `nodeSelector: kubernetes.io/hostname: ghost` in VM specs — VMs float to any KubeVirt-capable node
 - [ ] GitHub Contents API write-backs use curl+jq, not inline Python; output is
