@@ -88,6 +88,10 @@ spec:
       script:
         image: 192.168.1.102:30500/bst2:64eb0b4930d57a92710822898fb73af6cc1ae35d
         command: [bash]
+        securityContext:
+          privileged: true
+          seLinuxOptions:
+            type: spc_t
         resources:
           requests:
             cpu: "1"
