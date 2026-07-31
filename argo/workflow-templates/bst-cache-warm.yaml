@@ -174,13 +174,32 @@ spec:
             fi
           done
 
-          WORKERS="$(kubectl get pods -n buildbarn -l app=worker -o jsonpath='{range .items[*]}{.spec.nodeName}{"|"}{.status.phase}{"|"}{.status.containerStatuses[*].ready}{"\n"}{end}')"
+          # Match the BuildBarn worker containers by name, not by container
+          # count: the DaemonSet also runs preparation sidecars whose readiness
+          # is a separate health boundary from outer remote execution.
+          WORKERS="$(kubectl get pods -n buildbarn -l app=worker -o jsonpath='{range .items[*]}{.spec.nodeName}{"|"}{.status.phase}{"|worker="}{range .status.containerStatuses[?(@.name=="worker")]}{.ready}{end}{"|runner="}{range .status.containerStatuses[?(@.name=="runner")]}{.ready}{end}{"\n"}{end}')"
           for NODE in ghost exo-0; do
-            if ! grep -Eq "^${NODE}\|Running\|true true$" <<<"${WORKERS}"; then
+            if ! grep -Eq "^${NODE}\|Running\|worker=true\|runner=true$" <<<"${WORKERS}"; then
               echo "Cache warmup rejected: no Ready BuildBarn worker on ${NODE}" >&2
               exit 1
             fi
           done
+
+          # Mandatory nested RECC admission, checked before the expensive
+          # build work: the lab-owned overlay refuses every mandatory-RECC
+          # lane while no BuildBarn runner consumes BuildStream's
+          # remoteApisSocketPath. Probe the deployed runner configuration so
+          # this lane fails here with an actionable message instead of
+          # silently running with outer remote execution only. Restoring an
+          # outer-RE-only build is a deliberate GitOps rollback, not a normal
+          # path; see docs/reference/recc-runner-seam.md.
+          RUNNER_CONFIG="$(kubectl get configmap buildbarn-config -n buildbarn -o jsonpath='{.data.runner\.jsonnet}')"
+          # Match a real jsonnet field, not the explanatory comments.
+          if ! grep -Eq '^[[:space:]]*remoteApisSocketPath[[:space:]]*:' <<<"${RUNNER_CONFIG}"; then
+            echo "RECC admission rejected: the deployed bb_runner does not consume BuildStream's remoteApisSocketPath, so nested RECC cannot run; this lane must not fall back to outer-RE-only or cache-only execution (docs/reference/recc-runner-seam.md)" >&2
+            exit 1
+          fi
+          echo "Nested RECC runner capability observed in buildbarn-config"
 
           echo "BuildBarn remote-execution grid admitted for cache warmup"
           printf '%s' re > /tmp/mode
