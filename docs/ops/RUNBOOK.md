@@ -20,7 +20,7 @@ Two steady-state execution paths exist:
 | Path | Purpose | Persistent state |
 |---|---|---|
 | Container-only Bluefin/Dakota path | Image and PR QA | No persistent VM or host-disk state |
-| Fresh VM path | Lanes that explicitly require KubeVirt | Golden disk under `/var/tmp/bluefin-golden/<tag>/disk.raw` |
+| Explicit VM-backed lanes | Flatcar smoke and Knuckle installer QA | Ephemeral KubeVirt resources; no shared Bluefin golden disk |
 
 ### Container-only QA contract
 
@@ -70,12 +70,13 @@ The repo is intentionally GitOps-first: cluster state should converge from git, 
 
 | Object | Backing location | Used by | Notes |
 |---|---|---|---|
-| Golden disk (`latest`) | `/var/tmp/bluefin-golden/latest/disk.raw` | Fresh-VM pipeline | Built by `bib-build-and-push` |
-| Golden disk (`lts`) | `/var/tmp/bluefin-golden/lts/disk.raw` | Fresh-VM pipeline | Built by `bib-build-and-push` |
-| Per-run hostDisk clone | `/var/tmp/bluefin-golden/*-runs/...` | Provisioned fresh VMs | Removed by teardown or orphan cleanup |
+| Published OCI image | Registry image and digest | Bluefin/Dakota container-only QA | `bluefin-qa-pipeline` and `dakota-qa-pipeline` run `run-container-tests`; no VM or disk is created |
+| Flatcar test VM | Ephemeral KubeVirt VM with generated Flatcar containerDisk | `flatcar-smoke-test` | Provisioned from the current Flatcar image and torn down after the run; no golden disk or hostDisk |
+| Knuckle test VM | Ephemeral KubeVirt VM with per-run local-path PVC and ISO containerDisk | `knuckle-qa-pipeline` | Teardown removes the VM, root-disk PVC, and per-run ISO containerDisk |
 
-The SSH secret lives in the `bluefin-test-ssh-key` Kubernetes secret in namespace `argo`.
-Golden-disk key rotation and other host-storage changes remain maintainer-gated.
+The `bluefin-test-ssh-key` Kubernetes secret in namespace `argo` is used only for
+in-cluster access to explicit VM-backed test guests. Container-only Bluefin/Dakota
+QA does not require SSH, golden disks, or hostDisk state.
 
 ## Test execution stack
 
