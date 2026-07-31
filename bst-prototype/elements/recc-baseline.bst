@@ -28,6 +28,8 @@ environment:
       RECC_CAS_SERVER: grpc://frontend.buildbarn.svc.cluster.local:8980
       RECC_ACTION_CACHE_SERVER: grpc://frontend.buildbarn.svc.cluster.local:8980
       RECC_ACTION_UNCACHEABLE: "0"
+      RECC_ENABLE_METRICS: "1"
+      RECC_METRICS_FILE: "%{build-root}/recc-metrics.txt"
   - recc == "passthrough":
       RECC_PASSTHROUGH: "1"
   - recc == "cache-only":
@@ -55,6 +57,11 @@ config:
     run_cxx -std=c++17 -Wl,--build-id=none \
       "%{build-root}/message.o" "%{build-root}/main.o" \
       -o "%{build-root}/recc-baseline"
+    if [ -f "%{build-root}/recc-metrics.txt" ]; then
+      while IFS= read -r METRIC; do
+        printf '[RECC_METRICS] %s\n' "${METRIC}"
+      done < "%{build-root}/recc-metrics.txt"
+    fi
   install-commands:
   - |
     set -eu
