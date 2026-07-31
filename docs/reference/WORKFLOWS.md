@@ -9,8 +9,9 @@ Conventions:
 - All templates live in `argo/workflow-templates/*.yaml` and are reconciled
   to namespace `argo` by the ArgoCD `lab` Application.
 - Workflow-level parameters listed below are passed via `-p name=value`.
-- Wall-clock targets are warm-cache numbers; cold-cache figures (BIB build
-  on a missing golden disk) add ~5–10 min.
+- Wall-clock targets are warm-cache numbers; cold-cache figures for explicit
+  VM/containerDisk lanes add several minutes. Container-only Bluefin/Dakota
+  runs do not build a disk or boot a VM.
 - The agent contract: prefer the **top-level** templates (`bluefin-qa-pipeline`,
   `dakota-qa-pipeline`). The supporting templates (provision, run, teardown)
   are called as `templateRef` and rarely submitted directly.
@@ -39,6 +40,33 @@ Wall-clock: depends on the selected suite set and container-qa semaphore.
 
 ```
 argo submit --from workflowtemplate/bluefin-qa-pipeline \
+  -p image-tag=testing -p suites=smoke --wait
+```
+
+### `dakota-qa-pipeline`
+
+Container-only Dakota pipeline: validate the requested suites, fan out
+`run-container-tests` inside the published Dakota OCI image, and return a
+summary. It does not build a containerDisk, boot a VM, or use the legacy
+`dakota-container-qa-pipeline` image-smoke path.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `image` | `ghcr.io/projectbluefin/dakota` | Published OCI image repository. |
+| `image-tag` | `testing` | Image tag to test. |
+| `image-digest` | empty | Optional digest pin for exact-image QA. |
+| `suites` | `smoke,common,developer,software,system` | Comma list of supported suites. |
+| `variant` | `dakota` | Selects Dakota test fixtures. |
+| `branch` | `main` | Lab branch passed to workflow metadata. |
+| `testsuite-branch` | `main` | `projectbluefin/testsuite` branch to clone. |
+
+The active `image-poll-dakota` CronWorkflow requests only `smoke` against
+`ghcr.io/projectbluefin/dakota:testing`. Full-suite manual runs use
+`just run-dakota-qa`; the Dakota BuildStream pipeline publishes its build
+artifacts to local Zot separately.
+
+```
+argo submit --from workflowtemplate/dakota-qa-pipeline \
   -p image-tag=testing -p suites=smoke --wait
 ```
 
@@ -151,24 +179,23 @@ Env vars passed to the test container: `TEST_NAMESPACE`, `TEST_LANE`,
 `tests/service_catalog/shared/` (deploy, persistence, reachability,
 redeploy, teardown).
 
-### `bib-build-and-push` (template: `ensure-disk`)
+### `build-bluefin-migration-containerdisk` (template: `build-containerdisk`)
 
-Builds the golden raw disk via `bootc-image-builder` if missing or stale.
-Stale detection compares the upstream image digest (via skopeo) against the
-`source-digest` marker written next to the disk on hostPath.
+Builds the containerDisk used only by the explicit Bluefin migration workflow.
+It is not part of `bluefin-qa-pipeline` or `dakota-qa-pipeline`, which run
+directly in OCI images.
 
-Outputs: no `outputs.parameters`; side effect is
-`/var/tmp/bluefin-golden/<image-tag>/disk.raw` and `source-digest` on ghost.
+### `provision-containerdisk-vm` (template: `provision-vm`)
 
-### `provision-bluefin-vm` (template: `provision-vm`)
-
-btrfs `cp --reflink=auto` from the golden disk, applies SVirt label, creates
-a KubeVirt VM, waits for SSH/IP, emits `vm-ip` as an output parameter.
+Provisions an explicit KubeVirt VM from a containerDisk and emits `vm-ip`.
+This is a VM-backed support path, not part of the container-only Bluefin/Dakota
+QA pipelines.
 
 ### `provision-flatcar-vm` (template: `provision-vm`)
 
-Same shape for Flatcar — accepts an `ssh-pubkey` parameter directly instead
-of relying on the bluefin-test secret for cloud-init injection.
+Same shape for Flatcar — `flatcar-smoke-test` leaves `ssh-pubkey` empty by
+default. After cloud-init, `bluefin-test-ssh-key` supplies `id_ed25519.pub`
+through the QEMU guest agent before the readiness step returns the VM IP.
 
 ### `run-gnome-tests` (template: `run-gnome-tests`)
 
@@ -273,10 +300,10 @@ just run-aurora-kde-sabotage
 Same shape for Flatcar; uses `core` as the SSH user and runs pytest+dogtail
 fixtures from `tests/flatcar/`.
 
-### `teardown-bluefin-vm` / `teardown-flatcar-vm`
+### `teardown-vm`
 
-Delete the VM, wait for the VMI object to drain, then `rm` the per-run
-hostDisk clone. Invoked as `onExit` from the pipeline templates.
+Deletes a named KubeVirt VM in its namespace. Invoked as `onExit` by the
+explicit VM-backed pipeline templates.
 
 ---
 
@@ -463,7 +490,13 @@ Lives in `manifests/`, applied via the `lab-infra` ArgoCD app:
 | `nightly-smoke-stable` | 03:00 UTC | `bluefin-qa-pipeline` (`stable`, `smoke`) | Stable image regression coverage |
 | `nightly-smoke-lts` | 02:30 UTC | `bluefin-qa-pipeline` (`testing`) | LTS regression coverage |
 | `nightly-smoke-lts-stable` | 03:30 UTC | `bluefin-qa-pipeline` (`stable`, `smoke`) | Stable LTS regression coverage |
-| `image-poll-dakota` | Every 10 min | `dakota-qa-pipeline` (`testing`) | Active Dakota digest-triggered QA |
+| `image-poll-bluefin-testing` | Every 10 min at :00 | `bluefin-qa-pipeline` (`testing`, `smoke`) | Active Bluefin digest-triggered QA |
+| `image-poll-lts-testing` | Every 10 min at :02 | `bluefin-qa-pipeline` (`testing`, `smoke`) | Active Bluefin-LTS digest-triggered QA |
+| `image-poll-bluefin-stable` | Every 10 min at :04 | `bluefin-qa-pipeline` (`stable`, full suite) | Active Bluefin stable digest-triggered QA |
+| `image-poll-lts-stable` | Every 10 min at :06 | `bluefin-qa-pipeline` (`stable`, full suite) | Active Bluefin-LTS stable digest-triggered QA |
+| `image-poll-dakota` | Every 10 min at :08 | `dakota-qa-pipeline` (`testing`, `smoke`) | Active Dakota digest-triggered QA |
+| `image-poll-bluefin-main` | Every 3h at :12 | `bluefin-qa-pipeline` (`latest`, full suite) | Active upstream Bluefin digest-triggered QA |
+| `image-poll-snosi-latest` | Every 3h at :30 | `bluefin-qa-pipeline` (`latest`, `smoke,developer,system`) | Active Snosi digest-triggered QA |
 | `nightly-dakota` | 03:00 UTC | `dakota-qa-pipeline` (`latest`) | Suspended; does not provide active coverage |
 | `orphan-vm-cleanup` | every 2h | inline | GC stale per-run hostDisks in bluefin, flatcar, and knuckle namespaces |
 

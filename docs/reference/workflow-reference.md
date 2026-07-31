@@ -43,13 +43,11 @@ bridge that submits Argo Workflows from ephemeral ARC runners, see
 ### dakota-qa-pipeline
 - **Purpose:** Run Dakota suites directly inside the published bootc OCI image using
   the same container-only fan-out model as `bluefin-qa-pipeline`.
-- **VM boundary:** Dakota's composefs-oci image declares `bootloader = "systemd"`
-  but does not ship a UKI. The standard `build-containerdisk` →
-  `bootc install to-disk` path therefore stops with
-  `bootupd is required for ostree-based installs`; changing the bootloader
-  setting in the lab would not produce a bootable image. A VM path remains
-  blocked pending an upstream Dakota UKI/bootupd capability or a maintainer
-  decision to adopt a separate golden-disk/export path.
+- **VM boundary:** This active QA pipeline has no containerDisk build, VM boot,
+  reboot, or SSH stage. The separate Dakota migration/containerDisk experiment
+  remains blocked because the composefs-oci image declares `bootloader =
+  "systemd"` but does not ship a UKI; `bootc install to-disk` therefore stops
+  with `bootupd is required for ostree-based installs`.
 - **Current coverage:** `run-container-tests` provides the container-only suite
   fan-out, including the nested systemd/Wayland session used by qecore-headless.
   This lane provides image and GUI-session evidence, but not VM boot or reboot
@@ -167,8 +165,8 @@ infrastructure blockers and repair the lab before retrying.
 
 | Template | Role |
 | --- | --- |
-| `image-poller` | Digest-comparison trigger for the bootc image-poll lane. Flow: fetch GHCR digest → compare with `image-polling-digests` → submit `bluefin-qa-pipeline` on change → persist digest only after downstream success. |
-| `run-container-tests` | Shared container-only runner for Bluefin/Dakota bootc images. Clones `projectbluefin/testsuite`, starts a Wayland session in the target OCI image, runs `behave`, publishes per-suite results back to this repo, and writes a summary file for workflow outputs. |
+| `image-poller` | Digest-comparison trigger for the Bluefin/LTS bootc image-poll lane. Flow: fetch GHCR digest → compare with `image-polling-digests` → submit `bluefin-qa-pipeline` on change → persist digest only after downstream success. Dakota uses the same digest comparison template but its custom CronWorkflow routes to `dakota-qa-pipeline`. |
+| `run-container-tests` | Shared container-only runner for Bluefin/Dakota bootc images. Clones `projectbluefin/testsuite`, starts a Wayland session in the target OCI image, runs `behave`, attempts best-effort result publication when `github-token` is available, and writes a summary file for workflow outputs. Publication warnings do not change the suite exit status. |
 | `provision-flatcar-vm` / `provision-gnomeos-vm` | VM-backed provisioning paths for the lanes that still need KubeVirt. Both set `priorityClassName: lab-test-vm`. |
 | `teardown-vm` | Deletes any KubeVirt test VM (and hostDisk/PVC where applicable). |
 | `run-gnome-tests` | Shared VM-backed test runner. Clones `projectbluefin/testsuite`, waits for SSH, installs dependencies, copies `tests/<suite>`, and runs `behave` against a live guest. |
@@ -197,10 +195,13 @@ must fail for repair; it must not use an Ethernet, local, or cache-only fallback
 | --- | --- | --- | --- |
 | `dakota-commit-poller` | every 5 min at minute +2 | shared `bst-commit-poller` → `dakota-build-pipeline` when `dakota:testing` changes | Dakota BuildStream cache/execution path |
 | `cosmic-commit-poller` | every 5 min at minute +4 | shared `bst-commit-poller` → `cosmic-build-pipeline` when `cosmic-build-meta:main` changes | Cosmic BuildStream cache/execution path |
-| `image-poll-bluefin-{testing,stable}` / `image-poll-lts-{testing,stable}` | 10 min | `image-poller` when the respective GHCR tag digest changes | Bluefin/LTS container-only QA freshness plus result publication |
-| `image-poll-dakota` | 10 min | `image-poller` when `dakota:testing` changes | Dakota container-only QA plus result publication |
-| `image-poll-bluefin-main` | 3h | `image-poller` when `bluefin:latest` changes | Bluefin latest container-only QA |
-| `image-poll-snosi-latest` | 30 min past every 3 hours | `bluefin-qa-pipeline` when `ghcr.io/frostyard/snow:latest` changes | Snosi GNOME desktop image coverage |
+| `image-poll-bluefin-testing` | every 10 min at :00 | `image-poller` when `ghcr.io/projectbluefin/bluefin:testing` changes | Bluefin container-only QA (`smoke`) |
+| `image-poll-lts-testing` | every 10 min at :02 | `image-poller` when `ghcr.io/projectbluefin/bluefin-lts:testing` changes | Bluefin-LTS container-only QA (`smoke`) |
+| `image-poll-bluefin-stable` | every 10 min at :04 | `image-poller` when `ghcr.io/projectbluefin/bluefin:stable` changes | Bluefin container-only QA (full suite) |
+| `image-poll-lts-stable` | every 10 min at :06 | `image-poller` when `ghcr.io/projectbluefin/bluefin-lts:stable` changes | Bluefin-LTS container-only QA (full suite) |
+| `image-poll-dakota` | every 10 min at :08 | custom digest DAG → `dakota-qa-pipeline` when `ghcr.io/projectbluefin/dakota:testing` changes | Dakota container-only QA (`smoke`) |
+| `image-poll-bluefin-main` | every 3h at :12 | `image-poller` when `ghcr.io/ublue-os/bluefin:latest` changes | Bluefin latest container-only QA (full suite) |
+| `image-poll-snosi-latest` | every 3h at :30 | `image-poller` when `ghcr.io/frostyard/snow:latest` changes | Snosi GNOME desktop image coverage |
 | `flatcar-kernel-poller` | 10 min | `flatcar-kernel-build` when kernel.org's latest stable version changes | Flatcar kernel build cache |
 | `flatcar-kernel-gate` | 30 min | (gate/promotion check, see `/docs/skills/flatcar-node-onboarding/SKILL.md`) | N/A |
 
@@ -246,7 +247,7 @@ the next cycle.
 | `nightly-smoke-stable` | 03:00 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin`, `image-tag=stable`, `suites=smoke`, `variant=bluefin` |
 | `nightly-smoke-lts` | 02:30 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin-lts`, `image-tag=testing`, `suites=smoke,developer,system`, `variant=bluefin-lts` |
 | `nightly-smoke-lts-stable` | 03:30 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin-lts`, `image-tag=stable`, `suites=smoke`, `variant=bluefin-lts` |
-| `nightly-dakota` | 03:00 | `dakota-qa-pipeline` | Tests pre-built `dakota:latest` only; currently `suspend: true`. |
+| `nightly-dakota` | 03:00 | `dakota-qa-pipeline` | `image=ghcr.io/projectbluefin/dakota`, `image-tag=latest`, `suites=smoke,developer,system`, `variant=dakota`; currently `suspend: true`. |
 | `nightly-knuckle` | 03:30 | `knuckle-qa-pipeline` | `branch=main`, `namespace=knuckle-test`, `suite=smoke`, `tests-branch=main` |
 
 ## Priority Classes

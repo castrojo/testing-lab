@@ -20,7 +20,20 @@ Two steady-state execution paths exist:
 | Path | Purpose | Persistent state |
 |---|---|---|
 | Container-only Bluefin/Dakota path | Image and PR QA | No persistent VM or host-disk state |
-| Fresh VM path | Lanes that explicitly require KubeVirt | Golden disk under `/var/tmp/bluefin-golden/<tag>/disk.raw` |
+| Explicit VM-backed lanes | Flatcar smoke and Knuckle installer QA | Ephemeral KubeVirt resources; no shared Bluefin golden disk |
+
+### Container-only QA contract
+
+`bluefin-qa-pipeline` and `dakota-qa-pipeline` both fan out
+`run-container-tests` inside the published OCI image. The runner clones
+`projectbluefin/testsuite`, starts the nested systemd/Wayland session, and
+attempts to publish `results.json` when `GITHUB_TOKEN` is available. A
+publication warning does not change the suite exit status.
+
+The Bluefin/LTS digest pollers are staggered at minutes `:00`, `:02`, `:04`,
+and `:06` of each ten-minute interval. Dakota's active poller runs at `:08`,
+routes to `dakota-qa-pipeline`, and the suspended `nightly-dakota` is not active
+coverage.
 
 ## Cluster topology
 
@@ -32,8 +45,10 @@ Two steady-state execution paths exist:
 | Loki | log aggregation | `http://<ghost-ip>:30100` | Captures workflow pod logs |
 | ArgoCD | GitOps controller | `https://<ghost-ip>` | Reconciles this repo into the cluster |
 
-All KubeVirt VMs are pinned to ghost. Container QA runs on the control-plane seat on
-ghost; other workflow pods may land on exo-0 according to template constraints.
+Container QA runs on the control-plane graphical seat on ghost. Flatcar VMs float
+across KubeVirt-capable nodes. Knuckle VMs co-schedule on the node holding their
+local-path PVC. Other workflow pods may land on exo-0 according to template
+constraints.
 
 ## GitOps ownership
 
@@ -59,12 +74,13 @@ The repo is intentionally GitOps-first: cluster state should converge from git, 
 
 | Object | Backing location | Used by | Notes |
 |---|---|---|---|
-| Golden disk (`latest`) | `/var/tmp/bluefin-golden/latest/disk.raw` | Fresh-VM pipeline | Built by `bib-build-and-push` |
-| Golden disk (`lts`) | `/var/tmp/bluefin-golden/lts/disk.raw` | Fresh-VM pipeline | Built by `bib-build-and-push` |
-| Per-run hostDisk clone | `/var/tmp/bluefin-golden/*-runs/...` | Provisioned fresh VMs | Removed by teardown or orphan cleanup |
+| Published OCI image | Registry image and digest | Bluefin/Dakota container-only QA | `bluefin-qa-pipeline` and `dakota-qa-pipeline` run `run-container-tests`; no VM or disk is created |
+| Flatcar test VM | Ephemeral KubeVirt VM with generated Flatcar containerDisk | `flatcar-smoke-test` | Provisioned from the current Flatcar image and torn down after the run; no golden disk or hostDisk |
+| Knuckle test VM | Ephemeral KubeVirt VM with per-run local-path PVC and ISO containerDisk | `knuckle-qa-pipeline` | Teardown removes the VM, root-disk PVC, and per-run ISO containerDisk |
 
-The SSH secret lives in the `bluefin-test-ssh-key` Kubernetes secret in namespace `argo`.
-Golden-disk key rotation and other host-storage changes remain maintainer-gated.
+The `bluefin-test-ssh-key` Kubernetes secret in namespace `argo` is used only for
+in-cluster access to explicit VM-backed test guests. Container-only Bluefin/Dakota
+QA does not require SSH, golden disks, or hostDisk state.
 
 ## Test execution stack
 
@@ -129,7 +145,7 @@ Argo Workflow (argo namespace)
 
 | Symptom | Root cause | Durable fix |
 |---|---|---|
-| `Permission denied (publickey)` during SSH wait | A fresh VM's golden disk contains an old public key | Re-patch or rebuild the golden disk; escalate host-storage changes to a human operator |
+| `Permission denied (publickey)` during SSH wait | Ephemeral VM cloud-init or installer key provisioning did not install the expected authorized key | Verify the `ssh-pubkey`/`ssh-key-secret` inputs and cloud-init or installer completion. For the `bluefin-migration-test`/`provision-containerdisk-vm` path, confirm `bluefin-test-ssh-pubkey` is wired through `accessCredentials.sshPublicKey` with `qemuGuestAgent`, then wait for VMI `AccessCredentialsSynchronized=True` before retrying SSH; inspect VMI and runner logs |
 | Workflow hangs before GUI steps start | VM boot or SSH readiness never completed | Inspect VMI readiness and runner logs, then re-run the appropriate recovery path |
 | `TypeError` involving `requireResult` | Stale dogtail step pattern | Replace with `findChildren(...)` or `findChild(..., retry=False)` |
 | Clock / quick-settings scenarios miss their targets | GNOME Shell AT-SPI geometry gap | Drive the interaction via `Shell.Eval` |
