@@ -13,11 +13,15 @@ Pair with:
 > [!WARNING]
 > **Use the CLI-first hierarchy for cluster operations:** `just` for routine
 > lifecycle actions, then `argo` or `kubectl` for direct inspection and control.
-> MCP is optional and must not block an operation. The only acceptable SSH path
-> in this repo is **in-cluster** access from workflow/probe pods into test VMs
-> when the test harness or post-mortem artifact collection requires it.
+> MCP is optional and must not block an operation. Routine/public-agent SSH is
+> limited to **in-cluster** workflow/probe pods accessing explicit test VMs when
+> the test harness or post-mortem artifact collection requires it. Retained
+> host-maintenance SSH is operator-only through an approved private channel;
+> never use workstation SSH to administer `ghost` or `exo-0`.
 >
-> **Exception:** SSH to ghost is permitted exclusively to start or stop the `k3s` service — you cannot stop the API server via the API itself. See [§ Turning k8s on/off](#turning-k8s-onoff).
+> There is no workstation-SSH exception for host maintenance. Starting or
+> stopping k3s is a private maintainer procedure and is intentionally not
+> published as a workstation command.
 
 ---
 
@@ -78,7 +82,7 @@ For agents and automated systems:
 - Workflow reads / logs / control → Argo MCP
 - Pod, VM, Secret, and node reads / mutations → Kubernetes MCP
 - GitOps changes → edit tracked YAML, push to git, let ArgoCD reconcile
-- No SSH to ghost, exo-1, or any node — except `sudo systemctl start|stop k3s` on ghost (see below)
+- No workstation SSH to ghost, exo-0, or any node.
 
 ---
 
@@ -103,7 +107,7 @@ Use `argo logs` or the Argo UI instead of shelling into pods.
 
 ### 4.4 Updating files without workstation `scp`
 
-If you need to push helper files or test content into the cluster, do **not** `scp` them to ghost or exo-1 from a workstation. Use a ConfigMap plus a short-lived Job created through Kubernetes MCP (`kubernetes-mcp-resources_create_or_update`):
+If you need to push helper files or test content into the cluster, do **not** `scp` them to ghost or exo-0 from a workstation. Use a ConfigMap plus a short-lived Job created through Kubernetes MCP (`kubernetes-mcp-resources_create_or_update`):
 
 1. Create or update a ConfigMap containing the files.
 2. Create a scheduler-admitted Job that mounts the ConfigMap and writes only to
@@ -265,17 +269,9 @@ After rotation:
 
 ## 10. Turning k8s on/off
 
-The **only** legitimate reason to SSH from a workstation to the control plane is to start or stop the `k3s` service. The API server cannot shut itself down — SSH is required.
-
-```bash
-# Stop all of Kubernetes (API, etcd, all pods go down)
-ssh core@<control-plane-ip> "sudo systemctl stop k3s"
-
-# Start it back up
-ssh core@<control-plane-ip> "sudo systemctl start k3s"
-
-# Verify
-ssh core@<control-plane-ip> "sudo systemctl is-active k3s"
-```
-
-Everything else — pod management, workflow control, ConfigMaps, scaling — goes through MCP. No other workstation SSH to ghost is permitted.
+Starting or stopping the host `k3s` service is a private maintainer/operator
+procedure, not public workstation guidance. The Kubernetes API cannot start a
+stopped control plane, so if the API is unavailable, escalate through the
+approved host-maintenance channel rather than using workstation SSH. Once the
+API is available again, use `just`, `argo`, and `kubectl` for all verification
+and workload control.

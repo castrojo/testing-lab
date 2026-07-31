@@ -28,7 +28,9 @@ metadata:
 ## Core Process
 
 1. Resolve tool/library docs in Context7 first (kubectl/k3s/K8sGPT/BuildStream as needed).
-2. Prefer `just` recipes, then `kubectl`/`argo`, then host SSH only when k8s API cannot do it.
+2. Prefer `just` recipes, then `kubectl`/`argo` and other API-driven operations.
+   Host-level work is private maintainer maintenance; never use workstation SSH
+   to `ghost` or `exo-0` from the public agent path.
 3. For BST lanes, configure local and upstream cache fallback in workflow configs:
    - never configure external cache credentials/keys in cluster workflows
    - set `override-project-caches: false` to allow the project's own upstream caches (for example Freedesktop SDK and GNOME OS) to be used as read-only fallbacks, preventing extremely slow, full OS recompilations of basic bootstrap toolchains.
