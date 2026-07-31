@@ -7,7 +7,7 @@
 > - [`/docs/ops/lab-operations.md`](/docs/ops/lab-operations.md) — long-form procedures
 > - [`/docs/reference/WORKFLOWS.md`](/docs/reference/WORKFLOWS.md) — WorkflowTemplate parameter contracts
 > - [`/docs/ops/RUNBOOK.md`](/docs/ops/RUNBOOK.md) — architecture + failure-mode index
-> - [`/docs/skills/test-authoring/dogtail-patterns.md`](/docs/skills/test-authoring/dogtail-patterns.md) — writing GUI tests
+> - [`projectbluefin/testsuite`](https://github.com/projectbluefin/testsuite) — writing GUI tests
 > - [`/AGENTS.md`](/AGENTS.md) — hard policy and tenets
 
 > [!NOTE]
@@ -48,6 +48,32 @@ are prohibited. Confirm the generated BuildStream configuration, both Ready
 BuildBarn workers, and live worker action activity before calling a run
 distributed.
 
+## AMD ROCm GPU readiness — quick checks
+
+If the AMD GPU exists on the host but Kubernetes still refuses to schedule `amd.com/gpu` workloads, confirm the ROCm device plugin is installed and the node is labeled for it:
+
+```bash
+kubectl label node exo-0 lab.projectbluefin.io/amd-gpu=true --overwrite
+kubectl apply -f manifests/amdgpu-device-plugin.yaml
+kubectl rollout status daemonset/amdgpu-device-plugin -n kube-system --timeout=300s
+kubectl get node exo-0 -o jsonpath='{.status.allocatable.amd\.com/gpu}{"\n"}'
+```
+
+Expected outcome: the node advertises `1` or more `amd.com/gpu` allocatable units, and the `amdgpu-device-plugin` DaemonSet pod is `Running` on the GPU node.
+
+## Local LLM deployment — quick checks
+
+The lab also has a repo-managed vLLM deployment in `manifests/llm-d.yaml` for `unsloth/Llama-3.2-3B-Instruct`. It is enabled by default, pinned to `exo-0`, and requests one `amd.com/gpu` device so the ROCm device plugin exposes the GPU to vLLM. A preemptive priority class lets it take over the node when needed.
+
+```bash
+kubectl -n llm-d get deploy llm-d-modelserver
+kubectl -n llm-d get pods -w
+kubectl -n llm-d get svc llm-d-modelserver
+kubectl -n llm-d logs -l app.kubernetes.io/name=llm-d-modelserver -c modelserver --tail=100
+```
+
+The endpoint is exposed on NodePort `30800` and can be queried at `http://<exo-0-ip>:30800/v1/models` after the pod reaches `Running`.
+
 ## Flatcar kernel lifecycle — quick checks
 
 Use these for lifecycle-state inspection and manual gate runs:
@@ -69,7 +95,7 @@ Run `just logs` first. Then match a row. **Bluefin and Dakota image-poll QA are 
 | Expected image-poll rerun never starts after a new publish | `kubectl get configmap image-polling-digests -n argo -o yaml` — compare the stored digest with the workflow log; stale state means the previous run already claimed that digest. |
 | `GHCR push destination is forbidden` in a Dakota publish lane | Expected. GHCR is pull-only in this lab: `dakota-publish-pipeline` is disabled and `nightly-dakota-publish` is suspended. Publish to local Zot instead. |
 | VMI `NotFound` 1 second after VM creation | Same as above — KubeVirt refused to start VM due to missing accessCredentials secret; VM status will be `Stopped` |
-| `TypeError: ... requireResult` | Fix the step per [`/docs/skills/test-authoring/dogtail-patterns.md`](/docs/skills/test-authoring/dogtail-patterns.md) §6.2 (`findChildren(...)` / `retry=False`) |
+| `TypeError: ... requireResult` | Fix the step in the upstream `projectbluefin/testsuite` patterns (`findChildren(...)` / `retry=False`) |
 | `Application "gnome-shell" is running` step fails | Replace it with `* GNOME Shell is accessible via AT-SPI` |
 | All top-bar scenarios fail | Confirm `wait_for_shell.py` is present in the copied suite and that the runner re-asserts `unsafe_mode` |
 | `outputs.result` is `Waiting...` or other debug text | Send debug output to `>&2`; keep stdout for the result only |
@@ -338,30 +364,34 @@ Expected steady state:
 
 ---
 
-## 13. llm-d hive node — disabled by default
+## 13. llm-d local inference node
 
-`llm-d` is kept **off by default** in GitOps (`manifests/llm-d.yaml` sets `replicas: 0`).
-Namespace remains managed by `lab-infra`; no pod should run unless explicitly enabled.
+`llm-d` is managed by the `lab-infra` ArgoCD Application (`manifests/llm-d.yaml`) and is **enabled by default** with one replica.
+The vLLM container requests one `amd.com/gpu` device so the ROCm device plugin exposes the GPU into the pod.
+
+**Model choice:** the deployment serves `unsloth/Llama-3.2-3B-Instruct` through vLLM on the OpenAI-compatible endpoint at `http://<ghost-ip>:30800/v1`.
+The pod uses a dedicated preemptive `PriorityClass` so it can evict lower-priority work when needed.
 
 **Check status (expected default):**
 ```bash
-kubectl -n llm-d get deploy llm-d-modelserver -o jsonpath='{.spec.replicas}{"\n"}'   # expect 0
-kubectl get pods -n llm-d                                                             # expect none
+kubectl -n llm-d get deploy llm-d-modelserver -o jsonpath='{.spec.replicas}{"\n"}'   # expect 1
+kubectl get pods -n llm-d                                                             # expect one Running pod
+kubectl get node exo-0 -o jsonpath='{.status.allocatable.amd\.com/gpu}{"\n"}'       # expect >= 1
 ```
 
-**Temporarily enable for local use:**
-```bash
-kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=1
-```
-
-**Disable again (restore desired default):**
+**Temporarily disable:**
 ```bash
 kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=0
 ```
 
+**Re-enable (restore desired default):**
+```bash
+kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=1
+```
+
 **If pod is stuck Pending:** Check two things:
 1. AMD ROCm device plugin registered: `kubectl get pods -n kube-system | grep amdgpu` — look for `amdgpu-device-plugin`. After a k3s restart the plugin needs a pod delete/respawn to re-register with kubelet. Verify `amd.com/gpu` appears in `kubectl get node ghost -o jsonpath='{.status.allocatable}'`.
-2. Memory fits: ghost has ~62.5Gi allocatable. Manifest requests 48Gi — check for other large pods consuming RAM if you see `Insufficient memory`.
+2. Memory fits: ghost has ~62.5Gi allocatable; the manifest requests 16Gi/24Gi and 1 GPU. Check for other large pods consuming RAM if you see `Insufficient memory`.
 
 **If k3s is down** (kubectl returns "connection refused"):
 k3s can stop after host sleep/resume. Recovery:
@@ -372,18 +402,17 @@ After restart, delete the `amdgpu-device-plugin` pod so it re-registers with the
 
 **kubelet device-plugin socket path:** `/var/lib/kubelet/device-plugins/kubelet.sock` (standard path — NOT the rancher/k3s path). Verify with: `ssh core@<control-plane> "sudo ss -lx | grep kubelet"`.
 
-**If pod is CrashLoopBackOff:** Check init container logs first — it downloads the GGUF on first start:
+**If pod is CrashLoopBackOff:** Check the container logs first:
 ```bash
-kubectl logs -n llm-d <pod-name> -c download-gguf
+kubectl logs -n llm-d <pod-name> -c modelserver
 ```
-The GGUF (`Qwen3.6-35B-A3B-Q4_K_M.gguf`) is cached at `/var/tmp/llm-models/` on ghost.
-If the file is missing, delete the pod and let the init container re-download it (~21GB from HuggingFace).
+The model will be cached in the pod's `emptyDir` at `/root/.cache/huggingface` until the pod is deleted.
 
 **Key constraints:**
-- `ROCBLAS_USE_HIPBLASLT=1` for best matmul throughput on gfx1151 (strixhalo.wiki)
-- `hostNetwork: true` + `hostIPC: true` required for ROCm IPC
-- `HSA_OVERRIDE_GFX_VERSION=11.5.1` required — gfx1151 is RDNA 3.5, not RDNA 4
-- Qwen3 uses chain-of-thought thinking by default; add `/no_think` prefix or increase `max_tokens`
+- The default deployment stays baseline-compliant and uses ordinary pod networking; if you revisit this later for tighter ROCm IPC tuning, you may need to re-test with host-network settings in a dedicated namespace
+- The pod is intentionally not pinned to a specific node, so it can land on whichever node later exposes the GPU resource
+- `unsloth/Llama-3.2-3B-Instruct` is intentionally small enough to be practical on the local lab node while still giving a useful chat experience
+- For long prompts, raise `--max-model-len` or use a larger model later; for short local use, the current defaults are a good fit
 
 ---
 
