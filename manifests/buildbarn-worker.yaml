@@ -48,7 +48,7 @@ spec:
           command:
             - sh
             - -c
-            - mkdir -pm 0777 /worker/build && mkdir -pm 0700 /worker/cache && mkdir -p /worker/dev && chmod 0777 /worker && (mknod -m 666 /worker/dev/null c 1 3 || test -c /worker/dev/null) && (mknod -m 666 /worker/dev/zero c 1 5 || test -c /worker/dev/zero) && (mknod -m 666 /worker/dev/random c 1 8 || test -c /worker/dev/random) && (mknod -m 666 /worker/dev/urandom c 1 9 || test -c /worker/dev/urandom)
+            - mkdir -pm 0777 /worker/build && mkdir -pm 0700 /worker/cache && mkdir -p /worker/dev && chmod 0777 /worker && (mknod -m 666 /worker/dev/null c 1 3 || test -c /worker/dev/null) && (mknod -m 666 /worker/dev/zero c 1 5 || test -c /worker/dev/zero) && (mknod -m 666 /worker/dev/random c 1 8 || test -c /worker/dev/random) && (mknod -m 666 /worker/dev/urandom c 1 9 || test -c /worker/dev/urandom) && ln -sfn /proc/self/fd/0 /worker/dev/stdin && ln -sfn /proc/self/fd/1 /worker/dev/stdout && ln -sfn /proc/self/fd/2 /worker/dev/stderr
           volumeMounts:
             - mountPath: /worker
               name: worker
