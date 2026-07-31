@@ -44,9 +44,9 @@ The lab continuously validates the core operating system family across multiple 
 | Image | Tag | Schedule / Trigger | Purpose / Suite |
 |---|---|---|---|
 | `ghcr.io/projectbluefin/bluefin` | `testing` | Nightly 02:00 UTC + 10-minute digest polling | Container-only: digest `smoke`; nightly `smoke,developer,system` |
-| `ghcr.io/projectbluefin/bluefin` | `stable` | Nightly 03:00 UTC + 10-minute digest polling | Container-only: digest `smoke,common,developer,software,system`; nightly `smoke,developer,system` |
+| `ghcr.io/projectbluefin/bluefin` | `stable` | Nightly 03:00 UTC + 10-minute digest polling | Container-only: digest `smoke,common,developer,software,system`; nightly `smoke` |
 | `ghcr.io/projectbluefin/bluefin-lts` | `testing` | Nightly 02:30 UTC + 10-minute digest polling | Container-only: digest `smoke`; nightly `smoke,developer,system` |
-| `ghcr.io/projectbluefin/bluefin-lts` | `stable` | Nightly 03:30 UTC + 10-minute digest polling | Container-only: digest `smoke,common,developer,software,system`; nightly `smoke,developer,system` |
+| `ghcr.io/projectbluefin/bluefin-lts` | `stable` | Nightly 03:30 UTC + 10-minute digest polling | Container-only: digest `smoke,common,developer,software,system`; nightly `smoke` |
 | `ghcr.io/ublue-os/aurora` | `testing`, `stable` | Every 3 hours + OCI digest polling | KDE variant validation (system suite) |
 | `ghcr.io/frostyard/snow` | `latest` | Every 3 hours + on every OCI digest change | Snosi GNOME desktop profile (smoke/developer/system suites) |
 | `ghcr.io/projectbluefin/dakota` | `testing` | 10-minute digest polling; nightly trigger suspended | BuildStream (BST) flatcar-substrate variant; container-only QA after publication |

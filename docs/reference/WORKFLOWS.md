@@ -460,9 +460,9 @@ Lives in `manifests/`, applied via the `lab-infra` ArgoCD app:
 | Schedule | Cron | Template called | Purpose |
 |---|---|---|---|
 | `nightly-smoke` | 02:00 UTC | `bluefin-qa-pipeline` (`testing`) | Catch upstream regressions |
-| `nightly-smoke-stable` | 03:00 UTC | `bluefin-qa-pipeline` (`stable`) | Stable image regression coverage |
+| `nightly-smoke-stable` | 03:00 UTC | `bluefin-qa-pipeline` (`stable`, `smoke`) | Stable image regression coverage |
 | `nightly-smoke-lts` | 02:30 UTC | `bluefin-qa-pipeline` (`testing`) | LTS regression coverage |
-| `nightly-smoke-lts-stable` | 03:30 UTC | `bluefin-qa-pipeline` (`stable`) | Stable LTS regression coverage |
+| `nightly-smoke-lts-stable` | 03:30 UTC | `bluefin-qa-pipeline` (`stable`, `smoke`) | Stable LTS regression coverage |
 | `image-poll-dakota` | Every 10 min | `dakota-qa-pipeline` (`testing`) | Active Dakota digest-triggered QA |
 | `nightly-dakota` | 03:00 UTC | `dakota-qa-pipeline` (`latest`) | Suspended; does not provide active coverage |
 | `orphan-vm-cleanup` | every 2h | inline | GC stale per-run hostDisks in bluefin, flatcar, and knuckle namespaces |

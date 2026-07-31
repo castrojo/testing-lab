@@ -76,7 +76,8 @@ and call the `image-poller` WorkflowTemplate. Each run:
 1. Pulls the current digest for the target image from ghcr.io
 2. Reads the last-known digest from `image-polling-digests` in namespace `argo`
 3. If digests match: exits cleanly (no test run)
-4. If the digest changed: submits `bluefin-qa-pipeline`, which fans out `run-container-tests`
+4. If the digest changed: submits `bluefin-qa-pipeline` for Bluefin and Bluefin-LTS,
+   or `dakota-qa-pipeline` for Dakota; each fans out `run-container-tests`
 5. Each selected suite publishes its structured results back into this repo
 6. Only after the downstream workflow succeeds does `image-poller` persist the new digest
 

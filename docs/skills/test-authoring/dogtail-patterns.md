@@ -531,16 +531,13 @@ These are recognised by `TestSandbox.__init__` and `qecore-headless`. Pass them 
 | `QECORE_NO_CACHE=yes`          | Delete qecore cache on run start (forces fresh app registration).         |
 | `PRODUCTION=no`                | Disable HTML report embeds — useful when iterating locally.               |
 
-`STABILITY=10` is the de-facto pre-merge check for any new `@regression`. Submit via:
+Submit a targeted regression check with the supported `behave-tags` input:
 
 ```bash
 argo submit --from workflowtemplate/run-container-tests \
   --entrypoint run-container-tests -p suite=smoke \
   -p behave-tags="--tags @my_new_regression" -n argo --watch
 ```
-
-(If the workflow template doesn't expose the env var you need, add a passthrough rather
-than editing the runner ad-hoc — keep the GitOps contract.)
 
 ### 7.7 Useful `qecore-headless` flags
 
