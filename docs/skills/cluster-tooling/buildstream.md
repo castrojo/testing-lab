@@ -307,7 +307,15 @@ state must persist between workflow steps. It must use the `local-path` StorageC
 with the explicit GitOps node-to-data-mount mapping. Never use `/var/tmp`, a
 root filesystem, or a node-local `hostPath` cache.
 
-### 5. Buildbarn durable shard backup / restore
+### 5. Private maintainer procedure — Buildbarn durable shard backup / restore
+
+> [!CAUTION]
+> This section is retained for maintainers who have explicitly approved a
+> storage maintenance window and backup plan. It is not a normal public recipe:
+> host-path copies, retained PVC/PV deletion, and restore commands can destroy
+> data. Never run it from a workstation or use workstation SSH to `ghost` or
+> `exo-0`; use the approved private operator channel. Routine Buildbarn
+> operations remain API-driven through `just`, `argo`, `kubectl`, and GitOps.
 
 #### What is durable vs. disposable
 - **Durable**: the `storage` StatefulSet's per-ordinal `local-path` PVCs. `manifests/buildbarn-storage.yaml` defines two replicas (`storage-0`, `storage-1`) with **required** podAntiAffinity, plus two PVCs per ordinal: `cas` mounted at `/storage-cas` and `ac` mounted at `/storage-ac`.

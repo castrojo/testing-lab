@@ -52,6 +52,8 @@ The repo is intentionally GitOps-first: cluster state should converge from git, 
 - Do not SSH from a workstation into `ghost` or `exo-0` for inspection, recovery, or file transfer.
 - In-workflow SSH into explicit test VMs and probe-pod-to-guest SSH remain valid because
   they originate inside the cluster and are part of the test harness, not node administration.
+- Host storage migration, node bootstrap, and host-service recovery are private
+  maintainer procedures; they are not normal public workstation guidance.
 
 ## Image, disk, and VM model
 

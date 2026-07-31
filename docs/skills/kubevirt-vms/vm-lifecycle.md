@@ -47,15 +47,14 @@ provision-containerdisk-vm (provision-containerdisk-vm.yaml)
 
 Check if a containerDisk exists:
 ```bash
-# Fast check — 0 bytes = image lost, rebuild required
-ssh ghost "wc -c /var/mnt/ghost-data/zot-local/bluefin-containerdisk/index.json"
-# Full check
+# API-driven registry check
 skopeo inspect --tls-verify=false docker://<lab-ip>:30500/bluefin-containerdisk:testing
 ```
 
-**Zot data loss:** The `zot-writable` pod (port 30500) loses its `index.json` on every pod or
-k3s restart — the manifest index goes to 0 bytes even though blobs may still exist. Always
-check before running the pipeline; rebuild if the index is empty.
+**Zot data loss:** The `zot-writable` pod (port 30500) can lose its manifest
+index on a pod or k3s restart even though blobs may still exist. Check the
+registry through its API before running the pipeline; rebuild if the manifest
+is unavailable. Do not inspect the host path with workstation SSH.
 
 ### 2a. Native bootc OCI boot — what is and isn't possible
 
@@ -426,4 +425,3 @@ cat /proc/sys/fs/inotify/max_user_watches   # should be >= 1048576
 ```
 
 The DaemonSet applies this on every node restart. Do not remove it.
-

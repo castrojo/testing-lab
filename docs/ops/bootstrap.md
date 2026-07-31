@@ -146,7 +146,9 @@ if already present.
 
 Kernel arguments and SSH login policy are host-level maintenance, not
 Argo WorkflowTemplate operations. Do not submit retired workflow-based
-helpers for those changes; follow the maintainer-approved host procedures.
+helpers for those changes. These are private maintainer procedures; do not use
+workstation SSH to `ghost` or `exo-0`, and do not treat host commands as normal
+public bootstrap steps.
 
 ---
 
@@ -158,7 +160,7 @@ leave at any time (useful for laptops and gaming machines).
 **Full onboarding steps: `/docs/reference/agent-cheatsheet.md` section 14.**
 
 Quick summary:
-1. Get join token: `ssh core@<control-plane-ip> "sudo cat /var/lib/rancher/k3s/server/node-token"`
+1. Have a maintainer provision the join token through the approved secure enrollment process; do not retrieve it with workstation SSH.
 2. On the new node: `sudo mkdir -p /var/usrlocal/bin` then run the k3s install script with `INSTALL_K3S_BIN_DIR=/var/usrlocal/bin`
 3. Disable auto-start: `sudo systemctl disable k3s-agent`
 4. Install `~/Justfile` with `just k8s-on/off/status` commands

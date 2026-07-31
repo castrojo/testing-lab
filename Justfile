@@ -5,8 +5,8 @@
 #   - Workflow submission and monitoring: use these just targets (argo/kubectl CLI).
 #   - These recipes are the canonical interface for all routine lifecycle operations.
 #   - Agents use these recipes or call argo/kubectl directly. No MCP required.
-#   - ssh jorge@ghost is permitted for OS-level tasks only (k3s restart, systemd, brew).
-#   - No recipe SSHes to ghost; do NOT add workstation SSH hops.
+#   - No workstation SSH to ghost or exo-0; use just/argo/kubectl/API-driven operations.
+#   - SSH in this repo is reserved for workflow pods connecting to explicit test VMs.
 #   - Cluster bootstrap (setup-ssh-secret, setup-argocd) runs once from workstation.
 
 image     := env_var_or_default("BLUEFIN_IMAGE", "ghcr.io/projectbluefin/bluefin:testing")

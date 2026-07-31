@@ -11,7 +11,9 @@
 > - [`/AGENTS.md`](/AGENTS.md) — hard policy and tenets
 
 > [!NOTE]
-> **CLI-first.** Tool hierarchy: `just` (lifecycle recipes) → `argo`/`kubectl` (cluster ops) → `ssh core@<control-plane>` (OS-level only).
+> **CLI/API-first.** Tool hierarchy: `just` (lifecycle recipes) → `argo`/`kubectl`
+> (cluster ops). Never use workstation SSH to `ghost` or `exo-0`; SSH examples
+> in this repository are for workflow pods connecting to explicit test VMs.
 > MCP tools are optional — never block on them. One bash call beats a tool search + MCP roundtrip every time.
 
 ## 1. Command selector — what should I run?
@@ -392,13 +394,20 @@ kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=1
 2. Memory fits: ghost has ~62.5Gi allocatable; the manifest requests 16Gi/24Gi and 1 GPU. Check for other large pods consuming RAM if you see `Insufficient memory`.
 
 **If k3s is down** (kubectl returns "connection refused"):
-k3s can stop after host sleep/resume. Recovery:
+k3s can stop after host sleep/resume. Do not recover it with workstation SSH.
+Host-service recovery is a private maintainer procedure; escalate through the
+approved operator channel. Once the API returns, delete the
+`amdgpu-device-plugin` pod through Kubernetes so it re-registers with the
+current kubelet socket:
 ```bash
-ssh core@<control-plane> "sudo systemctl start k3s"
+kubectl delete pod -n kube-system -l app.kubernetes.io/name=amdgpu-device-plugin
 ```
-After restart, delete the `amdgpu-device-plugin` pod so it re-registers with the new kubelet socket.
 
-**kubelet device-plugin socket path:** `/var/lib/kubelet/device-plugins/kubelet.sock` (standard path — NOT the rancher/k3s path). Verify with: `ssh core@<control-plane> "sudo ss -lx | grep kubelet"`.
+Verify device-plugin health through the API:
+```bash
+kubectl get daemonset amdgpu-device-plugin -n kube-system
+kubectl get node exo-0 -o jsonpath='{.status.allocatable.amd\.com/gpu}{"\n"}'
+```
 
 **If pod is CrashLoopBackOff:** Check the container logs first:
 ```bash
@@ -416,15 +425,21 @@ The model will be cached in the pod's `emptyDir` at `/root/.cache/huggingface` u
 
 ## 14. Node onboarding — adding a worker to the cluster
 
+> [!CAUTION]
+> Node onboarding is a private maintainer/operator procedure, not a routine
+> agent recipe. Never retrieve a join token with workstation SSH to `ghost` or
+> `exo-0`; a maintainer must provision the token through an approved secure
+> channel. The commands below run on the new node or through the Kubernetes API.
+
 All nodes in this cluster run image-based, atomic operating systems (Bluefin, Dakota, Bazzite — ostree-based).
 `/usr/local/bin` is a symlink to `/var/usrlocal/bin` (the writable overlay). The k3s install
 script must be told to use this path or it fails on a fresh system.
 
-### Get the join token (run from ghost or this workstation)
+### Provision the join token
 
-```bash
-ssh core@<control-plane-ip> "sudo cat /var/lib/rancher/k3s/server/node-token"
-```
+The k3s join token is a host secret. A maintainer provisions it through the
+approved private enrollment process; do not copy it from a cluster node with
+workstation SSH.
 
 ### Bootstrap a new worker node (run ON the new node, with sudo)
 
