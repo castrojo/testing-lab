@@ -118,7 +118,8 @@ tests/
 
 ### Testing a PR branch without merging
 
-Set `BLUEFIN_TEST_BRANCH` so the runner's `git-sync` initContainer clones your branch:
+Set the `testsuite-branch` parameter so the runner's `git-sync` initContainer
+clones your testsuite branch:
 
 ```bash
 argo submit --from workflowtemplate/bluefin-qa-pipeline \

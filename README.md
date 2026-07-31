@@ -43,10 +43,10 @@ The lab continuously validates the core operating system family across multiple 
 
 | Image | Tag | Schedule / Trigger | Purpose / Suite |
 |---|---|---|---|
-| `ghcr.io/projectbluefin/bluefin` | `testing` | Nightly 02:00 UTC + 10-minute digest polling | Primary standard GNOME image (container-only full suite) |
-| `ghcr.io/projectbluefin/bluefin` | `stable` | Nightly 03:00 UTC + 10-minute digest polling | Stable standard GNOME image (container-only full suite) |
-| `ghcr.io/projectbluefin/bluefin-lts` | `testing` | Nightly 02:30 UTC + 10-minute digest polling | Long-term support GNOME target (container-only full suite) |
-| `ghcr.io/projectbluefin/bluefin-lts` | `stable` | Nightly 03:30 UTC + 10-minute digest polling | Stable long-term support GNOME target (container-only full suite) |
+| `ghcr.io/projectbluefin/bluefin` | `testing` | Nightly 02:00 UTC + 10-minute digest polling | Container-only: digest `smoke`; nightly `smoke,developer,system` |
+| `ghcr.io/projectbluefin/bluefin` | `stable` | Nightly 03:00 UTC + 10-minute digest polling | Container-only: digest `smoke,common,developer,software,system`; nightly `smoke,developer,system` |
+| `ghcr.io/projectbluefin/bluefin-lts` | `testing` | Nightly 02:30 UTC + 10-minute digest polling | Container-only: digest `smoke`; nightly `smoke,developer,system` |
+| `ghcr.io/projectbluefin/bluefin-lts` | `stable` | Nightly 03:30 UTC + 10-minute digest polling | Container-only: digest `smoke,common,developer,software,system`; nightly `smoke,developer,system` |
 | `ghcr.io/ublue-os/aurora` | `testing`, `stable` | Every 3 hours + OCI digest polling | KDE variant validation (system suite) |
 | `ghcr.io/frostyard/snow` | `latest` | Every 3 hours + on every OCI digest change | Snosi GNOME desktop profile (smoke/developer/system suites) |
 | `ghcr.io/projectbluefin/dakota` | `testing` | 10-minute digest polling; nightly trigger suspended | BuildStream (BST) flatcar-substrate variant; container-only QA after publication |
@@ -177,8 +177,8 @@ lab/
 │   └── one-shot-delete-golden-disks.yaml  emergency: delete all golden disks to reclaim space
 │
 ├── manifests/                        # ← ArgoCD (lab-infra App) auto-syncs these
-│   ├── nightly-smoke.yaml                CronWorkflow: nightly latest @ 02:00 UTC
-│   ├── nightly-smoke-lts.yaml            CronWorkflow: nightly lts @ 02:30 UTC
+│   ├── nightly-smoke.yaml                CronWorkflow: nightly bluefin:testing @ 02:00 UTC
+│   ├── nightly-smoke-lts.yaml            CronWorkflow: nightly bluefin-lts:testing @ 02:30 UTC
 │   ├── nightly-dakota.yaml               CronWorkflow: nightly dakota @ 03:00 UTC
 │   ├── nightly-knuckle.yaml              CronWorkflow: nightly knuckle @ 03:30 UTC
 │   ├── orphan-vm-cleanup.yaml            CronWorkflow: clean orphaned VMs every 2h

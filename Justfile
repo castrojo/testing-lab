@@ -118,13 +118,6 @@ run-migration-test tag=image_tag:
         -n {{ argo_ns }} \
         --watch
 
-# One-time: write SSH banner on ghost.
-setup-ghost-ssh-banner:
-    argo submit --from workflowtemplate/setup-ghost-ssh-banner \
-        -n {{ argo_ns }} \
-        --wait --log
-
-
 # —— [REMOVED] titan VM recipes ——
 # run-titan-smoke, run-titan-system, run-titan-developer, run-titan-software,
 # setup-titan-fixtures, run-titan-disk-cleanup
@@ -246,11 +239,6 @@ run-otel-patch:
 # Clear stale podman containers-storage lock files on ghost (run when no BIB workflows active)
 run-ghost-cleanup:
     argo submit --from workflowtemplate/ghost-cleanup \
-      -n {{ argo_ns }} --wait --log
-
-# Set Strix Halo performance kernel args on ghost via rpm-ostree (reboot required after)
-run-kernel-args:
-    argo submit --from workflowtemplate/ghost-kernel-args \
       -n {{ argo_ns }} --wait --log
 
 # ── Dakota BST builds ────────────────────────────────────────────────────────
