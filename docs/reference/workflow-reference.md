@@ -98,20 +98,19 @@ Argo parent phase is successful; classify BuildBarn storage/DNS/worker failures 
 infrastructure blockers and repair the lab before retrying.
 
 ### dakota-publish-pipeline
-- **Purpose:** Publish the local Zot `dakota:testing` and
-  `dakota-nvidia:testing` images to the corresponding
-  `ghcr.io/projectbluefin` packages without changing their digests.
+- **Status:** disabled. GHCR is pull-only in this lab, so every lane exits
+  non-zero with `GHCR push destination is forbidden` and the
+  `nightly-dakota-publish` CronWorkflow is suspended.
+- **Purpose (when re-enabled against a non-GHCR destination):** publish the
+  local Zot `dakota:testing` and `dakota-nvidia:testing` images without
+  changing their digests.
 - **Source:** `<zot-registry>:30500` (the cluster-reachable Zot NodePort).
-- **Authentication:** operator-managed `ghcr-publish-auth` Secret, type
-  `kubernetes.io/dockerconfigjson`, mounted as an auth file. It is never
-  committed or printed.
+- **Authentication:** none. The `ghcr-publish-auth` volume and mounts were
+  removed so the disabled publisher cannot retain write credentials in pods.
 - **DAG:** two independent publication lanes followed by a terminal result
   check that fails the workflow if either lane did not succeed.
-- **Integrity:** source is copied by digest and the destination digest must
-  match. Each lane has two bounded retries.
-- **OCI evidence:** ORAS discovers and recursively copies referrers when
-  present. Explicit absence or unavailable discovery is non-fatal; failure to
-  copy discovered referrers fails the lane.
+- **History:** the `onExit` handler emits only `publish` failure records; it
+  skips history on a `Succeeded` status because no destination digest exists.
 - **Concurrency:** the `dakota-publish` semaphore allows one publication
   workflow while preserving parallel lane execution inside it.
 - **Just recipe:** `run-dakota-publish`.

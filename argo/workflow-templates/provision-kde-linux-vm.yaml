@@ -109,6 +109,7 @@ spec:
         buildah commit "${ctr}" "${CONTAINERDISK}"
         _registry_host="${CONTAINERDISK%%/*}"
         _registry_host="${_registry_host%%:*}"
+        _registry_host="$(printf '%s' "${_registry_host}" | tr '[:upper:]' '[:lower:]')"
         if [[ "${_registry_host}" == "ghcr.io" || "${_registry_host}" == *.ghcr.io ]]; then
           echo "ERROR: GHCR push destination is forbidden: ${CONTAINERDISK}" >&2
           exit 1

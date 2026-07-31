@@ -396,6 +396,7 @@ spec:
           registry_host="${_PUSH_DEST#*://}"
           registry_host="${registry_host%%/*}"
           registry_host="${registry_host%%:*}"
+          registry_host="$(printf '%s' "${registry_host}" | tr '[:upper:]' '[:lower:]')"
           if [[ "${registry_host}" == "ghcr.io" || "${registry_host}" == *.ghcr.io ]]; then
             echo "ERROR: GHCR push destination is forbidden: ${_PUSH_DEST}" >&2
             exit 1

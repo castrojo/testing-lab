@@ -441,31 +441,19 @@ installation must grant `checks: write`.
 
 ### `dakota-publish-pipeline`
 
-Publishes `<zot-registry>:30500/dakota:testing` and
-`<zot-registry>:30500/dakota-nvidia:testing` to the matching
-`ghcr.io/projectbluefin/*:testing` tags. Each lane resolves and copies the Zot
-image by digest, then fails unless GHCR reports the same digest. The lanes run
-independently; a final result task reports both statuses and fails the workflow
-if either lane fails.
+**Disabled: GHCR is pull-only in this lab.** Every publication lane fails fast
+with `GHCR push destination is forbidden` and no registry credentials are
+mounted into the pods. The `nightly-dakota-publish` CronWorkflow is suspended.
+The template remains in git so publication can be re-enabled once a non-GHCR
+destination is configured.
 
-The workflow requires a Secret named `ghcr-publish-auth` in namespace `argo`.
-It is an operator-managed `kubernetes.io/dockerconfigjson` Secret with the
-standard `.dockerconfigjson` key and GHCR package write access. The Secret is
-not stored in git. Scripts consume the mounted auth file directly and never
-enable shell tracing.
-
-ORAS discovery is attempted for each source digest. Referrers are copied
-recursively when present. No referrers, an unsupported discovery API, or a
-missing ORAS binary is logged explicitly and does not invalidate the image
-copy; a failed copy of discovered referrers fails that lane.
-
-The root `onExit` handler writes one compact `kind=publish` record through
-`scripts/publish_dakota_run.py`. A passed record carries the verified primary
-`dakota:testing` digest; because the workflow succeeds only when both Dakota
-lanes succeed, that record represents the aggregate publication run. Failed
-runs persist a normalized `publish` failure without raw logs. History
-persistence is mandatory: a fetch, validation, commit, or push failure remains
-visible as a failed exit-handler node and is never swallowed.
+Because no lane can produce a destination digest, the root `onExit` handler
+only ever writes a normalized `kind=publish` **failure** record through
+`scripts/publish_dakota_run.py`; it skips history entirely on an unexpected
+`Succeeded` status rather than emitting a digest-less passed record (which the
+script rejects). History persistence remains mandatory: a fetch, validation,
+commit, or push failure stays visible as a failed exit-handler node and is
+never swallowed.
 
 Manual run:
 
