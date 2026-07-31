@@ -26,7 +26,7 @@ metadata:
     app.kubernetes.io/name: llm-d-modelserver
     app.kubernetes.io/part-of: testing-lab
 spec:
-  replicas: 1 # enabled: exposes the AMD GPU to vLLM via the k8s device plugin
+  replicas: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: llm-d-modelserver
@@ -130,22 +130,3 @@ spec:
           hostPath:
             path: /lib/modules
             type: Directory
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: llm-d-modelserver
-  namespace: llm-d
-  labels:
-    app.kubernetes.io/name: llm-d-modelserver
-    app.kubernetes.io/part-of: testing-lab
-spec:
-  type: NodePort
-  selector:
-    app.kubernetes.io/name: llm-d-modelserver
-  ports:
-    - name: http
-      port: 8000
-      targetPort: 8000
-      nodePort: 30800
-      protocol: TCP
