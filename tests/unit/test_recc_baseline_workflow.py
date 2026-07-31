@@ -72,6 +72,10 @@ def test_parameters_target_recc_baseline_and_fail_closed_provider_defaults():
 
 def test_buildstream_cache_is_ephemeral_and_no_host_usr_is_mounted():
     run = _run_template()
+    assert run["script"]["securityContext"] == {
+        "privileged": True,
+        "seLinuxOptions": {"type": "spc_t"},
+    }
     volumes = {volume["name"]: volume for volume in run["volumes"]}
     assert "ephemeral" in volumes["bst-cache"]
     assert (
