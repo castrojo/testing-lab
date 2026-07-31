@@ -67,6 +67,7 @@ def test_parameters_target_recc_baseline_and_fail_closed_provider_defaults():
     assert 'ELEMENT="recc-baseline.bst"' in text
     assert "required element bst-prototype/elements/${ELEMENT}" in text
     assert "recc-provider is empty" in text
+    assert "git sparse-checkout set --no-cone bst-prototype scripts/collect_recc_run.py" in text
 
 
 def test_buildstream_cache_is_ephemeral_and_no_host_usr_is_mounted():
