@@ -206,16 +206,28 @@ permitted`. This requirement is specific to the pilot container; it does not
 enable nested RECC or relax the production runner admission gate.
 
 **RECC (Remote Execution C/C++ Compiler) integration:**
-The build grid supports fine-grained C/C++ compiler distribution via RECC
-(`recc` wrapper) following GNOME `gnome-build-meta` MR 4704 (`!4704`) and
-FreeDesktop-SDK work item 1961 (`freedesktop-sdk#1961`).
+The lab has a checkout-local RECC overlay and worker-local `buildbox-casd`
+preparation seam. The isolated operator pilot is the only supported cache
+experiment; production BuildStream/QA/warmup lanes fail closed until a pinned
+runner demonstrably consumes BuildStream's `remoteApisSocketPath` and stages
+the pod-local LocalCAS socket.
 - **Macro level:** BuildStream schedules element builds across BuildBarn workers.
-- **Micro level (RECC):** C/C++ compilation commands (`gcc`, `g++`, `clang`)
-  inside build elements fan out as parallel remote execution actions directly
-  to `frontend.buildbarn.svc.cluster.local:8980`.
-- **Configuration:** Injected via `recc-environment.conf` ConfigMap in
-  `manifests/buildstream-remote-cache-config.yaml` (`RECC_SERVER=frontend.buildbarn.svc.cluster.local:8980`,
-  `RECC_PROJECT_ROOT=/workspace`, `RECC_PREFIX=recc`).
+- **Micro level (RECC):** RECC can cache or distribute individual C/C++
+  compiler invocations inside one element; it is distinct from outer
+  BuildStream remote execution. Linking and non-C++ toolchains remain local
+  unless separately wrapped.
+- **Configuration:** `recc-environment.conf` supplies the shared server,
+  CAS, action-cache, project-root, and policy values. Toolchain elements must
+  supply `RECC_REMOTE_PLATFORM_chrootRootDigest`; the lab does not invent a
+  global digest or set `RECC_PREFIX`.
+- **Pilot:** Run `just run-recc-baseline mode=cache-only cache-policy=both`.
+  Keep the source revision, pinned freedesktop-sdk provider, `bst2` image,
+  and worker set fixed. See `docs/reference/recc-baseline.md` and the measured
+  results in `docs/research/2026-07-31-recc-run-results.md`.
+- **Evidence boundary:** A successful outer BuildStream build is not RECC
+  evidence. The collector preserves missing RECC action fields as
+  `unavailable`; current runs have real BuildStream/BuildBarn timing and CAS
+  data but no trustworthy RECC hit/miss metrics.
 
 ### 1. Shared Buildbarn frontend
 - **Endpoint**: `grpc://frontend.buildbarn.svc.cluster.local:8980`
