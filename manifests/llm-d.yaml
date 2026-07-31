@@ -24,7 +24,7 @@ metadata:
     app.kubernetes.io/name: llm-d-modelserver
     app.kubernetes.io/part-of: testing-lab
 spec:
-  replicas: 0 # disabled by default; scale to 1 explicitly when needed
+  replicas: 1 # enabled: exposes the AMD GPU to vLLM via the k8s device plugin
   selector:
     matchLabels:
       app.kubernetes.io/name: llm-d-modelserver
@@ -86,9 +86,11 @@ spec:
             requests:
               cpu: "4"
               memory: 16Gi
+              amd.com/gpu: "1"
             limits:
               cpu: "8"
               memory: 24Gi
+              amd.com/gpu: "1"
           readinessProbe:
             httpGet:
               path: /health

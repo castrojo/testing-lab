@@ -63,13 +63,13 @@ Expected outcome: the node advertises `1` or more `amd.com/gpu` allocatable unit
 
 ## Local LLM deployment — quick checks
 
-The lab also has a repo-managed vLLM deployment in `manifests/llm-d.yaml` for `unsloth/Llama-3.2-3B-Instruct`. It stays disabled by default and is pinned to `exo-0`; when enabled it uses host GPU device mounts and a preemptive priority class so it can take over the node when needed.
+The lab also has a repo-managed vLLM deployment in `manifests/llm-d.yaml` for `unsloth/Llama-3.2-3B-Instruct`. It is enabled by default, pinned to `exo-0`, and requests one `amd.com/gpu` device so the ROCm device plugin exposes the GPU to vLLM. A preemptive priority class lets it take over the node when needed.
 
 ```bash
 kubectl -n llm-d get deploy llm-d-modelserver
-kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=1
 kubectl -n llm-d get pods -w
 kubectl -n llm-d get svc llm-d-modelserver
+kubectl -n llm-d logs -l app.kubernetes.io/name=llm-d-modelserver -c modelserver --tail=100
 ```
 
 The endpoint is exposed on NodePort `30800` and can be queried at `http://<exo-0-ip>:30800/v1/models` after the pod reaches `Running`.
@@ -365,28 +365,29 @@ Expected steady state:
 
 ---
 
-## 13. llm-d local inference node — disabled by default
+## 13. llm-d local inference node
 
-`llm-d` is kept **off by default** in GitOps (`manifests/llm-d.yaml` sets `replicas: 0`).
-Namespace remains managed by `lab-infra`; no pod should run unless explicitly enabled.
+`llm-d` is managed by the `lab-infra` ArgoCD Application (`manifests/llm-d.yaml`) and is **enabled by default** with one replica.
+The vLLM container requests one `amd.com/gpu` device so the ROCm device plugin exposes the GPU into the pod.
 
 **Model choice:** the deployment serves `unsloth/Llama-3.2-3B-Instruct` through vLLM on the OpenAI-compatible endpoint at `http://<ghost-ip>:30800/v1`.
-The pod uses a dedicated `PriorityClass` so it can preempt lower-priority work when you explicitly enable it, then return the cluster to its normal scheduling baseline when you scale it back to 0.
+The pod uses a dedicated preemptive `PriorityClass` so it can evict lower-priority work when needed.
 
 **Check status (expected default):**
 ```bash
-kubectl -n llm-d get deploy llm-d-modelserver -o jsonpath='{.spec.replicas}{"\n"}'   # expect 0
-kubectl get pods -n llm-d                                                             # expect none
+kubectl -n llm-d get deploy llm-d-modelserver -o jsonpath='{.spec.replicas}{"\n"}'   # expect 1
+kubectl get pods -n llm-d                                                             # expect one Running pod
+kubectl get node exo-0 -o jsonpath='{.status.allocatable.amd\.com/gpu}{"\n"}'       # expect >= 1
 ```
 
-**Temporarily enable for local use:**
-```bash
-kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=1
-```
-
-**Disable again (restore desired default):**
+**Temporarily disable:**
 ```bash
 kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=0
+```
+
+**Re-enable (restore desired default):**
+```bash
+kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=1
 ```
 
 **If pod is stuck Pending:** Check two things:
