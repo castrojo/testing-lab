@@ -30,7 +30,6 @@
 | Check exo-0 kernel canary status (7.1 target) | `kubectl get node exo-0 -o jsonpath='{.status.nodeInfo.kernelVersion}{"\n"}'` |
 | Submit Dakota BST build pipeline (default variant only) | `just run-bst-build [ref=testing]` |
 | Run Dakota containerized smoke QA (no VM, works for composefs-oci) | `just run-dakota-container-qa [image-tag=testing] [variant=dakota]` |
-| Publish both Dakota testing lanes from Zot to GHCR | `just run-dakota-publish` |
 | Trigger the Dakota PR batch workflow | `argo submit -n argo --from workflowtemplate/dakota-pr-batch-pipeline -p pr-numbers=<number> --wait` |
 | Tail the most recent workflow's logs | `just logs` |
 | List workflows / VMs | `just list-workflows` · `just list-vms` |
@@ -93,7 +92,6 @@ Run `just logs` first. Then match a row. **Bluefin and Dakota image-poll QA are 
 | `No GITHUB_TOKEN or missing results.json - skipping publication` | `kubectl get secret -n argo github-token` — secret must exist; then inspect `just logs` for the failing suite before rerunning. |
 | `results.json not found` or summary reports `Execution failed` | `just logs | grep -n "results.json not found\|Execution failed"` → identify the failing `run-container-tests` lane, then rerun after fixing the image or suite issue. |
 | Expected image-poll rerun never starts after a new publish | `kubectl get configmap image-polling-digests -n argo -o yaml` — compare the stored digest with the workflow log; stale state means the previous run already claimed that digest. |
-| `GHCR push destination is forbidden` in a Dakota publish lane | Expected. GHCR is pull-only in this lab: `dakota-publish-pipeline` is disabled and `nightly-dakota-publish` is suspended. Publish to local Zot instead. |
 | VMI `NotFound` 1 second after VM creation | Same as above — KubeVirt refused to start VM due to missing accessCredentials secret; VM status will be `Stopped` |
 | `TypeError: ... requireResult` | Fix the step in the upstream `projectbluefin/testsuite` patterns (`findChildren(...)` / `retry=False`) |
 | `Application "gnome-shell" is running` step fails | Replace it with `* GNOME Shell is accessible via AT-SPI` |

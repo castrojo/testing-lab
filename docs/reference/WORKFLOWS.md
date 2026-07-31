@@ -439,28 +439,6 @@ Each repository's `lab-check.yml` must exist on its default branch, or the
 dispatch is silently dropped (see the enrollment contract above). The app
 installation must grant `checks: write`.
 
-### `dakota-publish-pipeline`
-
-**Disabled: GHCR is pull-only in this lab.** Every publication lane fails fast
-with `GHCR push destination is forbidden` and no registry credentials are
-mounted into the pods. The `nightly-dakota-publish` CronWorkflow is suspended.
-The template remains in git so publication can be re-enabled once a non-GHCR
-destination is configured.
-
-Because no lane can produce a destination digest, the root `onExit` handler
-only ever writes a normalized `kind=publish` **failure** record through
-`scripts/publish_dakota_run.py`; it skips history entirely on an unexpected
-`Succeeded` status rather than emitting a digest-less passed record (which the
-script rejects). History persistence remains mandatory: a fetch, validation,
-commit, or push failure stays visible as a failed exit-handler node and is
-never swallowed.
-
-Manual run:
-
-```bash
-just run-dakota-publish
-```
-
 ### `zot-candidate-lifecycle`
 
 Reusable single-lane foundation for immutable local Zot candidates. Call the
@@ -518,7 +496,6 @@ Lives in `manifests/`, applied via the `testing-lab-infra` ArgoCD app:
 |---|---|---|---|
 | `nightly-smoke` | 02:00 UTC | `bluefin-qa-pipeline` (latest) | Catch upstream regressions |
 | `nightly-smoke-lts` | 02:30 UTC | `bluefin-qa-pipeline` (lts)    | Same, for LTS branch; first fire builds the missing golden disk |
-| `nightly-dakota-publish` | 21:00 UTC | `dakota-publish-pipeline` | Copy both Dakota testing lanes from Zot to GHCR by digest |
 | `orphan-vm-cleanup` | every 2h | inline | GC stale per-run hostDisks in bluefin, flatcar, and knuckle namespaces |
 
 ---

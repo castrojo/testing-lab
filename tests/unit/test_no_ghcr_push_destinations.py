@@ -248,13 +248,7 @@ def test_push_scripts_reject_ghcr_before_upload():
 
 
 def test_push_scripts_inventory():
-    """
-    Verify we've found the expected push-producing templates.
-    
-    This helps catch if template names change or new push patterns are introduced.
-    dakota-publish-pipeline has no live push commands — it is explicitly disabled;
-    validate that invariant directly instead.
-    """
+    """Verify we've found the expected push-producing templates."""
     templates_with_pushes = set()
     for path, template_name, source in push_scripts():
         templates_with_pushes.add(template_name)
@@ -269,26 +263,14 @@ def test_push_scripts_inventory():
             expected in templates_with_pushes
         ), f"Expected to find {expected} in push-producing templates but found: {templates_with_pushes}"
 
-    # dakota-publish-pipeline has been explicitly disabled — it must have no live push
-    # commands and must carry the explicit disable guard in publish-lane.
-    assert "dakota-publish-pipeline" not in templates_with_pushes, (
-        "dakota-publish-pipeline unexpectedly has live push commands; "
-        "it should be disabled with an explicit 'GHCR push destination is forbidden' guard"
-    )
-    publish_pipeline = TEMPLATES_PATH / "dakota-publish-pipeline.yaml"
-    doc = load_yaml(publish_pipeline)
-    publish_lane = next(
-        (t for t in doc["spec"]["templates"] if t.get("name") == "publish-lane"),
-        None,
-    )
-    assert publish_lane is not None, "publish-lane template not found in dakota-publish-pipeline"
-    lane_source = publish_lane["script"]["source"]
-    assert "GHCR push destination is forbidden" in lane_source, (
-        "publish-lane is missing the 'GHCR push destination is forbidden' explicit disable guard"
-    )
-    assert re.search(r"exit\s+1", lane_source), (
-        "publish-lane is missing exit 1 after the disable guard"
-    )
+
+
+def test_dakota_ghcr_publishers_are_deleted():
+    assert not (ROOT / "argo/workflow-templates/dakota-publish-pipeline.yaml").exists()
+    assert not (ROOT / "manifests/nightly-dakota-publish.yaml").exists()
+    justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
+    assert "run-dakota-publish:" not in justfile
+    assert "--from workflowtemplate/dakota-publish-pipeline" not in justfile
 
 
 def test_screenshot_templates_are_disabled_unconditionally():
