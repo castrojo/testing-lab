@@ -11,12 +11,12 @@ release consumers.
 
 | Image | Tag | Trigger | QA path |
 |---|---|---|---|
-| `ghcr.io/projectbluefin/bluefin` | `testing` | Nightly 02:00 UTC + 10-minute digest polling | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` |
-| `ghcr.io/projectbluefin/bluefin` | `stable` | Nightly 03:00 UTC + 10-minute digest polling | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` |
-| `ghcr.io/projectbluefin/bluefin-lts` | `testing` | Nightly 02:30 UTC + 10-minute digest polling | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` |
-| `ghcr.io/projectbluefin/bluefin-lts` | `stable` | Nightly 03:30 UTC + 10-minute digest polling | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` |
-| `ghcr.io/frostyard/snow` | `latest` | Every 3 hours + digest change | Poller → `bluefin-qa-pipeline` container lane |
-| `ghcr.io/projectbluefin/dakota` | `testing` | 10-minute digest polling; nightly trigger suspended | `image-poll-dakota` → `dakota-qa-pipeline` → `run-container-tests` |
+| `ghcr.io/projectbluefin/bluefin` | `testing` | Nightly 02:00 UTC; digest poll every 10 minutes at :00 | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` (`smoke`) |
+| `ghcr.io/projectbluefin/bluefin` | `stable` | Nightly 03:00 UTC; digest poll every 10 minutes at :04 | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` (full suite) |
+| `ghcr.io/projectbluefin/bluefin-lts` | `testing` | Nightly 02:30 UTC; digest poll every 10 minutes at :02 | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` (`smoke`) |
+| `ghcr.io/projectbluefin/bluefin-lts` | `stable` | Nightly 03:30 UTC; digest poll every 10 minutes at :06 | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` (full suite) |
+| `ghcr.io/frostyard/snow` | `latest` | Every 3 hours at :30 + digest change | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` (`smoke,developer,system`) |
+| `ghcr.io/projectbluefin/dakota` | `testing` | Digest poll every 10 minutes at :08; nightly 03:00 UTC trigger suspended | `image-poll-dakota` → `dakota-qa-pipeline` → `run-container-tests` (`smoke`) |
 
 Bluefin and Bluefin-LTS `:testing` and `:stable` lanes are scheduled continuously.
 Dakota's nightly CronWorkflow is suspended; its active digest-poll lane tests the
@@ -70,16 +70,20 @@ Flatcar OS substrate tests. Not part of the Bluefin image pipelines; runs via
 
 ## Image-Poll Trigger
 
-The Bluefin, Bluefin-LTS, and Dakota image-poll CronWorkflows run every 10 minutes
-and call the `image-poller` WorkflowTemplate. Each run:
+The Bluefin and Bluefin-LTS image-poll CronWorkflows run every 10 minutes at
+staggered offsets (`:00`, `:02`, `:04`, and `:06`) and call the generic
+`image-poller` WorkflowTemplate. Dakota's `image-poll-dakota` CronWorkflow runs
+at `:08` and owns a small check-and-trigger DAG that calls the Dakota pipeline.
+Each poll run:
 
 1. Pulls the current digest for the target image from ghcr.io
 2. Reads the last-known digest from `image-polling-digests` in namespace `argo`
 3. If digests match: exits cleanly (no test run)
-4. If the digest changed: submits `bluefin-qa-pipeline` for Bluefin and Bluefin-LTS,
-   or `dakota-qa-pipeline` for Dakota; each fans out `run-container-tests`
-5. Each selected suite publishes its structured results back into this repo
-6. Only after the downstream workflow succeeds does `image-poller` persist the new digest
+4. If the digest changed: submits `bluefin-qa-pipeline` for Bluefin/LTS or
+   `dakota-qa-pipeline` for Dakota; each fans out `run-container-tests`
+5. Each selected suite attempts to publish its structured results back into this repo
+6. The generic Bluefin/LTS `image-poller` persists its new digest only after the
+   downstream workflow succeeds
 
 This means a changed Bluefin, Bluefin-LTS, or Dakota digest triggers
 container-only validation within 10 minutes, automatically, with no human action.
@@ -88,18 +92,22 @@ container-only validation within 10 minutes, automatically, with no human action
 
 ## Result Publication Pipeline
 
-`run-container-tests` writes `results.json` and then, when `github-token` is
-available, clones this repository and runs `scripts/publish_test_results.py` to
-merge the new suite outcome into the tracked results data. The publication flow is:
+`run-container-tests` writes `results.json` and, when `github-token` is
+available, clones this repository and attempts `scripts/publish_test_results.py`
+to merge the new suite outcome into the tracked results data. Publication is
+best-effort: a publication warning does not change the suite exit status. The
+publication flow is:
 
 1. Execute the selected behave suite inside the bootc OCI image
 2. Write `results.json`, `behave-rc.txt`, and a summary file under `/tmp/results`
 3. Clone `projectbluefin/lab` with `github-token`
 4. Run `scripts/publish_test_results.py` for the image/suite/workflow tuple
-5. Push the updated structured results back to the repo for dashboard consumers
+5. Attempt to push the updated structured results back to the repo for dashboard
+   consumers
 
-The result: a Bluefin or Dakota image is published → tests run in containers →
-the repo receives per-suite QA results without any VM-specific artifact handling.
+The result: a selected Bluefin or Dakota image is tested in containers, and the
+repo receives per-suite QA results when publication succeeds, without any
+VM-specific artifact handling.
 
 ---
 
@@ -115,8 +123,9 @@ just run-tests-tag lts-testing
 # Run the default testing/lts-testing matrix
 just run-tests-matrix
 
-# Submit a named workflow directly
-argo submit argo/bluefin-smoke-test.yaml --watch
+# Submit the container-only workflow directly
+argo submit --from workflowtemplate/bluefin-qa-pipeline \
+  -p image-tag=testing -p suites=smoke -n argo --watch
 ```
 
 The `just` wrappers are thin shims around `argo submit`. See `Justfile` for the

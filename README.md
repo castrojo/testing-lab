@@ -43,22 +43,25 @@ The lab continuously validates the core operating system family across multiple 
 
 | Image | Tag | Schedule / Trigger | Purpose / Suite |
 |---|---|---|---|
-| `ghcr.io/projectbluefin/bluefin` | `testing` | Nightly 02:00 UTC + 10-minute digest polling | Container-only: digest `smoke`; nightly `smoke,developer,system` |
-| `ghcr.io/projectbluefin/bluefin` | `stable` | Nightly 03:00 UTC + 10-minute digest polling | Container-only: digest `smoke,common,developer,software,system`; nightly `smoke` |
-| `ghcr.io/projectbluefin/bluefin-lts` | `testing` | Nightly 02:30 UTC + 10-minute digest polling | Container-only: digest `smoke`; nightly `smoke,developer,system` |
-| `ghcr.io/projectbluefin/bluefin-lts` | `stable` | Nightly 03:30 UTC + 10-minute digest polling | Container-only: digest `smoke,common,developer,software,system`; nightly `smoke` |
+| `ghcr.io/projectbluefin/bluefin` | `testing` | Nightly 02:00 UTC; digest poll every 10 minutes at :00 | Container-only: digest `smoke`; nightly `smoke,developer,system` |
+| `ghcr.io/projectbluefin/bluefin` | `stable` | Nightly 03:00 UTC; digest poll every 10 minutes at :04 | Container-only: digest `smoke,common,developer,software,system`; nightly `smoke` |
+| `ghcr.io/projectbluefin/bluefin-lts` | `testing` | Nightly 02:30 UTC; digest poll every 10 minutes at :02 | Container-only: digest `smoke`; nightly `smoke,developer,system` |
+| `ghcr.io/projectbluefin/bluefin-lts` | `stable` | Nightly 03:30 UTC; digest poll every 10 minutes at :06 | Container-only: digest `smoke,common,developer,software,system`; nightly `smoke` |
 | `ghcr.io/ublue-os/aurora` | `testing`, `stable` | Every 3 hours + OCI digest polling | KDE variant validation (system suite) |
 | `ghcr.io/frostyard/snow` | `latest` | Every 3 hours + on every OCI digest change | Snosi GNOME desktop profile (smoke/developer/system suites) |
-| `ghcr.io/projectbluefin/dakota` | `testing` | 10-minute digest polling; nightly trigger suspended | BuildStream (BST) flatcar-substrate variant; container-only QA after publication |
+| `ghcr.io/projectbluefin/dakota` | `testing` | Digest poll every 10 minutes at :08; nightly 03:00 UTC trigger suspended | BuildStream (BST) variant; container-only QA against the published image |
 
 **Image-poll trigger:** image-poll CronWorkflows check OCI registry digests against
-`image-polling-digests` (10-minute lanes for Bluefin/LTS/Dakota; slower pollers for
-other images). When a digest changes, `image-poller` fans out
-`run-container-tests` and only persists the new digest after QA succeeds.
+`image-polling-digests` (the Bluefin/LTS lanes are staggered at :00/:02/:04/:06,
+and Dakota at :08). A changed Bluefin/LTS digest goes through the standard
+`image-poller` → `bluefin-qa-pipeline` path; Dakota's active manifest routes it to
+`dakota-qa-pipeline`. The standard poller persists its new digest only after QA
+succeeds.
 
 **Result publication:** each selected `run-container-tests` lane writes
-`results.json`, then runs `scripts/publish_test_results.py` to push structured
-per-suite results back into this repo for dashboard consumers.
+`results.json` and attempts `scripts/publish_test_results.py` when
+`GITHUB_TOKEN` is available. Publication failures are warnings; the suite exit
+status remains the QA result.
 
 See [/docs/reference/bluefin-integration.md](/docs/reference/bluefin-integration.md) for full details.
 
@@ -99,11 +102,13 @@ image-poller CronWorkflow
         │
         ├─ unchanged ───────────────► exit cleanly
         │
-        └─ changed ─────────────────► `run-container-tests` fan-out
+        └─ changed ─────────────────► matching Bluefin/Dakota QA pipeline
                                       │
-                                      ├─ qecore + behave inside the bootc OCI image
-                                      ├─ publish per-suite results back to this repo
-                                      └─ update stored digest only after QA succeeds
+                                      └─ `run-container-tests` fan-out
+                                         │
+                                         ├─ qecore + behave inside the bootc OCI image
+                                         ├─ attempt per-suite result publication
+                                         └─ standard poller updates stored digest after QA
 ```
 
 **GitOps loop:**
@@ -154,7 +159,7 @@ lab/
 │   │   ├── bst-commit-poller.yaml       Shared Dakota/Cosmic commit polling and BST admission
 │   │   ├── dakota-qa-pipeline.yaml      container-only Dakota suite fan-out
 │   │   ├── knuckle-qa-pipeline.yaml     Knuckle installer QA pipeline
-│   │   ├── image-poller.yaml            Digest poller: compare → run-container-tests → publish → persist
+│   │   ├── image-poller.yaml            Digest poller: compare → QA pipeline → publish → persist
 │   │   ├── pr-poller.yaml               PR label poller for CI gate
 │   │   ├── register-wec.yaml             register a cluster with KubeStellar
 │   │   ├── kubestellar-smoke-test.yaml   verify downsync + status upsync
@@ -187,7 +192,7 @@ lab/
 │   ├── pr-image-gc.yaml                  CronWorkflow: GC PR container images
 │   ├── image-poll-bluefin-testing.yaml   CronWorkflow: poll bluefin:testing digest
 │   ├── image-poll-bluefin-stable.yaml    CronWorkflow: poll bluefin:stable digest
-│   ├── image-poll-bluefin-main.yaml      CronWorkflow: poll bluefin:latest digest
+│   ├── image-poll-bluefin-main.yaml      CronWorkflow: poll ublue-os/bluefin:latest digest
 │   ├── image-poll-lts-testing.yaml       CronWorkflow: poll bluefin-lts:testing digest
 │   ├── image-poll-lts-stable.yaml        CronWorkflow: poll bluefin-lts:stable digest
 │   ├── image-poll-dakota.yaml             CronWorkflow: poll dakota:testing digest
@@ -241,10 +246,10 @@ lab/
 
 | Phase | Suite | Trigger |
 |---|---|---|
-| 1 — Smoke | `smoke` | Every PR, nightly |
-| 2 — Developer tooling | `developer` | Nightly, targeted |
-| 3 — Software management | `software` | Targeted |
-| 4 — Atomic OS contract | `system` | Nightly, every image build |
+| 1 — Smoke | `smoke` | Every PR, digest poll, nightly |
+| 2 — Developer tooling | `developer` | Testing-lane nightlies, targeted |
+| 3 — Software management | `software` | Stable/latest digest polls, targeted |
+| 4 — Atomic OS contract | `system` | Testing-lane nightlies, selected digest polls |
 | 5 — Flatcar substrate | `flatcar` | Dedicated workflow |
 | — Migration validation | `migration` | On rechunk → chunkah switches |
 | — Dakota BST | `dakota` | Every Dakota PR; see [Dakota PR review](docs/skills/dakota-pr-review/SKILL.md) for exact-SHA build, E2E, repair, and direct-merge policy |
@@ -307,8 +312,8 @@ just run-tests
 |---|---|
 | `argo` | Argo Workflows + ArgoCD (control plane) |
 | `argocd` | ArgoCD controller |
-| `bluefin-test` | `latest` test VMs |
-| `bluefin-lts-test` | `lts` test VMs |
+| `bluefin-test` | Explicit VM-backed Bluefin/migration test VMs |
+| `bluefin-lts-test` | Explicit VM-backed Bluefin-LTS test VMs |
 | `flatcar-test` | Flatcar test VMs |
 | `gnomeos-test` | GNOME OS test VMs |
 | `llm-d` | Local inference namespace (vLLM on ROCm; managed by ArgoCD with 1 GPU-backed replica) |

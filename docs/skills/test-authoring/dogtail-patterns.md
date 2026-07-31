@@ -38,11 +38,11 @@ This repo follows the upstream conventions; when in doubt, the upstream docs win
 
 | Layer                     | Role                                                                        |
 |---------------------------|-----------------------------------------------------------------------------|
-| **KubeVirt VM**           | Explicit VM-backed lanes only; Bluefin images boot with Wayland + GNOME Shell 50. |
+| **KubeVirt VM**           | Explicit VM-backed lanes only; container-only Bluefin/Dakota QA does not boot a VM. |
 | **gnome-ponytail-daemon** | Bridges AT-SPI coordinates → Wayland surface coordinates (input injection). |
 | **qecore-headless**       | Boots Wayland/GNOME session, sets `DBUS_SESSION_BUS_ADDRESS`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, activates ponytail-daemon. |
 | **qecore.TestSandbox**    | Per-test bookkeeping: app handles, journal scoping, screenshots, retries.   |
-| **dogtail 4.16**          | AT-SPI tree traversal (`tree.root.application(...)`, `findChild(ren)`).     |
+| **dogtail 2.x**           | AT-SPI tree traversal (`tree.root.application(...)`, `findChild(ren)`).     |
 | **behave**                | BDD runner. Feature files in Gherkin; step defs in Python.                  |
 | **pytest**                | Adjacent suite for command/file/journal assertions (no GUI needed).         |
 | **Shell.Eval (gdbus)**    | Escape hatch for GNOME 50 gaps in AT-SPI / `uinput`.                        |
@@ -91,8 +91,8 @@ tests/
 1. **You push** to `main` or a PR branch.
 2. **You submit** `bluefin-qa-pipeline` or `dakota-qa-pipeline` (for example,
    `just run-tests` or `just run-dakota-qa`).
-3. **Argo** starts `run-container-tests` on ghost, where the published OCI image
-   provides the nested systemd/Wayland session.
+3. **Argo** starts `run-container-tests` on ghost's control-plane graphical seat,
+   where the published OCI image provides the nested systemd/Wayland session.
 4. The runner clones `projectbluefin/testsuite`, installs or verifies qecore,
    behave, dogtail, pytest, and the Wayland input dependencies, then runs the
    selected suite and writes structured results.
@@ -373,8 +373,8 @@ The `a11y_app_name` is the AT-SPI registration. Confirmed names in this repo:
 | Podman Desktop | `Podman Desktop` (Flatpak)            |
 
 When in doubt, run a scenario that calls `Dump gnome-shell AT-SPI tree to results` — the
-output is written to `/tmp/results/atspi_tree.txt`, retrieved by SCP, and printed to the
-pod's stderr.
+output is written to `/tmp/results/atspi_tree.txt` and printed to the runner pod's stderr
+for collection from Argo logs.
 
 ### 6.7 Flatpak / Podman Desktop
 
@@ -736,11 +736,11 @@ Mitigations applied:
 2. In any step that traverses the AT-SPI tree (especially overview search), catch
    `"does not exist"` / `"atspi_error"` exceptions and retry (up to ~6×, 2 s delay).
 
-**Headless sessions have no monitor output — test extension *state*, not visual actors.**
-`qecore-headless` sessions run without a physical or virtual display. Extensions that depend on
-a monitor to create visual actors (Dash to Dock dock actors, App Indicators panel statusArea
-actors) will never create those actors. Assertions that check dock actor count or panel children
-will always fail.
+**Headless sessions do not guarantee monitor-backed actors — test extension *state* first.**
+The container runner uses ghost's control-plane graphical seat, while `qecore-headless`
+manages the nested session. Extensions that depend on monitor output to create visual actors
+(Dash to Dock dock actors, App Indicators panel statusArea actors) may still omit those actors.
+Assertions that check dock actor count or panel children must therefore be conditional.
 
 Correct assertion pattern for headless extension coverage:
 ```python

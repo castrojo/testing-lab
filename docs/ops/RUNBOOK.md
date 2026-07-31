@@ -22,6 +22,19 @@ Two steady-state execution paths exist:
 | Container-only Bluefin/Dakota path | Image and PR QA | No persistent VM or host-disk state |
 | Fresh VM path | Lanes that explicitly require KubeVirt | Golden disk under `/var/tmp/bluefin-golden/<tag>/disk.raw` |
 
+### Container-only QA contract
+
+`bluefin-qa-pipeline` and `dakota-qa-pipeline` both fan out
+`run-container-tests` inside the published OCI image. The runner clones
+`projectbluefin/testsuite`, starts the nested systemd/Wayland session, and
+attempts to publish `results.json` when `GITHUB_TOKEN` is available. A
+publication warning does not change the suite exit status.
+
+The Bluefin/LTS digest pollers are staggered at minutes `:00`, `:02`, `:04`,
+and `:06` of each ten-minute interval. Dakota's active poller runs at `:08`,
+routes to `dakota-qa-pipeline`, and the suspended `nightly-dakota` is not active
+coverage.
+
 ## Cluster topology
 
 | Host | Role | IP | Notes |
