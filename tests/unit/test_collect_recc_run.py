@@ -158,6 +158,26 @@ def test_recc_statsd_metrics_provide_action_cache_evidence():
     assert result["state"] == "available"
 
 
+def test_collected_run_preserves_recc_statsd_evidence_from_element_log():
+    result = collector.collect_run(
+        {"run_id": "cache-regression", "mode": "cache-only"},
+        recc_verbose="""
+        === BuildStream element log: recc-baseline.bst ===
+        [RECC_METRICS] recc.action_cache_hit:2|c
+        [RECC_METRICS] recc.action_cache_miss:1|c
+        [RECC_METRICS] recc.fallback:1|c
+        [RECC_METRICS] recc.execute_local_no_action_result:125|ms
+        """,
+    )
+
+    assert result["recc"]["state"] == "available"
+    assert result["recc"]["action_count"] == 3
+    assert result["recc"]["cache_hits"] == 2
+    assert result["recc"]["cache_misses"] == 1
+    assert result["recc"]["local_fallbacks"] == 1
+    assert result["recc"]["compile_seconds"] == 0.125
+
+
 def test_prometheus_names_are_discovered_and_deltas_are_label_aware():
     before = """
     # HELP bb_actions_total actions

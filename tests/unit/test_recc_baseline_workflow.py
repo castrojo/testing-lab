@@ -24,6 +24,7 @@ def _run_template():
 def test_recc_fixture_generates_separate_launcher_and_compiler_arguments():
     fixture = yaml.safe_load(FIXTURE.read_text(encoding="utf-8"))
     variables = fixture["variables"]
+    environment = fixture["environment"]["(?)"][0]['recc != "buildstream-only"']
     build_commands = fixture["config"]["build-commands"]
     command = build_commands[0]
 
@@ -38,6 +39,10 @@ def test_recc_fixture_generates_separate_launcher_and_compiler_arguments():
     assert command.count("run_cxx ") == 3
     assert command.count(" -c ") == 2
     assert '"$CXX" ' not in command
+    assert environment["RECC_METRICS_FILE"] == "%{build-root}/recc-metrics.txt"
+    assert '"%{build-root}/recc-metrics.txt"' in command
+    assert "rm -f \"%{build-root}/recc-metrics.txt\"" in command
+    assert "recc-metrics.txt" not in fixture["config"]["install-commands"][0]
 
 
 def test_recc_baseline_is_an_isolated_operator_only_template():
@@ -148,6 +153,10 @@ def test_metadata_outputs_preserve_remote_cache_and_unavailable_fields():
     assert '"evidence_capture"' in text
     assert '"unavailable_fields"' in text
     assert "remote RECC cache preserved" in text
+    assert "logdir: ${BST_LOGDIR}" in text
+    assert "BST_LOGDIR=/work/buildstream-logs" in text
+    assert "collect_recc_buildstream_logs" in text
+    assert "RECC metrics/log evidence missing from BuildStream logdir" in text
     assert "--prometheus-before" in text
     assert "--prometheus-after" in text
     assert "/work/recc.log" in text
