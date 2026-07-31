@@ -1,0 +1,480 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: recc-baseline-pipeline
+  namespace: argo
+  annotations:
+    description: |
+      Operator-only RECC baseline for bst-prototype/elements/recc-baseline.bst.
+      BuildStream artifacts use an ephemeral cache; the remote RECC endpoint is
+      never cleared, so a cold/warm comparison can retain remote warm evidence.
+      This template is isolated from production BuildStream lanes.
+  labels:
+    app.kubernetes.io/component: recc-baseline
+    app.kubernetes.io/part-of: bluefin-test-suite
+    bluefin.io/operator-only: "true"
+spec:
+  serviceAccountName: argo
+  activeDeadlineSeconds: 3600
+  podGC:
+    strategy: OnWorkflowCompletion
+  ttlStrategy:
+    secondsAfterSuccess: 3600
+    secondsAfterFailure: 86400
+  volumeClaimGC:
+    strategy: OnWorkflowCompletion
+
+  arguments:
+    parameters:
+      - name: repo
+        value: "https://github.com/projectbluefin/lab.git"
+      - name: ref
+        value: "main"
+      - name: mode
+        value: "buildstream-only"
+      - name: run-id
+        value: ""
+      - name: cache-policy
+        value: "cold"
+      - name: recc-provider
+        value: "freedesktop-sdk.bst:components/buildbox.bst"
+
+  entrypoint: run
+
+  templates:
+    - name: run
+      inputs:
+        parameters:
+          - name: repo
+            value: "{{workflow.parameters.repo}}"
+          - name: ref
+            value: "{{workflow.parameters.ref}}"
+          - name: mode
+            value: "{{workflow.parameters.mode}}"
+          - name: run-id
+            value: "{{workflow.parameters.run-id}}"
+          - name: cache-policy
+            value: "{{workflow.parameters.cache-policy}}"
+          - name: recc-provider
+            value: "{{workflow.parameters.recc-provider}}"
+      outputs:
+        parameters:
+          - name: metadata
+            valueFrom:
+              path: /work/recc-baseline-metadata.json
+          - name: evidence
+            valueFrom:
+              path: /work/recc-baseline-evidence.json
+      volumes:
+        - name: workdir
+          emptyDir: {}
+        - name: bst-cache
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                storageClassName: local-path
+                resources:
+                  requests:
+                    storage: 20Gi
+        - name: buildstream-config
+          configMap:
+            name: buildstream-remote-cache
+            items:
+              - key: dakota-buildstream.conf
+                path: buildstream.conf
+              - key: recc-environment.conf
+                path: recc-environment.conf
+              - key: apply_recc_overlay.py
+                path: apply_recc_overlay.py
+      script:
+        image: 192.168.1.102:30500/bst2:64eb0b4930d57a92710822898fb73af6cc1ae35d
+        command: [bash]
+        resources:
+          requests:
+            cpu: "1"
+            memory: 2Gi
+          limits:
+            cpu: "2"
+            memory: 4Gi
+        volumeMounts:
+          - name: workdir
+            mountPath: /work
+          - name: bst-cache
+            mountPath: /root/.cache/buildstream
+          - name: buildstream-config
+            mountPath: /etc/buildstream
+            readOnly: true
+        env:
+          - name: REPO
+            value: "{{inputs.parameters.repo}}"
+          - name: REF
+            value: "{{inputs.parameters.ref}}"
+          - name: MODE
+            value: "{{inputs.parameters.mode}}"
+          - name: REQUESTED_RUN_ID
+            value: "{{inputs.parameters.run-id}}"
+          - name: CACHE_POLICY
+            value: "{{inputs.parameters.cache-policy}}"
+          - name: RECC_PROVIDER
+            value: "{{inputs.parameters.recc-provider}}"
+          - name: RECC_ENDPOINT
+            valueFrom:
+              configMapKeyRef:
+                name: buildstream-remote-cache
+                key: recc-endpoint
+          - name: BUILDBOX_STAGER
+            value: copy-or-link
+          - name: PROMETHEUS_URL
+            value: "http://prometheus.kube-system:9090"
+        source: |
+          set -euo pipefail
+
+          RUN_ID="${REQUESTED_RUN_ID:-{{workflow.name}}}"
+          RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          WORKFLOW_STATUS=failed
+          COLD_STATUS=not-run
+          WARM_STATUS=not-run
+          COLD_SECONDS=""
+          WARM_SECONDS=""
+          BUILD_FAILED=0
+          EVIDENCE_FAILED=0
+          COLLECTOR_FAILED=0
+          mkdir -p /work
+          : > /work/buildstream.log
+          : > /work/recc.log
+          : > /work/prometheus-before.txt
+          : > /work/prometheus-after.txt
+
+          METRIC_NAMES=(
+            buildbarn_builder_build_executor_duration_seconds_count
+            buildbarn_builder_build_executor_duration_seconds_sum
+            buildbarn_builder_in_memory_build_queue_tasks_queued_duration_seconds_count
+            buildbarn_builder_in_memory_build_queue_tasks_queued_duration_seconds_sum
+            buildbarn_builder_in_memory_build_queue_tasks_executing_duration_seconds_count
+            buildbarn_builder_in_memory_build_queue_tasks_executing_duration_seconds_sum
+            buildbarn_blobstore_blob_access_operations_blob_size_bytes_count
+            buildbarn_blobstore_blob_access_operations_blob_size_bytes_sum
+            buildbarn_blobstore_blob_access_operations_duration_seconds_count
+            buildbarn_blobstore_blob_access_operations_duration_seconds_sum
+          )
+
+          case "${MODE}" in
+            buildstream-only|passthrough|cache-only|upload-local-build)
+              ;;
+            remote-execution)
+              echo "RECC remote-execution is blocked: nested BuildStream REAPI support is not proven" >&2
+              exit 1
+              ;;
+            *)
+              echo "Unsupported RECC baseline mode: ${MODE}" >&2
+              exit 1
+              ;;
+          esac
+
+          case "${CACHE_POLICY}" in
+            cold|warm|both)
+              ;;
+            *)
+              echo "Unsupported cache-policy: ${CACHE_POLICY}; expected cold, warm, or both" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ "${MODE}" != "buildstream-only" && -z "${RECC_PROVIDER}" ]]; then
+            echo "RECC mode '${MODE}' refused: recc-provider is empty; no safe pinned provider is available" >&2
+            exit 1
+          fi
+
+          if [[ ! "${RUN_ID}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "run-id must contain only letters, digits, '.', '_' or '-'" >&2
+            exit 1
+          fi
+          if [[ -n "${RECC_PROVIDER}" && ! "${RECC_PROVIDER}" =~ ^[A-Za-z0-9._+/-]+(:[A-Za-z0-9._+/-]+)?$ ]]; then
+            echo "recc-provider must be a plain pinned BuildStream element reference" >&2
+            exit 1
+          fi
+
+          cat > /work/run-input.json <<EOF
+          {
+            "run_id": "${RUN_ID}",
+            "mode": "${MODE}",
+            "started_at": "${RUN_STARTED_AT}",
+            "phases": {
+              "cold": {"state": "not-run"},
+              "warm": {"state": "not-run"}
+            }
+          }
+          EOF
+
+          capture_buildbarn_metrics() {
+            local destination="$1"
+            if ! curl --fail --silent --show-error --max-time 20 \
+              --get \
+              --data-urlencode 'match[]={__name__=~"buildbarn_(builder|blobstore)_.*"}' \
+              "${PROMETHEUS_URL}/federate" > "${destination}"; then
+              echo "BuildBarn Prometheus federation failed: ${PROMETHEUS_URL}" >&2
+              : > "${destination}"
+              return 1
+            fi
+            if [[ ! -s "${destination}" ]]; then
+              echo "BuildBarn Prometheus federation returned no samples" >&2
+              return 1
+            fi
+            if [[ ! -s /work/prometheus-before.txt ]]; then
+              cp "${destination}" /work/prometheus-before.txt
+            fi
+            cp "${destination}" /work/prometheus-after.txt
+          }
+
+          finalize() {
+            local exit_code=$?
+            set +e
+            if [[ -n "${RECC_PROVIDER}" ]]; then
+              PROVIDER_JSON="\"${RECC_PROVIDER}\""
+            else
+              PROVIDER_JSON="null"
+            fi
+            RUN_FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            cat > /work/run-input.json <<EOF
+          {
+            "run_id": "${RUN_ID}",
+            "mode": "${MODE}",
+            "started_at": "${RUN_STARTED_AT}",
+            "finished_at": "${RUN_FINISHED_AT}",
+            "phases": {
+              "cold": {
+                "state": "${COLD_STATUS}",
+                "timings": {"wall_seconds": ${COLD_SECONDS:-null}}
+              },
+              "warm": {
+                "state": "${WARM_STATUS}",
+                "timings": {"wall_seconds": ${WARM_SECONDS:-null}}
+              }
+            }
+          }
+          EOF
+            if [[ -f /work/src/scripts/collect_recc_run.py ]]; then
+              collector_args=(
+                --metadata /work/run-input.json
+                --buildstream-log /work/buildstream.log
+                --recc-log /work/recc.log
+                --prometheus-before /work/prometheus-before.txt
+                --prometheus-after /work/prometheus-after.txt
+                --source-url "argo://recc-baseline/${RUN_ID}"
+                --output /work/recc-baseline-evidence.json
+              )
+              for metric in "${METRIC_NAMES[@]}"; do
+                collector_args+=(--metric "${metric}")
+              done
+              if ! python3 /work/src/scripts/collect_recc_run.py "${collector_args[@]}"; then
+                echo "RECC evidence collector failed" >&2
+                COLLECTOR_FAILED=1
+              fi
+            else
+              echo "RECC evidence collector is missing from the sparse checkout" >&2
+              COLLECTOR_FAILED=1
+            fi
+            if [[ ! -s /work/recc-baseline-evidence.json ]]; then
+              cat > /work/recc-baseline-evidence.json <<'EOF'
+          {
+            "schema_version": "recc-baseline.evidence.v1",
+            "state": "unavailable",
+            "state_reason": "the evidence collector was unavailable or produced no parseable output",
+            "unavailable_fields": {
+              "buildstream": "no parseable BuildStream evidence",
+              "recc": "no parseable RECC_VERBOSE evidence",
+              "buildbarn": "no before/after BuildBarn metric snapshots"
+            }
+          }
+          EOF
+            fi
+            if [[ "${COLLECTOR_FAILED}" -ne 0 || "${EVIDENCE_FAILED}" -ne 0 ]]; then
+              exit_code=1
+            fi
+            if [[ "${exit_code}" -eq 0 ]]; then
+              WORKFLOW_STATUS=success
+            fi
+            EVIDENCE_STATE=available
+            EVIDENCE_REASON_JSON=null
+            if [[ "${COLLECTOR_FAILED}" -ne 0 || "${EVIDENCE_FAILED}" -ne 0 ]]; then
+              EVIDENCE_STATE=unavailable
+              EVIDENCE_REASON_JSON='"collector or BuildBarn metric capture failed"'
+            fi
+            COLD_SECONDS_JSON="${COLD_SECONDS:-null}"
+            WARM_SECONDS_JSON="${WARM_SECONDS:-null}"
+            cat > /work/recc-baseline-metadata.json <<EOF
+          {
+            "schema_version": "recc-baseline.v1",
+            "run": {
+              "run_id": "${RUN_ID}",
+              "mode": "${MODE}",
+              "cache_policy": "${CACHE_POLICY}",
+              "recc_provider": ${PROVIDER_JSON},
+              "started_at": "${RUN_STARTED_AT}",
+              "finished_at": "${RUN_FINISHED_AT}"
+            },
+            "status": "${WORKFLOW_STATUS}",
+            "phases": {
+              "cold": {"state": "${COLD_STATUS}", "timings": {"wall_seconds": ${COLD_SECONDS_JSON}}},
+              "warm": {"state": "${WARM_STATUS}", "timings": {"wall_seconds": ${WARM_SECONDS_JSON}}}
+            },
+            "buildstream_cache": {
+              "state": "available",
+              "policy": "ephemeral",
+              "state_reason": "the BuildStream artifact cache is a workflow-scoped PVC deleted on completion",
+              "unavailable_fields": {}
+            },
+            "evidence_capture": {
+              "state": "${EVIDENCE_STATE}",
+              "state_reason": ${EVIDENCE_REASON_JSON}
+            }
+          }
+          EOF
+            exit "${exit_code}"
+          }
+          trap finalize EXIT
+
+          echo "=== Staging bst-prototype from ${REPO}@${REF} ==="
+          git clone --depth=1 --branch "${REF}" --filter=blob:none --sparse "${REPO}" /work/src
+          cd /work/src
+          git sparse-checkout set bst-prototype scripts/collect_recc_run.py
+          cd /work/src/bst-prototype
+          ELEMENT="recc-baseline.bst"
+          [[ -f "elements/${ELEMENT}" ]] || {
+            echo "required element bst-prototype/elements/${ELEMENT} is missing" >&2
+            exit 1
+          }
+
+          if [[ "${MODE}" != "buildstream-only" ]]; then
+            echo "=== Applying operator-only RECC cache pilot overlay ==="
+            python3 /etc/buildstream/apply_recc_overlay.py . \
+              --project-kind bst-prototype \
+              --endpoint "${RECC_ENDPOINT}" \
+              --pilot-cache-only \
+              --recc-provider "${RECC_PROVIDER}" \
+              --json > /work/recc-overlay.json
+          fi
+
+          PROJECT_NAME="$(awk -F': *' '/^name:/{print $2; exit}' project.conf | tr -d '\r')"
+          [[ "${PROJECT_NAME}" == "bst-prototype" ]] || {
+            echo "unexpected BuildStream project name: ${PROJECT_NAME}" >&2
+            exit 1
+          }
+          cp /etc/buildstream/buildstream.conf /work/buildstream.conf
+          cat >> /work/buildstream.conf <<EOF
+          projects:
+            ${PROJECT_NAME}:
+              artifacts:
+                override-project-caches: true
+                servers: []
+          EOF
+          BST_CONF=/work/buildstream.conf
+
+          run_phase() {
+            local phase="$1"
+            local status_var="$2"
+            local phase_log="/work/buildstream-${phase}.log"
+            local phase_recc="/work/recc-${phase}.log"
+            local phase_raw_recc="/work/recc-${phase}.raw"
+            local phase_start
+            local phase_end
+            local phase_seconds
+            local rc=0
+            local state="unavailable"
+            local full_key=""
+            local artifact_digest=""
+            local fixture_stdout=""
+            local cache_origin="unavailable"
+            phase_start="$(date +%s)"
+            find /root/.cache/buildstream -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+            printf '\n=== %s phase: BuildStream cache cleared; remote RECC cache preserved ===\n' "${phase}" > "${phase_log}"
+            if ! capture_buildbarn_metrics "/work/prometheus-${phase}-before.txt"; then
+              EVIDENCE_FAILED=1
+            fi
+            bst --config "${BST_CONF}" --no-interactive \
+              --option recc "${MODE}" \
+              build "${ELEMENT}" >> "${phase_log}" 2>&1 || rc=$?
+            if [[ "${rc}" -eq 0 ]]; then
+              state="$(bst --config "${BST_CONF}" --no-interactive show \
+                --deps none --format '%{state}' "${ELEMENT}" 2>>"${phase_log}" \
+                | tr -d '\r\n')" || state="unavailable"
+              full_key="$(bst --config "${BST_CONF}" --no-interactive show \
+                --deps none --format '%{full-key}' "${ELEMENT}" 2>>"${phase_log}" \
+                | tr -d '\r\n')" || full_key=""
+              artifact_digest="$(bst --config "${BST_CONF}" --no-interactive show \
+                --deps none --format '%{artifact-cas-digest}' "${ELEMENT}" 2>>"${phase_log}" \
+                | tr -d '\r\n')" || artifact_digest=""
+              if [[ -n "${state}" && "${state}" != "unavailable" ]]; then
+                cache_origin="local-build"
+              fi
+              artifact_dir="/work/artifact-${phase}"
+              rm -rf "${artifact_dir}"
+              if ! bst --config "${BST_CONF}" --no-interactive artifact checkout \
+                --deps none --directory "${artifact_dir}" "${ELEMENT}" \
+                >> "${phase_log}" 2>&1; then
+                echo "artifact checkout failed; fixture stdout is unavailable" >&2
+                EVIDENCE_FAILED=1
+              elif [[ -x "${artifact_dir}/usr/bin/recc-baseline" ]]; then
+                if ! fixture_stdout="$("${artifact_dir}/usr/bin/recc-baseline")"; then
+                  echo "fixture execution failed" >&2
+                  EVIDENCE_FAILED=1
+                fi
+              else
+                echo "artifact did not contain /usr/bin/recc-baseline" >&2
+                EVIDENCE_FAILED=1
+              fi
+              printf '%s phase: success\n' "${phase}" >> "${phase_log}"
+              printf '%s wall_seconds: %s\n' "${phase}" \
+                "$(( $(date +%s) - phase_start ))" >> "${phase_log}"
+              printf 'element: %s\nstate: %s\nkey: %s\ncache origin: %s\noutput digest: %s\n' \
+                "${ELEMENT}" "${state}" "${full_key}" "${cache_origin}" \
+                "${artifact_digest}" >> "${phase_log}"
+              printf '[FIXTURE_STDOUT] %s\n' "${fixture_stdout}" >> "${phase_log}"
+              printf -v "${status_var}" '%s' success
+            else
+              printf '%s phase: failed (exit %s)\n' "${phase}" "${rc}" >> "${phase_log}"
+              printf -v "${status_var}" '%s' failed
+            fi
+            grep -Eio '(^|[[:space:]\[\(])RECC(_VERBOSE)?([[:space:]:\]\)]|$).*' \
+              "${phase_log}" > "${phase_raw_recc}" || true
+            {
+              printf '=== BEGIN RECC_VERBOSE LOG ===\n'
+              cat "${phase_raw_recc}"
+              printf '=== END RECC_VERBOSE LOG ===\n'
+            } > "${phase_recc}"
+            cat "${phase_log}" >> /work/buildstream.log
+            cat "${phase_recc}" >> /work/recc.log
+            phase_end="$(date +%s)"
+            phase_seconds=$((phase_end - phase_start))
+            printf -v "${status_var}" '%s' \
+              "$([[ "${rc}" -eq 0 ]] && echo success || echo failed)"
+            if [[ "${phase}" == "cold" ]]; then
+              COLD_SECONDS="${phase_seconds}"
+            else
+              WARM_SECONDS="${phase_seconds}"
+            fi
+            if ! capture_buildbarn_metrics "/work/prometheus-${phase}-after.txt"; then
+              EVIDENCE_FAILED=1
+            fi
+            return "${rc}"
+          }
+
+          case "${CACHE_POLICY}" in
+            cold)
+              run_phase cold COLD_STATUS || BUILD_FAILED=1
+              ;;
+            warm)
+              run_phase warm WARM_STATUS || BUILD_FAILED=1
+              ;;
+            both)
+              run_phase cold COLD_STATUS || BUILD_FAILED=1
+              if [[ "${BUILD_FAILED}" -eq 0 ]]; then
+                run_phase warm WARM_STATUS || BUILD_FAILED=1
+              fi
+              ;;
+          esac
+
+          if [[ "${BUILD_FAILED}" -ne 0 ]]; then
+            exit 1
+          fi
