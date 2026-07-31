@@ -151,7 +151,7 @@ lab/
 │   │   ├── run-gnome-tests.yaml          VM-backed behave + qecore + Dogtail tests
 │   │   ├── run-incluster-tests.yaml      in-cluster (kubectl-based) tests
 │   │   ├── run-flatcar-tests.yaml        Flatcar OS test runner
-│   │   ├── provision-flatcar-vm.yaml     provision Flatcar test VM (hostDisk)
+│   │   ├── provision-flatcar-vm.yaml     provision Flatcar test VM (containerDisk)
 │   │   ├── provision-gnomeos-vm.yaml     provision GNOME OS test VM
 │   │   ├── teardown-vm.yaml          delete explicit VM-backed test guests
 │   │   ├── collect-vm-logs.yaml          gather VM journal logs post-test

@@ -45,8 +45,10 @@ coverage.
 | Loki | log aggregation | `http://<ghost-ip>:30100` | Captures workflow pod logs |
 | ArgoCD | GitOps controller | `https://<ghost-ip>` | Reconciles this repo into the cluster |
 
-All KubeVirt VMs are pinned to ghost. Container QA runs on the control-plane seat on
-ghost; other workflow pods may land on exo-0 according to template constraints.
+Container QA runs on the control-plane graphical seat on ghost. Flatcar VMs float
+across KubeVirt-capable nodes. Knuckle VMs co-schedule on the node holding their
+local-path PVC. Other workflow pods may land on exo-0 according to template
+constraints.
 
 ## GitOps ownership
 
@@ -141,7 +143,7 @@ Argo Workflow (argo namespace)
 
 | Symptom | Root cause | Durable fix |
 |---|---|---|
-| `Permission denied (publickey)` during SSH wait | A fresh VM's golden disk contains an old public key | Re-patch or rebuild the golden disk; escalate host-storage changes to a human operator |
+| `Permission denied (publickey)` during SSH wait | Ephemeral VM cloud-init or installer key provisioning did not install the expected authorized key | Verify the `ssh-pubkey`/`ssh-key-secret` inputs and cloud-init or installer completion, then inspect VMI and runner logs before rerunning |
 | Workflow hangs before GUI steps start | VM boot or SSH readiness never completed | Inspect VMI readiness and runner logs, then re-run the appropriate recovery path |
 | `TypeError` involving `requireResult` | Stale dogtail step pattern | Replace with `findChildren(...)` or `findChild(..., retry=False)` |
 | Clock / quick-settings scenarios miss their targets | GNOME Shell AT-SPI geometry gap | Drive the interaction via `Shell.Eval` |
