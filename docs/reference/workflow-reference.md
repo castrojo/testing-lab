@@ -10,7 +10,6 @@ bridge that submits Argo Workflows from ephemeral ARC runners, see
   - [bluefin-qa-pipeline](#bluefin-qa-pipeline)
   - [dakota-qa-pipeline](#dakota-qa-pipeline)
   - [dakota-build-pipeline](#dakota-build-pipeline)
-  - [dakota-publish-pipeline](#dakota-publish-pipeline)
   - [zot-candidate-lifecycle](#zot-candidate-lifecycle)
   - [cosmic-build-pipeline](#cosmic-build-pipeline)
   - [bluefin-server-build-pipeline](#bluefin-server-build-pipeline)
@@ -96,24 +95,6 @@ image is verified. Local, cache-only, or fallback builds are diagnostic evidence
 and do not satisfy the distributed gate. Inspect failed child nodes even when the
 Argo parent phase is successful; classify BuildBarn storage/DNS/worker failures as
 infrastructure blockers and repair the lab before retrying.
-
-### dakota-publish-pipeline
-- **Status:** disabled. GHCR is pull-only in this lab, so every lane exits
-  non-zero with `GHCR push destination is forbidden` and the
-  `nightly-dakota-publish` CronWorkflow is suspended.
-- **Purpose (when re-enabled against a non-GHCR destination):** publish the
-  local Zot `dakota:testing` and `dakota-nvidia:testing` images without
-  changing their digests.
-- **Source:** `<zot-registry>:30500` (the cluster-reachable Zot NodePort).
-- **Authentication:** none. The `ghcr-publish-auth` volume and mounts were
-  removed so the disabled publisher cannot retain write credentials in pods.
-- **DAG:** two independent publication lanes followed by a terminal result
-  check that fails the workflow if either lane did not succeed.
-- **History:** the `onExit` handler emits only `publish` failure records; it
-  skips history on a `Succeeded` status because no destination digest exists.
-- **Concurrency:** the `dakota-publish` semaphore allows one publication
-  workflow while preserving parallel lane execution inside it.
-- **Just recipe:** `run-dakota-publish`.
 
 ### zot-candidate-lifecycle
 - **Purpose:** Reusable, independent single-lane lifecycle for immutable local
@@ -262,7 +243,6 @@ the next cycle.
 | `nightly-smoke-lts` | 02:30 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin-lts`, `image-tag=testing`, `suites=smoke,developer,system`, `variant=bluefin-lts` |
 | `nightly-dakota` | — | `dakota-qa-pipeline` | Tests pre-built images only — does not build/warm cache. Currently `suspend: true`. |
 | `nightly-knuckle` | 03:30 | `knuckle-qa-pipeline` | `branch=main`, `namespace=knuckle-test`, `suite=smoke`, `tests-branch=main` |
-| `nightly-dakota-publish` | 21:00 | `dakota-publish-pipeline` | Digest-preserving Zot-to-GHCR publication for both Dakota testing lanes. |
 
 ## Priority Classes
 

@@ -317,11 +317,6 @@ run-dakota-container-qa image-tag="testing" variant="dakota":
       -p variant={{ variant }} \
       -n {{ argo_ns }} --watch
 
-# Publish dakota:testing and dakota-nvidia:testing from Zot to GHCR.
-run-dakota-publish:
-    argo submit --from workflowtemplate/dakota-publish-pipeline \
-      -n {{ argo_ns }} --watch
-
 # Validate canonical Dakota build/publish history records.
 validate-dakota-history:
     python3 scripts/publish_dakota_run.py validate-history
