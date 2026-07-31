@@ -88,6 +88,11 @@ The acceptance comparison is mode-specific: `cache-only` and
 `upload-local-build` must prove stable action keys and a warm action-cache hit.
 A successful outer BuildStream build alone is not RECC evidence.
 
+The first lab measurements are recorded in
+`docs/research/2026-07-31-recc-run-results.md`. They include real
+BuildStream/BuildBarn timings and CAS deltas; RECC action-level fields remain
+unavailable until the sandbox metrics-file handoff is proven.
+
 ## Evidence boundaries
 
 - `buildstream-only` establishes the deterministic fixture and outer artifact
