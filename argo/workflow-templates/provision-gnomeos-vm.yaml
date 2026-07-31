@@ -211,6 +211,12 @@ spec:
         buildah copy --chown 107:107 "${CTR}" "${BASE_RAW}" /disk/gnomeos.raw
         buildah commit "${CTR}" "${CONTAINERDISK}"
         echo "Pushing to ${CONTAINERDISK}..." >&2
+        _registry_host="${CONTAINERDISK%%/*}"
+        _registry_host="${_registry_host%%:*}"
+        if [[ "${_registry_host}" == "ghcr.io" || "${_registry_host}" == *.ghcr.io ]]; then
+          echo "ERROR: GHCR push destination is forbidden: ${CONTAINERDISK}" >&2
+          exit 1
+        fi
         buildah push --tls-verify=false "${CONTAINERDISK}"
         buildah rm "${CTR}" 2>/dev/null || true
         echo "GNOME OS containerDisk ready: ${CONTAINERDISK}" >&2

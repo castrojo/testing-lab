@@ -118,6 +118,12 @@ spec:
         JSON
         buildah copy "${CTR}" /mnt/work/containerDisk.json /containerDisk.json
         buildah commit "${CTR}" "${CONTAINERDISK}"
+        _registry_host="${CONTAINERDISK%%/*}"
+        _registry_host="${_registry_host%%:*}"
+        if [[ "${_registry_host}" == "ghcr.io" || "${_registry_host}" == *.ghcr.io ]]; then
+          echo "ERROR: GHCR push destination is forbidden: ${CONTAINERDISK}" >&2
+          exit 1
+        fi
         buildah push --tls-verify=false "${CONTAINERDISK}"
         buildah rm "${CTR}" 2>/dev/null || true
         echo "Flatcar containerDisk ready: ${CONTAINERDISK}" >&2
