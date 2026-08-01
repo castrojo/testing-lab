@@ -152,10 +152,10 @@ Per-template ceilings live in [`/AGENTS.md`](/AGENTS.md) under **Resource Limits
 
 **Trigger an ArgoCD sync:**
 ```bash
-KUBECONFIG=~/.kube/bluespeed.yaml kubectl -n argocd annotate application lab \
+KUBECONFIG=~/.kube/bluespeed.yaml kubectl -n argocd annotate application testing-lab \
   argocd.argoproj.io/refresh=normal --overwrite
 # or via argocd CLI:
-argocd app sync lab
+argocd app sync testing-lab
 ```
 
 **If the local ArgoCD port-forward drops**, restart it and verify the health endpoint
@@ -167,14 +167,14 @@ curl -sf http://127.0.0.1:18080/healthz
 
 **Read ArgoCD Application state:**
 ```bash
-KUBECONFIG=~/.kube/bluespeed.yaml kubectl get application lab-infra -n argocd \
+KUBECONFIG=~/.kube/bluespeed.yaml kubectl get application testing-lab-infra -n argocd \
   -o jsonpath='{.status.sync.status} {.status.health.status}'
 ```
 Key fields: `.status.operationState.phase`, `.status.sync.status`, `.status.operationState.message`, `.status.operationState.operation.sync.revision`
 
 **Cancel a stuck operation** (PreSync hook looping):
 ```bash
-KUBECONFIG=~/.kube/bluespeed.yaml kubectl patch application lab -n argocd \
+KUBECONFIG=~/.kube/bluespeed.yaml kubectl patch application testing-lab -n argocd \
   --type=json -p='[{"op":"remove","path":"/operation"}]'
 ```
 
@@ -184,11 +184,11 @@ KUBECONFIG=~/.kube/bluespeed.yaml kubectl patch application lab -n argocd \
    -> if not: push first.
 
 2. just argocd-status
-   -> expected: `lab` is synced to a revision that matches or post-dates your commit.
+   -> expected: `testing-lab` is synced to a revision that matches or post-dates your commit.
    -> if older: just argocd-sync
 
 3. just argocd-status
-   -> expected: `lab` is Healthy.
+   -> expected: `testing-lab` is Healthy.
    -> if not Healthy: inspect the reported condition, fix the rejected field in git, push again, then repeat step 2.
 
 4. argo template get -n argo <name>
@@ -368,7 +368,7 @@ Expected steady state:
 
 ## 13. llm-d local inference node
 
-`llm-d` is managed by the `lab-infra` ArgoCD Application (`manifests/llm-d.yaml`) and is **enabled by default** with one replica.
+`llm-d` is managed by the `testing-lab-infra` ArgoCD Application (`manifests/llm-d.yaml`) and is **enabled by default** with one replica.
 The vLLM container requests one `amd.com/gpu` device so the ROCm device plugin exposes the GPU into the pod.
 
 **Model choice:** the deployment serves `unsloth/Llama-3.2-3B-Instruct` through vLLM on the OpenAI-compatible endpoint at `http://<ghost-ip>:30800/v1`.
