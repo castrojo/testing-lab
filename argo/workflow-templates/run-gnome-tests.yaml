@@ -51,6 +51,15 @@ spec:
             # image tag used to derive the screenshot slug pushed to GHCR
             # e.g. "testing", "lts-testing", "dakota-testing"
         value: ""
+    outputs:
+      parameters:
+      - name: result
+        valueFrom:
+          path: /tmp/results/result-summary.txt
+      - name: failed-scenarios
+        valueFrom:
+          path: /tmp/results/failed-scenarios.json
+          default: "[]"
       # 60-minute ceiling: SSH wait (10min) + dnf install (10min) + test run (30min)
     activeDeadlineSeconds: 3600
     podSpecPatch: |
@@ -59,7 +68,7 @@ spec:
       tolerations: []
      # outputs.artifacts removed: Argo wait sidecar fails with exit 64 when no
       # artifact repository is configured, even for optional artifacts.
-      # Results are captured via outputs.result (stdout) + kubectl logs.
+      # Result summaries and scenario evidence are explicit file outputs.
     initContainers:
     - name: git-sync
       image: ghcr.io/projectbluefin/lab-runner:latest
@@ -480,6 +489,31 @@ spec:
         if [[ "${SUITE}" != "common" ]]; then
           ${SCP} ${VM_USER}@${VM_HOST}:/tmp/results/. /tmp/results/ || true
         fi
+        if [[ -f /tmp/results/results.json ]]; then
+          python3 - <<'PY'
+        import json
+        import re
+
+        with open("/tmp/results/results.json", encoding="utf-8") as result_file:
+            data = json.load(result_file)
+        safe_name = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,:;()/_+-]{0,159}$")
+        failed_scenarios = []
+        for feature in data:
+            for scenario in feature.get("elements", []):
+                name = scenario.get("name")
+                if (
+                    scenario.get("status") == "failed"
+                    and isinstance(name, str)
+                    and safe_name.fullmatch(name)
+                    and not any(word in name.lower() for word in
+                                ("token", "password", "secret", "authorization"))
+                    and name not in failed_scenarios
+                ):
+                    failed_scenarios.append(name)
+        with open("/tmp/results/failed-scenarios.json", "w", encoding="utf-8") as artifact_file:
+            json.dump(failed_scenarios[:20], artifact_file, separators=(",", ":"))
+        PY
+        fi
 
         # Persist results + screenshots to ghost disk for release evidence
         RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}/${SUITE}"
@@ -525,17 +559,21 @@ spec:
           cat /tmp/results/results.json >&2
           echo "=== END BEHAVE RESULTS ===" >&2
         fi
-        # Only the final result summary goes to stdout (Argo outputs.result)
-        python3 -c "
+        # Publish a result only when structured Behave output exists and can be
+        # parsed. A missing summary must not make an execution failure look
+        # successful to the evidence reconciler.
+        if [[ -f /tmp/results/results.json ]]; then
+          python3 -c "
         import json, sys
-        try:
-            data = json.load(open('/tmp/results/results.json'))
-            failed = sum(1 for f in data for s in f.get('elements',[]) if s.get('status') == 'failed')
-            total  = sum(len(f.get('elements',[])) for f in data)
-            print(f'{total - failed}/{total} scenarios passed')
-        except Exception:
-            print('results.json not found')
-        " 2>/dev/null || echo "(python3 summary unavailable)"
+        data = json.load(open('/tmp/results/results.json'))
+        failed = sum(1 for f in data for s in f.get('elements',[]) if s.get('status') == 'failed')
+        total = sum(len(f.get('elements',[])) for f in data)
+        print(f'{total - failed}/{total} scenarios passed')
+          " > /tmp/results/result-summary.txt 2>/dev/null || {
+            rm -f /tmp/results/result-summary.txt
+            echo "ERROR: unable to derive result summary from results.json" >&2
+          }
+        fi
         # Re-raise behave's exit code so Argo marks the step failed on test failures.
         exit ${BEHAVE_RC}
         } < /dev/null

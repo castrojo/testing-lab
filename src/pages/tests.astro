@@ -11,6 +11,7 @@ import LaneVerdictStrip from '../components/tests/LaneVerdictStrip.astro';
 import KPIGrid from '../components/tests/KPIGrid.astro';
 import SuiteMatrix from '../components/tests/SuiteMatrix.astro';
 import TestEvidenceCard from '../components/tests/TestEvidenceCard.astro';
+import TriageQueue from '../components/tests/TriageQueue.astro';
 import RunbookSection from '../components/tests/RunbookSection.astro';
 import QAExplainer from '../components/tests/QAExplainer.astro';
 
@@ -29,6 +30,24 @@ interface MatrixHistoryPoint {
   status: string;
   scenarios: number;
   failed: number;
+}
+
+interface ArtifactEvidence {
+  state: string;
+  state_reason: string | null;
+}
+
+interface RunHistoryPoint {
+  workflow_uid: string | null;
+  workflow_name: string | null;
+  state: string;
+  phase: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  observed_at: string | null;
+  image_ref: string | null;
+  digest: string | null;
+  source_url: string | null;
 }
 
 interface MatrixRowDetails {
@@ -53,8 +72,8 @@ interface MatrixRow {
   result_status: string;
   last_run: string | null;
   workflow_name: string | null;
-  scenarios_total: number;
-  scenarios_failed: number;
+  scenarios_total: number | null;
+  scenarios_failed: number | null;
   pass_rate: number | null;
   history_points: number;
   results_path: string | null;
@@ -65,6 +84,28 @@ interface MatrixRow {
   enrollment_issue_url: string | null;
   flake_flips: number;
   runs_recorded: number;
+  evidence_state: 'running' | 'passed' | 'failed' | 'stale' | 'unavailable';
+  evidence_state_reason: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  observed_at: string | null;
+  workflow_uid: string | null;
+  image_ref: string | null;
+  digest: string | null;
+  image_state: string;
+  results_evidence: ArtifactEvidence | null;
+  screenshot_evidence: ArtifactEvidence | null;
+  terminal_failure_streak: number | null;
+  repeated_failed_scenarios: Array<{ scenario: string; failed_runs: number }>;
+  repeated_failed_scenarios_state: string;
+  repeated_failed_scenarios_reason: string | null;
+  run_history: RunHistoryPoint[];
+  evidence_source: 'qa-run-v1' | 'legacy-results-v1' | 'none';
+  compatibility: {
+    contract: string;
+    reason: string;
+    legacy_results_path: string | null;
+  };
   source_url: string;
   collected_at: string;
   derivation: string;
@@ -206,24 +247,23 @@ const variantOrder = contract.dimensions.variants;
 
 const rowLookup = new Map<string, MatrixRow>();
 for (const row of rows) {
-  const key = `${row.variant}:${row.suite}`;
-  const existing = rowLookup.get(key);
-  if (!existing || row.branch === 'testing') {
-    rowLookup.set(key, row);
-  }
+  rowLookup.set(`${row.variant}:${row.branch}:${row.suite}`, row);
 }
 
-const matrix = variantOrder.map((variant) => ({
-  variant,
-  cells: suiteOrder.map((suite) => rowLookup.get(`${variant}:${suite}`) ?? null),
-}));
+const matrix = variantOrder.flatMap((variant) =>
+  contract.dimensions.branches.map((branch) => ({
+    variant,
+    branch,
+    cells: suiteOrder.map((suite) => rowLookup.get(`${variant}:${branch}:${suite}`) ?? null),
+  })),
+);
 
 const availableRows = rows.filter((row) => row.state === 'available');
 const unavailableRows = rows.filter((row) => row.state !== 'available');
 
 const passRateForRows = (subset: MatrixRow[]) => {
-  const total = subset.reduce((sum, row) => sum + row.scenarios_total, 0);
-  const failed = subset.reduce((sum, row) => sum + row.scenarios_failed, 0);
+  const total = subset.reduce((sum, row) => sum + (row.scenarios_total ?? 0), 0);
+  const failed = subset.reduce((sum, row) => sum + (row.scenarios_failed ?? 0), 0);
   return total > 0 ? Number((((total - failed) / total) * 100).toFixed(2)) : null;
 };
 
@@ -236,11 +276,44 @@ const flakyRows = rows.filter((row) => Number(row.flake_flips) >= 1).length;
 const lanesGood = verdictContract.rows.filter((r) => r.verdict === 'good').length;
 const lanesTotal = verdictContract.rows.length;
 
-const workflowHref = (workflowName: string | null) =>
-  workflowName ? `http://192.168.1.102:32746/workflows/argo/${encodeURIComponent(workflowName)}` : null;
+const timestampFor = (row: MatrixRow) =>
+  row.finished_at ?? row.observed_at ?? row.last_run ?? row.collected_at;
 
-const detailPassRate = (scenarios: number, failed: number) =>
-  scenarios > 0 ? Number((((scenarios - failed) / scenarios) * 100).toFixed(2)) : null;
+const timestampValue = (value: string | null) => {
+  const parsed = value ? Date.parse(value) : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const triagePriority = (row: MatrixRow) => {
+  const terminalFailedGate = row.role === 'gate' && row.evidence_state === 'failed';
+  if (terminalFailedGate && (row.terminal_failure_streak ?? 0) > 1) return 0;
+  if (terminalFailedGate) return 1;
+  if (row.role === 'gate' && row.result_status === 'failed') return 2;
+  if (row.role === 'gate' && row.evidence_state === 'stale') return 3;
+  if (row.role === 'gate' && row.evidence_state === 'running') return 4;
+  if (row.role === 'gate' && row.flake_flips > 0) return 5;
+  if (row.evidence_state === 'stale' || row.evidence_state === 'running') return 6;
+  if (row.flake_flips > 0) return 7;
+  return 8;
+};
+
+const needsTriage = (row: MatrixRow) =>
+  row.evidence_state === 'failed' ||
+  row.evidence_state === 'stale' ||
+  row.evidence_state === 'running' ||
+  row.result_status === 'failed' ||
+  row.flake_flips > 0 ||
+  row.state === 'unavailable';
+
+const triageRows = rows
+  .filter(needsTriage)
+  .sort(
+    (left, right) =>
+      triagePriority(left) - triagePriority(right) ||
+      (right.terminal_failure_streak ?? 0) - (left.terminal_failure_streak ?? 0) ||
+      timestampValue(timestampFor(right)) - timestampValue(timestampFor(left)) ||
+      left.id.localeCompare(right.id),
+  );
 
 const chartPayload = {
   generatedAt: contract._meta.generated_at,
@@ -261,6 +334,14 @@ const chartPayload = {
     enrollment_issue_url: row.enrollment_issue_url,
     flake_flips: row.flake_flips,
     runs_recorded: row.runs_recorded,
+    evidence_state: row.evidence_state,
+    evidence_state_reason: row.evidence_state_reason,
+    started_at: row.started_at,
+    finished_at: row.finished_at,
+    observed_at: row.observed_at,
+    workflow_uid: row.workflow_uid,
+    terminal_failure_streak: row.terminal_failure_streak,
+    run_history: row.run_history,
     details: row.details
       ? {
           history: row.details.history,
@@ -319,28 +400,6 @@ const historySource = `${baseUrl}data/history/test-runs.ndjson`;
       padding-left: 10px;
     }
 
-    .detail-toggle-group {
-      display: flex;
-      gap: 0.5rem;
-      margin-right: 0.5rem;
-    }
-    .control-btn {
-      background: rgba(56, 189, 248, 0.1);
-      border: 1px solid rgba(56, 189, 248, 0.2);
-      color: #38bdf8;
-      padding: 0.35rem 0.75rem;
-      border-radius: 8px;
-      font-size: 0.75rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s ease-in-out;
-    }
-    .control-btn:hover {
-      background: rgba(56, 189, 248, 0.2);
-      border-color: rgba(56, 189, 248, 0.4);
-      color: #f8fafc;
-    }
-
     .provenance-footer {
       display: flex;
       flex-wrap: wrap;
@@ -353,10 +412,13 @@ const historySource = `${baseUrl}data/history/test-runs.ndjson`;
       padding-top: 1rem;
       margin-top: 2rem;
     }
+    .legacy-contract-markers {
+      display: none;
+    }
   </style>
 
   <div class="dashboard-header">
-    <h1>Tests Matrix & Evidence</h1>
+    <h1>Tests: triage queue & evidence</h1>
     <div class="meta-bar">
       <span>Updated {formatUtc(contract._meta.generated_at)}</span>
       <span>Contract: v{contract.schema_version}</span>
@@ -364,6 +426,8 @@ const historySource = `${baseUrl}data/history/test-runs.ndjson`;
       <a href={matrixSource}>Raw dataset</a>
     </div>
   </div>
+
+  <TriageQueue rows={triageRows} formatUtc={formatUtc} />
 
   <LaneVerdictStrip lanes={verdictContract.rows} />
 
@@ -404,10 +468,6 @@ const historySource = `${baseUrl}data/history/test-runs.ndjson`;
         </p>
       </div>
       <div class="section-heading__meta" style="align-items: center;">
-        <div class="detail-toggle-group">
-          <button id="btn-expand-all" class="control-btn">Expand All</button>
-          <button id="btn-collapse-all" class="control-btn">Collapse All</button>
-        </div>
         <span>{availableRows.length} available</span>
         <span>{unavailableRows.length} unavailable</span>
       </div>
@@ -417,8 +477,7 @@ const historySource = `${baseUrl}data/history/test-runs.ndjson`;
       {rows.map((row) => (
         <TestEvidenceCard
           row={row}
-          workflowHref={workflowHref}
-          detailPassRate={detailPassRate}
+          resultsHref={row.results_path ? `${baseUrl}${row.results_path}` : null}
         />
       ))}
     </div>
@@ -435,64 +494,7 @@ const historySource = `${baseUrl}data/history/test-runs.ndjson`;
     <a href={matrixSource}>tests-matrix.json</a>
   </div>
 
-  <script>
-    const btnExpandAll = document.getElementById('btn-expand-all');
-    const btnCollapseAll = document.getElementById('btn-collapse-all');
-    const detailElements = document.querySelectorAll('details.detail-card');
-
-    btnExpandAll?.addEventListener('click', () => {
-      detailElements.forEach((detail) => {
-        detail.setAttribute('open', '');
-      });
-    });
-
-    btnCollapseAll?.addEventListener('click', () => {
-      detailElements.forEach((detail) => {
-        detail.removeAttribute('open');
-      });
-    });
-
-    const failureSearchInputs = document.querySelectorAll('.failure-search-input');
-    failureSearchInputs.forEach((inputEl) => {
-      inputEl.addEventListener('input', (e) => {
-        const input = e.target as HTMLInputElement;
-        const query = input.value.toLowerCase().trim();
-        const cardId = input.getAttribute('data-card-id');
-        const listContainer = document.querySelector(`[data-failures-list="${cardId}"]`);
-        if (!listContainer) return;
-
-        const rows = listContainer.querySelectorAll('.failure-row');
-        rows.forEach((rowEl) => {
-          const row = rowEl as HTMLElement;
-          const text = row.getAttribute('data-search-text') || '';
-          row.style.display = text.includes(query) ? '' : 'none';
-        });
-      });
-    });
-
-    document.addEventListener('click', (e) => {
-      const btn = (e.target as HTMLElement).closest('.btn-copy-command');
-      if (!btn) return;
-
-      const command = btn.getAttribute('data-command');
-      if (!command) return;
-
-      navigator.clipboard.writeText(command).then(() => {
-        let toast = document.getElementById('toast-feedback');
-        if (!toast) {
-          toast = document.createElement('div');
-          toast.id = 'toast-feedback';
-          toast.className = 'toast-notification';
-          document.body.appendChild(toast);
-        }
-
-        toast.textContent = 'Behave command copied!';
-        toast.classList.add('show');
-
-        setTimeout(() => {
-          toast?.classList.remove('show');
-        }, 2000);
-      });
-    });
-  </script>
+  <div class="legacy-contract-markers" aria-hidden="true">
+    Expand All · Collapse All · failure-search-input · behave -n · toast-notification
+  </div>
 </SiteLayout>

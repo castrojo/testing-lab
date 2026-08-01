@@ -57,6 +57,10 @@ spec:
         valueFrom:
           path: /tmp/results/result-summary.txt
           default: "No results generated"
+      - name: failed-scenarios
+        valueFrom:
+          path: /tmp/results/failed-scenarios.json
+          default: "[]"
     initContainers:
     - name: git-sync
       image: cgr.dev/chainguard/git:latest
@@ -409,13 +413,30 @@ spec:
         if [[ -f /tmp/results/results.json ]]; then
           python3 - <<'PY'
         import json
+        import re
 
         with open("/tmp/results/results.json", encoding="utf-8") as result_file:
             data = json.load(result_file)
+        safe_name = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,:;()/_+-]{0,159}$")
         failed = sum(
             1 for feature in data for scenario in feature.get("elements", [])
             if scenario.get("status") == "failed"
         )
+        failed_scenarios = []
+        for feature in data:
+            for scenario in feature.get("elements", []):
+                name = scenario.get("name")
+                if (
+                    scenario.get("status") == "failed"
+                    and isinstance(name, str)
+                    and safe_name.fullmatch(name)
+                    and not any(word in name.lower() for word in
+                                ("token", "password", "secret", "authorization"))
+                    and name not in failed_scenarios
+                ):
+                    failed_scenarios.append(name)
+        with open("/tmp/results/failed-scenarios.json", "w", encoding="utf-8") as artifact_file:
+            json.dump(failed_scenarios[:20], artifact_file, separators=(",", ":"))
         total = sum(len(feature.get("elements", [])) for feature in data)
         summary = f"{total - failed}/{total} scenarios passed"
         with open("/tmp/results/result-summary.txt", "w", encoding="utf-8") as summary_file:

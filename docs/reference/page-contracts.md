@@ -68,9 +68,17 @@ Purpose: one row per `(variant, branch, suite)` result for the `/tests` page.
 | `id` | Stable matrix key (`bluefin-testing-smoke`) |
 | `variant` / `branch` / `suite` | Page filter dimensions |
 | `role` | `"gate"` for gating suites (`smoke`, `system`, `flatcar`) or `"info"` for informational suites (`developer`, `software`, `common`) |
-| `result_status` | Published status from `docs/results/*.json` |
-| `last_run` | Workflow completion time for the current cell |
-| `workflow_name` | Workflow evidence for drill-down |
+| `result_status` / `state` / `last_run` | **Compatibility projection** for existing dashboard consumers. New consumers must use `evidence_state`, `evidence_state_reason`, and exact lifecycle fields. |
+| `evidence_state` | Canonical current state: `running`, `passed`, `failed`, `stale`, or `unavailable`. |
+| `evidence_state_reason` | Explicit explanation for running, stale, and unavailable evidence. `null` only for fresh terminal passed/failed evidence. |
+| `started_at` / `finished_at` / `observed_at` | Exact UTC timestamps from the selected immutable QA-run snapshot; never derived from a result filename or collector clock. |
+| `workflow_uid` / `workflow_name` | Selected current Workflow identity. |
+| `image_ref` / `digest` / `image_state` | Tested image metadata from the QA-run record. Digest stays `null` when the workflow did not carry an exact digest. |
+| `results_evidence` / `screenshot_evidence` | Artifact availability and reason copied from the QA-run record. A screenshot URL remains `null` unless an actual static public URL is published. |
+| `run_history[]` | One selected immutable snapshot per Workflow UID, sorted by observed execution time; includes exact timestamps, image metadata, and the static public evidence URL. |
+| `terminal_failure_streak` | Number of consecutive terminal failures ending at the latest terminal run; `null` for the legacy compatibility projection. |
+| `repeated_failed_scenarios[]` | Scenario names appearing in two or more terminal failure records when the optional canonical scenario extension is present. Otherwise it is empty with `repeated_failed_scenarios_state: unavailable`; names are never inferred from aggregate counts. |
+| `evidence_source` | `qa-run-v1` for canonical immutable evidence, `legacy-results-v1` for the temporary result-file compatibility projection, or `none` for unenrolled cells. |
 | `scenarios_total` / `scenarios_failed` | Current scenario counts |
 | `pass_rate` | Derived percentage or `null` when unavailable |
 | `history_points` | Count of historical entries already published |
@@ -80,6 +88,28 @@ Purpose: one row per `(variant, branch, suite)` result for the `/tests` page.
 | `flake_flips` | Number of pass/fail status transitions across the row's recorded run history |
 | `runs_recorded` | Number of runs recorded for this row in `docs/data/history/test-runs.ndjson` |
 | `source_url` / `collected_at` / `derivation` | Provenance for the row |
+
+### QA-run derivation rules
+
+The canonical source is `docs/data/history/qa-runs.ndjson`, produced under the
+QA-run evidence contract. Its append-only snapshots are selected by the **exact**
+`(variant, branch, suite)` key. A comma-separated multi-suite Workflow is not
+assigned to individual suite cells because it lacks per-suite evidence.
+
+Snapshots for one `workflow_uid` are collapsed to its terminal snapshot when
+available; otherwise its newest observation is retained. The current run is the
+newest selected Workflow by terminal finish time (terminal) or observation time
+(non-terminal). Freshness is **24 hours**: exactly 24 hours is fresh; anything
+older is `stale`. A non-terminal workflow within that window is `running`.
+Terminal `Succeeded` is `passed`; every other terminal phase is `failed`, even
+when it failed before producing result output. This preserves an early
+infrastructure failure without fabricating scenario totals.
+
+`state`, `result_status`, and `last_run` are deliberately retained as a
+compatibility mapping for existing static dashboard components. New work must
+read the canonical `evidence_*` fields. Until a cell has a matching single-suite
+QA-run record, its older `docs/results/*.json` values are exposed only through
+that compatibility mapping and canonical lifecycle fields stay unavailable.
 
 ## `docs/data/applications-matrix.json`
 
@@ -303,6 +333,20 @@ Consumer: `/tests` page and index triage mini-suite indicators.
 | `digest` | string or null | Tested image digest when known |
 
 Dedup key: `(variant, branch, suite, workflow_name)`.
+
+### `docs/data/history/qa-runs.ndjson`
+
+This is the canonical immutable source for current and historical `/tests`
+evidence. It is defined by
+[`qa-run-evidence-contract.md`](qa-run-evidence-contract.md), validated by
+`schemas/v2/qa-run.schema.json`, and is append-only by `snapshot_id`.
+
+The page-data generator does not synthesize result counts, scenario names,
+timestamps, digests, screenshots, or public evidence URLs. It accepts only the
+record's static public `provenance.source_url`; private Argo workflow URLs are
+always unavailable. `docs/data/history/test-runs.ndjson` and
+`docs/results/*.json` remain legacy compatibility inputs until every matrix
+cell publishes an exact single-suite QA-run record.
 
 ### `docs/data/history/build-runs.ndjson`
 

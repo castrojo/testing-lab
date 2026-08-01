@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://factory.projectbluefin.io/schemas/v2/qa-run.schema.json",
+  "title": "QA workflow evidence snapshot",
+  "type": "object",
+  "required": ["schema_version", "plane", "record_type", "snapshot_id", "workflow_uid", "workflow_name", "observed_at", "lifecycle", "lane", "image", "artifacts", "failure", "provenance"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "plane": {"const": "lab"},
+    "record_type": {"const": "qa-run"},
+    "snapshot_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "workflow_uid": {"$ref": "#/$defs/nonEmptyString"},
+    "workflow_name": {"$ref": "#/$defs/nonEmptyString"},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "lifecycle": {"$ref": "#/$defs/lifecycle"},
+    "lane": {"$ref": "#/$defs/lane"},
+    "image": {"$ref": "#/$defs/image"},
+    "artifacts": {"$ref": "#/$defs/artifacts"},
+    "failure": {"$ref": "#/$defs/failure"},
+    "provenance": {"$ref": "#/$defs/provenance"}
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "lifecycle": {
+            "properties": {"state": {"const": "running"}}
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "failure": {
+            "properties": {
+              "state": {"const": "unavailable"},
+              "phase": {"const": null}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "lifecycle": {
+            "properties": {"phase": {"const": "Succeeded"}}
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "failure": {
+            "properties": {
+              "state": {"const": "none"},
+              "phase": {"const": null}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "lifecycle": {
+            "properties": {"phase": {"enum": ["Failed", "Error", "Terminated"]}}
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "failure": {
+            "properties": {"state": {"const": "failed"}}
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "nullableNonEmptyString": {"type": ["string", "null"], "minLength": 1},
+    "terminalPhase": {"enum": ["Succeeded", "Failed", "Error", "Terminated"]},
+    "lifecycle": {
+      "type": "object",
+      "required": ["state", "phase", "created_at", "started_at", "finished_at"],
+      "properties": {
+        "state": {"enum": ["running", "terminal"]},
+        "phase": {"$ref": "#/$defs/nonEmptyString"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "started_at": {"type": ["string", "null"], "format": "date-time"},
+        "finished_at": {"type": ["string", "null"], "format": "date-time"}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "running"}}},
+          "then": {
+            "properties": {
+              "phase": {"not": {"$ref": "#/$defs/terminalPhase"}},
+              "finished_at": {"const": null}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"state": {"const": "terminal"}}},
+          "then": {
+            "properties": {
+              "phase": {"$ref": "#/$defs/terminalPhase"},
+              "started_at": {"type": "string", "format": "date-time"},
+              "finished_at": {"type": "string", "format": "date-time"}
+            }
+          }
+        }
+      ]
+    },
+    "lane": {
+      "type": "object",
+      "required": ["name", "variant", "branch", "suite", "state", "state_reason"],
+      "properties": {
+        "name": {"$ref": "#/$defs/nullableNonEmptyString"},
+        "variant": {"$ref": "#/$defs/nullableNonEmptyString"},
+        "branch": {"$ref": "#/$defs/nullableNonEmptyString"},
+        "suite": {"$ref": "#/$defs/nullableNonEmptyString"},
+        "state": {"enum": ["available", "unavailable"]},
+        "state_reason": {"$ref": "#/$defs/nullableNonEmptyString"}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "available"}}},
+          "then": {
+            "properties": {
+              "name": {"$ref": "#/$defs/nonEmptyString"},
+              "variant": {"$ref": "#/$defs/nonEmptyString"},
+              "branch": {"$ref": "#/$defs/nonEmptyString"},
+              "suite": {"$ref": "#/$defs/nonEmptyString"},
+              "state_reason": {"const": null}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"state": {"const": "unavailable"}}},
+          "then": {"properties": {"state_reason": {"$ref": "#/$defs/nonEmptyString"}}}
+        }
+      ]
+    },
+    "image": {
+      "type": "object",
+      "required": ["reference", "digest", "state", "state_reason"],
+      "properties": {
+        "reference": {"$ref": "#/$defs/nullableNonEmptyString"},
+        "digest": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$"},
+        "state": {"enum": ["available", "unavailable"]},
+        "state_reason": {"$ref": "#/$defs/nullableNonEmptyString"}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "available"}}},
+          "then": {
+            "properties": {
+              "reference": {"$ref": "#/$defs/nonEmptyString"},
+              "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+              "state_reason": {"const": null}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"state": {"const": "unavailable"}}},
+          "then": {"properties": {"state_reason": {"$ref": "#/$defs/nonEmptyString"}}}
+        }
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["state", "state_reason", "provenance"],
+      "properties": {
+        "state": {"enum": ["available", "unavailable", "not_applicable"]},
+        "state_reason": {"$ref": "#/$defs/nullableNonEmptyString"},
+        "provenance": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "available"}}},
+          "then": {"properties": {"state_reason": {"const": null}}}
+        },
+        {
+          "if": {"properties": {"state": {"enum": ["unavailable", "not_applicable"]}}},
+          "then": {"properties": {"state_reason": {"$ref": "#/$defs/nonEmptyString"}}}
+        }
+      ]
+    },
+    "artifacts": {
+      "type": "object",
+      "required": ["results", "screenshot"],
+      "properties": {
+        "results": {"$ref": "#/$defs/resultsArtifact"},
+        "screenshot": {"$ref": "#/$defs/artifact"}
+      },
+      "additionalProperties": false
+    },
+    "resultsArtifact": {
+      "type": "object",
+      "required": ["state", "state_reason", "provenance"],
+      "properties": {
+        "state": {"enum": ["available", "unavailable", "not_applicable"]},
+        "state_reason": {"$ref": "#/$defs/nullableNonEmptyString"},
+        "provenance": {"$ref": "#/$defs/nonEmptyString"},
+        "failed_scenarios": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9 .,:;()/_+-]{0,159}$",
+            "not": {
+              "pattern": "(?i:token|password|secret|authorization)"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "available"}}},
+          "then": {"properties": {"state_reason": {"const": null}}}
+        },
+        {
+          "if": {"properties": {"state": {"enum": ["unavailable", "not_applicable"]}}},
+          "then": {"properties": {"state_reason": {"$ref": "#/$defs/nonEmptyString"}}}
+        },
+        {
+          "if": {"required": ["failed_scenarios"]},
+          "then": {"properties": {"state": {"const": "available"}}}
+        }
+      ]
+    },
+    "failure": {
+      "type": "object",
+      "required": ["state", "phase"],
+      "properties": {
+        "state": {"enum": ["none", "failed", "unavailable"]},
+        "phase": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "failed"}}},
+          "then": {"properties": {"phase": {"enum": ["Failed", "Error", "Terminated"]}}}
+        },
+        {
+          "if": {"properties": {"state": {"enum": ["none", "unavailable"]}}},
+          "then": {"properties": {"phase": {"const": null}}}
+        }
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["source_kind", "source_namespace", "source_name", "source_uid", "source_url", "workflow_url", "workflow_url_state", "workflow_url_reason"],
+      "properties": {
+        "source_kind": {"const": "argoproj.io/Workflow"},
+        "source_namespace": {"const": "argo"},
+        "source_name": {"$ref": "#/$defs/nonEmptyString"},
+        "source_uid": {"$ref": "#/$defs/nonEmptyString"},
+        "source_url": {"const": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"},
+        "workflow_url": {"const": null},
+        "workflow_url_state": {"const": "unavailable"},
+        "workflow_url_reason": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

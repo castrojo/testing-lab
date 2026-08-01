@@ -29,12 +29,13 @@ SSH into a guest.
 
 | Parameter | Default | Notes |
 |---|---|---|
-| `image` | `ghcr.io/projectbluefin/bluefin` | Published OCI image repository. |
-| `image-tag` | `testing` | Image tag to test. |
-| `suites` | `smoke,common,developer,software,system` | Comma list of supported suites. |
-| `variant` | `bluefin` | Selects test fixtures. |
-| `branch` | `main` | Lab branch passed to the workflow metadata. |
-| `testsuite-branch` | `main` | `projectbluefin/testsuite` branch to clone. |
+| `image` | `ghcr.io/ublue-os/bluefin` | Source image. Tag is appended from `image-tag` for some callers; pass with tag if invoking directly. |
+| `image-tag` | `latest` | `latest`, `lts`, etc. Also used as the golden-disk dir name. |
+| `image-digest` | empty | Optional exact OCI digest. Digest-triggered callers pass it so QA runs the observed image, not a moving tag. |
+| `namespace` | `bluefin-test` | KubeVirt VM namespace. Use `bluefin-lts-test` for LTS. |
+| `suites` | `smoke,developer` | Comma list; valid: `smoke`, `developer`, `software`. |
+| `variant` | `bluefin` | Selects test fixtures (e.g. `dakota` for Ghostty). |
+| `ssh-key-secret` | `bluefin-test-ssh-key` | Secret in `argo` ns with `id_ed25519`. |
 
 Wall-clock: depends on the selected suite set and container-qa semaphore.
 

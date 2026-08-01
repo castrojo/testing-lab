@@ -1,36 +1,20 @@
 ---
-import { existsSync } from 'node:fs';
-import path from 'node:path';
-
-interface MatrixHistoryPoint {
-  run_date: string;
-  workflow_name: string | null;
-  status: string;
-  scenarios: number;
-  failed: number;
-  duration_seconds?: number;
+interface ArtifactEvidence {
+  state: string;
+  state_reason: string | null;
 }
 
-interface FailedScenarioDetailed {
-  scenario_name: string;
-  duration_seconds: number;
-  failing_step: string;
-  error_message: string;
-}
-
-interface MatrixRowDetails {
-  variant: string;
-  suite: string;
-  last_run: string | null;
+interface RunHistoryPoint {
+  workflow_uid: string | null;
   workflow_name: string | null;
-  status: string;
-  scenarios: number;
-  failed: number;
-  failed_scenarios?: string[];
-  failed_scenarios_detailed?: FailedScenarioDetailed[];
-  screenshot_url?: string | null;
-  history: MatrixHistoryPoint[];
-  duration_seconds?: number;
+  state: string;
+  phase: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  observed_at: string | null;
+  image_ref: string | null;
+  digest: string | null;
+  source_url: string | null;
 }
 
 interface MatrixRow {
@@ -41,1008 +25,307 @@ interface MatrixRow {
   role: string;
   result_status: string;
   last_run: string | null;
-  workflow_name: string | null;
-  scenarios_total: number;
-  scenarios_failed: number;
+  scenarios_total: number | null;
+  scenarios_failed: number | null;
   pass_rate: number | null;
-  history_points: number;
-  results_path: string;
-  screenshot_path: string | null;
-  screenshot_url: string | null;
   state: string;
   state_reason: string | null;
   enrollment_issue_url: string | null;
+  flake_flips: number;
+  runs_recorded: number;
+  evidence_state: string;
+  evidence_state_reason: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  observed_at: string | null;
+  workflow_uid: string | null;
+  image_ref: string | null;
+  digest: string | null;
+  image_state: string;
+  results_evidence: ArtifactEvidence | null;
+  screenshot_evidence: ArtifactEvidence | null;
+  terminal_failure_streak: number | null;
+  repeated_failed_scenarios: Array<{ scenario: string; failed_runs: number }>;
+  repeated_failed_scenarios_state: string;
+  repeated_failed_scenarios_reason: string | null;
+  run_history: RunHistoryPoint[];
+  evidence_source: string;
+  results_path: string | null;
+  screenshot_url: string | null;
   source_url: string;
   collected_at: string;
-  derivation: string;
-  details: MatrixRowDetails | null;
 }
-
-const issueNumber = (url: string | null): number | null => {
-  if (!url) return null;
-  const match = url.match(/\/issues\/(\d+)$/);
-  return match ? parseInt(match[1], 10) : null;
-};
 
 interface Props {
   row: MatrixRow;
-  workflowHref: (workflowName: string | null) => string | null;
-  detailPassRate: (scenarios: number, failed: number) => number | null;
+  resultsHref: string | null;
 }
 
-const { row, workflowHref, detailPassRate } = Astro.props;
+const { row, resultsHref } = Astro.props;
 
-const hasScreenshot = !!(row.screenshot_url || (row.screenshot_path && existsSync(path.join(process.cwd(), 'docs', row.screenshot_path))));
+const formatUtc = (value: string | null) =>
+  value
+    ? new Date(value).toLocaleString('en-US', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+        timeZone: 'UTC',
+      }) + ' UTC'
+    : 'Unavailable';
 
-const formatDuration = (seconds?: number) => {
-  if (seconds === undefined || seconds <= 0) return '—';
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.round(seconds % 60);
-  return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+const selectedTimestamp = row.finished_at ?? row.observed_at ?? row.last_run;
+const selectedState = row.evidence_source === 'qa-run-v1' ? row.evidence_state : row.result_status;
+const isNotEnrolled = Boolean(row.enrollment_issue_url);
+const resultsState = row.results_evidence?.state ?? (resultsHref ? 'available' : 'unavailable');
+const screenshotState = row.screenshot_evidence?.state ?? (row.screenshot_url ? 'available' : 'unavailable');
+const shortDigest = row.digest ? `${row.digest.slice(0, 19)}…` : 'Unavailable';
+
+const statusLabel = (state: string) => {
+  if (state === 'failed' && row.role === 'gate') return 'Terminal failed gate';
+  if (state === 'running') return 'Running';
+  if (state === 'stale') return 'Stale evidence';
+  if (state === 'unavailable') return isNotEnrolled ? 'Not enrolled' : 'Unavailable';
+  return state;
 };
-
-const history = row.details?.history || [];
-const passRates = history.map((h) => {
-  const scenarios = h.scenarios;
-  const failed = h.failed;
-  return scenarios > 0 ? Number((((scenarios - failed) / scenarios) * 100).toFixed(2)) : null;
-}).filter((r): r is number => r !== null);
-
-const avgPassRate = passRates.length ? Math.round(passRates.reduce((a, b) => a + b, 0) / passRates.length) : null;
-const maxFailed = history.length ? Math.max(...history.map(h => h.failed)) : 0;
-const failureDelta = history.length >= 2 ? history[0].failed - history[1].failed : null;
-
-const streakCount = (() => {
-  if (!history.length) return { status: 'passed', count: 0 };
-  const targetStatus = history[0].status;
-  let count = 0;
-  for (const entry of history) {
-    if (entry.status === targetStatus) {
-      count++;
-    } else {
-      break;
-    }
-  }
-  return { status: targetStatus, count };
-})();
 ---
 
-<style>
-  /* Definition list vertical spacing overrides */
-  dl {
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-  dl div {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.35rem 0;
-    border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
-  }
-  dl div:last-child {
-    border-bottom: none;
-  }
-  dt {
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: #94a3b8;
-  }
-  dd {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: #cbd5e1;
-    margin: 0;
-    text-align: right;
-  }
-
-  /* Evidence button cards grid */
-  .evidence-cards-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 0.75rem;
-    margin-top: 0.75rem;
-  }
-  .evidence-btn-card {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    background: rgba(15, 23, 42, 0.45);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
-    padding: 0.75rem 1rem;
-    text-decoration: none;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  .evidence-btn-card:hover {
-    background: rgba(56, 189, 248, 0.08);
-    border-color: rgba(56, 189, 248, 0.3);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  }
-  .evidence-btn-icon {
-    color: #38bdf8;
-    flex-shrink: 0;
-  }
-  .evidence-btn-info {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-  .evidence-btn-title {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: #cbd5e1;
-  }
-  .evidence-btn-desc {
-    font-size: 0.7rem;
-    color: #64748b;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* Collapsible history section */
-  .history-table-collapsible {
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    background: rgba(15, 23, 42, 0.25);
-    border-radius: 12px;
-    margin-top: 1rem;
-    overflow: hidden;
-  }
-  .history-table-collapsible[open] {
-    border-color: rgba(56, 189, 248, 0.25);
-  }
-  .history-table-summary {
-    list-style: none;
-    cursor: pointer;
-    padding: 0.75rem 1rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: #cbd5e1;
-    user-select: none;
-  }
-  .history-table-summary::-webkit-details-marker {
-    display: none;
-  }
-  .history-table-summary:hover {
-    background: rgba(255, 255, 255, 0.02);
-    color: #f8fafc;
-  }
-  .history-table-summary .summary-icon {
-    transition: transform 0.2s ease;
-    color: #64748b;
-  }
-  .history-table-collapsible[open] .history-table-summary .summary-icon {
-    transform: rotate(180deg);
-    color: #38bdf8;
-  }
-
-  /* Prevent horizontal overflow by letting grid item shrink */
-  .detail-grid > article {
-    min-width: 0;
-  }
-
-  /* Override global wide-table grid column rule for split grid */
-  .detail-grid--split > article {
-    grid-column: span 1 !important;
-    min-width: 0;
-  }
-  @media (max-width: 900px) {
-    .detail-grid--split > article {
-      grid-column: 1 / -1 !important;
-    }
-  }
-
-  /* ── Dot timelines ───────────────────────────────────────── */
-  .history-timeline {
-    margin-top: 1.5rem;
-    padding: 1rem 1.25rem;
-    background: rgba(15, 23, 42, 0.45);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 1rem;
-  }
-  .timeline-label {
-    font-size: 0.82rem;
-    font-weight: 700;
-    color: #94a3b8;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  .timeline-dots {
-    display: flex;
-    gap: 0.35rem;
-  }
-  .dot {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    cursor: pointer;
-    position: relative;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-  }
-  .dot:hover {
-    transform: scale(1.3);
-  }
-  .dot.passed {
-    background: #10b981;
-    box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
-  }
-  .dot.failed {
-    background: #f43f5e;
-    box-shadow: 0 0 8px rgba(244, 63, 94, 0.4);
-  }
-  
-  /* Simple dynamic CSS Tooltip */
-  .dot::after {
-    content: attr(data-tooltip);
-    position: absolute;
-    bottom: 150%;
-    left: 50%;
-    transform: translateX(-50%) scale(0.85);
-    background: rgba(15, 23, 42, 0.95);
-    border: 1px solid rgba(125, 211, 252, 0.3);
-    color: #f8fafc;
-    padding: 0.4rem 0.6rem;
-    border-radius: 6px;
-    font-size: 0.72rem;
-    white-space: nowrap;
-    pointer-events: none;
-    opacity: 0;
-    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-    z-index: 10;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-  }
-  .dot:hover::after {
-    opacity: 1;
-    transform: translateX(-50%) scale(1);
-  }
-
-  /* ── Interactive failure rows ────────────────────────────── */
-  .failure-search-wrapper {
-    margin-bottom: 0.75rem;
-    position: relative;
-  }
-  .failure-search-input {
-    width: 100%;
-    background: rgba(15, 23, 42, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #cbd5e1;
-    padding: 0.45rem 0.75rem 0.45rem 2rem;
-    border-radius: 8px;
-    font-size: 0.8rem;
-    outline: none;
-    transition: all 0.2s;
-  }
-  .failure-search-input:focus {
-    border-color: rgba(244, 63, 94, 0.4);
-    box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.15);
-  }
-  .failure-search-icon {
-    position: absolute;
-    left: 0.65rem;
-    top: 50%;
-    transform: translateY(-50%);
-    color: #475569;
-    pointer-events: none;
-  }
-  
-  .failures-list-container {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    max-height: 380px;
-    overflow-y: auto;
-    padding-right: 4px;
-    scrollbar-width: thin;
-  }
-  
-  .failure-row {
-    background: rgba(244, 63, 94, 0.03);
-    border: 1px solid rgba(244, 63, 94, 0.1);
-    border-radius: 8px;
-    padding: 0.65rem 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    transition: all 0.2s;
-  }
-  .failure-row:hover {
-    border-color: rgba(244, 63, 94, 0.25);
-    background: rgba(244, 63, 94, 0.05);
-  }
-  .failure-row__header {
-    display: flex;
-    justify-content: space-between;
-    align-items: start;
-    gap: 0.75rem;
-  }
-  .failure-row__name {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: #fca5a5;
-    line-height: 1.4;
-    word-break: break-word;
-  }
-  .failure-row__meta {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    font-size: 0.7rem;
-    color: #64748b;
-    margin-top: 0.15rem;
-  }
-  .failure-row__meta code {
-    background: rgba(0, 0, 0, 0.25);
-    padding: 0.05rem 0.25rem;
-    border-radius: 4px;
-    color: #f43f5e;
-  }
-  .failure-action-btn {
-    background: rgba(244, 63, 94, 0.1);
-    border: 1px solid rgba(244, 63, 94, 0.2);
-    color: #fca5a5;
-    padding: 0.25rem 0.5rem;
-    border-radius: 6px;
-    font-size: 0.7rem;
-    cursor: pointer;
-    font-weight: 500;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    transition: all 0.2s;
-    white-space: nowrap;
-  }
-  .failure-action-btn:hover {
-    background: rgba(244, 63, 94, 0.2);
-    border-color: rgba(244, 63, 94, 0.35);
-    color: #f8fafc;
-  }
-  
-  /* Detailed failure traceback area */
-  .failure-traceback {
-    margin-top: 0.25rem;
-    background: #090d16;
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    border-radius: 6px;
-    padding: 0.5rem 0.75rem;
-    font-family: 'Ptyxis', 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 0.75rem;
-    color: #94a3b8;
-    max-height: 150px;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-
-  /* ── Terminal Mockup ─────────────────────────────────────── */
-  .terminal-mockup {
-    background: #0b0f19;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
-    overflow: hidden;
-    margin-top: 1rem;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
-  }
-  .terminal-header {
-    background: #161b26;
-    padding: 0.5rem 1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  }
-  .terminal-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    display: inline-block;
-  }
-  .terminal-dot.red { background: #ef4444; }
-  .terminal-dot.yellow { background: #f59e0b; }
-  .terminal-dot.green { background: #10b981; }
-  
-  .terminal-title {
-    margin-left: 0.5rem;
-    font-family: monospace;
-    font-size: 0.75rem;
-    color: #64748b;
-  }
-  .terminal-body {
-    padding: 1rem;
-    font-family: 'Ptyxis', 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 0.82rem;
-    color: #cbd5e1;
-    line-height: 1.5;
-    max-height: 300px;
-    overflow-y: auto;
-  }
-  .terminal-line {
-    margin: 0 0 0.5rem 0;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-  .text-red { color: #f43f5e; font-weight: bold; }
-  .text-yellow { color: #f59e0b; }
-  .text-dim { color: #475569; }
-  .text-cyan { color: #38bdf8; }
-
-  /* Success widget for 100% passing suites */
-  .suite-pass-success-widget {
-    background: linear-gradient(180deg, rgba(16, 185, 129, 0.04) 0%, rgba(15, 23, 42, 0.25) 100%);
-    border: 1px solid rgba(16, 185, 129, 0.12);
-    border-radius: 12px;
-    padding: 1.25rem;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.5rem;
-    box-sizing: border-box;
-  }
-  .success-icon-badge {
-    background: rgba(16, 185, 129, 0.15);
-    border: 1px solid rgba(16, 185, 129, 0.25);
-    color: #34d399;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.9rem;
-    font-weight: bold;
-    margin-bottom: 0.25rem;
-  }
-  .suite-pass-success-widget h5 {
-    margin: 0;
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: #f8fafc;
-  }
-  .suite-pass-success-widget p {
-    margin: 0;
-    font-size: 0.82rem;
-    line-height: 1.5;
-    color: #94a3b8;
-  }
-  .suite-pass-success-widget strong {
-    color: #34d399;
-  }
-  .success-run-meta {
-    display: flex;
-    gap: 1rem;
-    font-size: 0.72rem;
-    color: #64748b;
-    margin-top: 0.5rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-    padding-top: 0.5rem;
-    width: 100%;
-  }
-  .success-run-meta strong {
-    color: #cbd5e1;
-  }
-
-  /* Scoped summary styles for high visual density */
-  .detail-card__header-meta {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    margin-top: 0.45rem;
-    flex-wrap: wrap;
-  }
-  .header-badge {
-    font-size: 0.65rem;
-    font-weight: 700;
-    padding: 0.12rem 0.4rem;
-    border-radius: 4px;
-    letter-spacing: 0.02em;
-    text-transform: capitalize;
-  }
-  .header-badge--branch {
-    background: rgba(56, 189, 248, 0.12);
-    color: #38bdf8;
-    border: 1px solid rgba(56, 189, 248, 0.2);
-  }
-  .header-badge--role {
-    font-weight: 800;
-    letter-spacing: 0.06em;
-  }
-  .header-badge--role-gate {
-    background: rgba(244, 63, 94, 0.12);
-    color: #fb7185;
-    border: 1px solid rgba(244, 63, 94, 0.2);
-  }
-  .header-badge--role-info {
-    background: rgba(125, 211, 252, 0.12);
-    color: #7dd3fc;
-    border: 1px solid rgba(125, 211, 252, 0.2);
-  }
-  .header-badge--mode {
-    background: rgba(168, 85, 247, 0.12);
-    color: #c084fc;
-    border: 1px solid rgba(168, 85, 247, 0.2);
-  }
-  .header-badge--scenarios {
-    background: rgba(255, 255, 255, 0.05);
-    color: #cbd5e1;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-  }
-  .header-badge--runs {
-    background: rgba(249, 115, 22, 0.12);
-    color: #fb923c;
-    border: 1px solid rgba(249, 115, 22, 0.2);
-  }
-  .header-badge--time {
-    color: #64748b;
-    font-size: 0.68rem;
-    margin-left: 0.25rem;
-  }
-
-  /* Mini progress bar on collapsed card summary */
-  .mini-progress-bar-container {
-    width: 80px;
-    height: 4px;
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: 999px;
-    overflow: hidden;
-    margin-top: 0.25rem;
-  }
-  .mini-progress-bar {
-    height: 100%;
-    border-radius: 999px;
-  }
-
-  /* History stats grid */
-  .timeline-stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-    gap: 0.75rem;
-    width: 100%;
-    margin-top: 0.75rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-    padding-top: 0.75rem;
-  }
-  .timeline-stat-item {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-  }
-  .timeline-stat-label {
-    font-size: 0.65rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #64748b;
-  }
-  .timeline-stat-value {
-    font-size: 0.82rem;
-    font-weight: 700;
-    color: #cbd5e1;
-  }
-  .timeline-stat-value.value--passed { color: #10b981; }
-  .timeline-stat-value.value--failed { color: #f43f5e; }
-</style>
-
-<details id={row.id} class="detail-card" open={row.state === 'available'} data-test-card data-test-id={row.id} data-test-variant={row.variant} data-test-suite={row.suite} data-test-status={row.state === 'available' ? row.result_status : 'unavailable'}>
+<details id={row.id} class="detail-card evidence-card">
   <summary>
-    <div style="flex: 1; min-width: 0;">
-      <p class="detail-card__eyebrow">{row.variant} · {row.suite}</p>
+    <div>
+      <p class="detail-card__eyebrow">{row.variant} / {row.branch} / {row.suite}</p>
       <h3>{row.id}</h3>
-      <div class="detail-card__header-meta">
-        <span class="header-badge header-badge--branch">{row.branch}</span>
-        <span class={`header-badge header-badge--role header-badge--role-${row.role === 'gate' ? 'gate' : 'info'}`}>
-          {row.role === 'gate' ? 'GATE' : 'INFO'}
-        </span>
-        <span class="header-badge header-badge--mode">{row.suite === 'system' ? 'KubeVirt VM' : 'Container'}</span>
-        {row.state === 'available' && (
-          <>
-            <span class="header-badge header-badge--scenarios">{row.scenarios_total} scenarios</span>
-            <span class="header-badge header-badge--runs">{row.history_points} runs</span>
-            <span class="header-badge header-badge--time">
-              Last run: {row.last_run ? new Date(row.last_run).toLocaleDateString() : 'Awaiting Run'}
-            </span>
-          </>
-        )}
-      </div>
+      <p class="evidence-card__summary">
+        Selected run: {formatUtc(selectedTimestamp)} · {row.evidence_source === 'qa-run-v1' ? 'immutable qa-run-v1' : 'legacy compatibility projection'}
+      </p>
     </div>
-    <div class="detail-card__summary" style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
-      <span class={`pill pill--${row.state === 'available' ? row.result_status : 'unavailable'}`}>
-        {row.state === 'available' ? row.result_status : 'unavailable'}
-      </span>
-      <strong>{row.pass_rate !== null ? `${row.pass_rate}%` : '—'}</strong>
-      {row.pass_rate !== null && (
-        <div class="mini-progress-bar-container">
-          <div
-            class="mini-progress-bar"
-            style={`width: ${row.pass_rate}%; background: ${
-              row.pass_rate >= 90
-                ? 'linear-gradient(90deg, #10b981, #4ade80)'
-                : row.pass_rate >= 60
-                  ? 'linear-gradient(90deg, #f59e0b, #fbbf24)'
-                  : 'linear-gradient(90deg, #ef4444, #f87171)'
-            };`}
-          />
-        </div>
-      )}
+    <div class="detail-card__summary">
+      <span class:list={['pill', `pill--${selectedState}`]}>{statusLabel(selectedState)}</span>
+      <span class="evidence-card__role">{row.role === 'gate' ? 'GATE' : 'INFO'}</span>
     </div>
   </summary>
 
   <div class="detail-card__body">
-    {row.state !== 'available' ? (
-      <div class="detail-note detail-note--unavailable" style="margin-top: 0;">
-        <h4>{row.enrollment_issue_url ? 'Not Enrolled' : 'Awaiting Test Run Evidence'}</h4>
-        <p>{row.state_reason ?? 'No completed run has been published for this matrix cell yet.'}</p>
-        {row.enrollment_issue_url && (
-          <p>
-            <a href={row.enrollment_issue_url} target="_blank" rel="noreferrer" style="color: #38bdf8; text-decoration: underline;">
-              Enrollment issue #{issueNumber(row.enrollment_issue_url)}
+    <div class="evidence-card__grid">
+      <section>
+        <h4>Selected run</h4>
+        <dl>
+          <div><dt>Lane</dt><dd>{row.variant} / {row.branch}</dd></div>
+          <div><dt>Suite</dt><dd>{row.suite} · {row.role}</dd></div>
+          <div><dt>Observed</dt><dd>{formatUtc(row.observed_at)}</dd></div>
+          <div><dt>Started</dt><dd>{formatUtc(row.started_at)}</dd></div>
+          <div><dt>Finished</dt><dd>{formatUtc(row.finished_at)}</dd></div>
+          <div><dt>Image digest</dt><dd><code title={row.digest ?? undefined}>{shortDigest}</code></dd></div>
+          <div><dt>Workflow ID</dt><dd><code>{row.workflow_uid ?? 'Unavailable'}</code></dd></div>
+        </dl>
+      </section>
+
+      <section>
+        <h4>Evidence</h4>
+        <div class="evidence-card__links">
+          <a href={row.source_url} target="_blank" rel="noreferrer">
+            <strong>Published source</strong>
+            <span>Public immutable provenance</span>
+          </a>
+          {resultsHref ? (
+            <a href={resultsHref}>
+              <strong>Result artifact</strong>
+              <span>{row.results_path}</span>
             </a>
-          </p>
-        )}
-        <div style="margin-top: 1rem; font-size: 0.8rem; color: #64748b;">
-          <strong>Target:</strong> {row.variant} · {row.suite} ({row.branch})<br/>
-          <strong>To trigger locally:</strong> <code style="color: #38bdf8; background: rgba(0,0,0,0.25); padding: 0.1rem 0.35rem; border-radius: 4px; font-family: monospace;">just run-tests-tag {row.branch === 'testing' ? 'testing' : 'stable'}</code>
-        </div>
-      </div>
-    ) : (
-      <>
-        <div class="detail-grid">
-          <article>
-            <h4>Latest run</h4>
-            <dl>
-              <div>
-                <dt>Branch</dt>
-                <dd>{row.branch}</dd>
-              </div>
-              <div>
-                <dt>Architecture</dt>
-                <dd>
-                  <span class="pill pill--gap" style="font-size: 0.7rem; border-radius: 4px; padding: 0.05rem 0.3rem; text-transform: none;">x86_64</span>
-                  <span class="pill pill--gap" style="font-size: 0.7rem; border-radius: 4px; padding: 0.05rem 0.3rem; text-transform: none;">aarch64</span>
-                </dd>
-              </div>
-              <div>
-                <dt>Execution Mode</dt>
-                <dd>
-                  {row.suite === 'system' ? (
-                    <span class="pill" style="font-size: 0.7rem; border-radius: 4px; padding: 0.05rem 0.3rem; text-transform: none; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.2);">KubeVirt VM</span>
-                  ) : (
-                    <span class="pill" style="font-size: 0.7rem; border-radius: 4px; padding: 0.05rem 0.3rem; text-transform: none; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">Container Pod</span>
-                  )}
-                </dd>
-              </div>
-              <div>
-                <dt>Last run</dt>
-                <dd>{row.last_run ? new Date(row.last_run).toLocaleString() : 'Unavailable'}</dd>
-              </div>
-              {row.details?.duration_seconds !== undefined && row.details.duration_seconds > 0 && (
-                <div>
-                  <dt>Run duration</dt>
-                  <dd>{formatDuration(row.details.duration_seconds)}</dd>
-                </div>
-              )}
-              <div>
-                <dt>Scenarios</dt>
-                <dd>{row.scenarios_total}</dd>
-              </div>
-              <div>
-                <dt>Failed scenarios</dt>
-                <dd>{row.scenarios_failed}</dd>
-              </div>
-              <div>
-                <dt>History points</dt>
-                <dd>{row.history_points}</dd>
-              </div>
-            </dl>
-          </article>
-
-          <article>
-            <h4>Verification Evidence</h4>
-            <div class="evidence-cards-grid">
-              <a href={`../${row.results_path}`} class="evidence-btn-card" data-results-path={row.results_path}>
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="evidence-btn-icon"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
-                <div class="evidence-btn-info">
-                  <span class="evidence-btn-title">Local Test Log</span>
-                  <span class="evidence-btn-desc">{row.results_path}</span>
-                </div>
-              </a>
-
-              <a href={row.source_url} rel="noreferrer" target="_blank" class="evidence-btn-card">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="evidence-btn-icon"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
-                <div class="evidence-btn-info">
-                  <span class="evidence-btn-title">GitHub Source</span>
-                  <span class="evidence-btn-desc">View on projectbluefin/lab</span>
-                </div>
-              </a>
-
-              {row.screenshot_url && (
-                <a href={row.screenshot_url} rel="noreferrer" target="_blank" class="evidence-btn-card">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="evidence-btn-icon"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
-                  <div class="evidence-btn-info">
-                    <span class="evidence-btn-title">Latest Screenshot</span>
-                    <span class="evidence-btn-desc">Full size UI capture</span>
-                  </div>
-                </a>
-              )}
-
-              {row.workflow_name && workflowHref(row.workflow_name) && (
-                <a href={workflowHref(row.workflow_name)!} rel="noreferrer" target="_blank" class="evidence-btn-card">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="evidence-btn-icon"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                  <div class="evidence-btn-info">
-                    <span class="evidence-btn-title">Argo Workflow</span>
-                    <span class="evidence-btn-desc">{row.workflow_name}</span>
-                  </div>
-                </a>
-              )}
-            </div>
-          </article>
-        </div>
-
-        {/* ── Visual Evidence Gallery ── */}
-        <div class="screenshot-gallery">
-          <h4>Visual Evidence</h4>
-          {hasScreenshot ? (
-            <div class="screenshot-card">
-              <a href={row.screenshot_url!} target="_blank" rel="noreferrer" class="screenshot-link">
-                <img
-                  src={row.screenshot_url!}
-                  alt={`UI screenshot for ${row.id} — ${row.suite} suite on ${row.variant}`}
-                  class="screenshot-img"
-                  loading="lazy"
-                  decoding="async"
-                />
-                <div class="screenshot-overlay">
-                  <span>↗ Full size</span>
-                </div>
-              </a>
-              <div class="screenshot-caption">
-                <span class={`pill pill--${row.result_status}`}>{row.result_status}</span>
-                <span style="font-size: 0.75rem; color: #64748b; margin-left: 0.5rem;">
-                  {row.suite} · {row.variant} · {row.last_run ? new Date(row.last_run).toLocaleDateString() : 'Awaiting Run'}
-                </span>
-              </div>
-            </div>
           ) : (
-            <div class="screenshot-placeholder">
-              <div class="screenshot-placeholder__content">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="placeholder-icon"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
-                <h5>{row.suite === 'system' ? 'No Screenshot Captured Yet' : 'Non-Virtual Evidence Captured'}</h5>
-                <p>
-                  {row.suite === 'system' ? (
-                    <span>The <strong>{row.suite}</strong> suite runs automated platform-contract BDD tests inside an ephemeral KubeVirt VM. A screenshot of the desktop session is captured via Wayland on successful execution.</span>
-                  ) : (
-                    <span>The <strong>{row.suite}</strong> suite runs automated desktop/app BDD tests inside a non-privileged, software-rendered Kubernetes Container Pod. Real-time CLI logs provide complete execution evidence.</span>
-                  )}
-                </p>
-                <div class="placeholder-meta">
-                  <span>Target: {row.variant} ({row.branch})</span>
-                  <span>Run command: <code>just run-tests-tag {row.branch === 'testing' ? 'testing' : 'stable'}</code></span>
-                </div>
-              </div>
+            <div class="evidence-card__placeholder">
+              <strong>Result artifact · {resultsState}</strong>
+              <span>{row.results_evidence?.state_reason ?? 'No public static result artifact is published.'}</span>
+            </div>
+          )}
+          {row.screenshot_url ? (
+            <a href={row.screenshot_url} target="_blank" rel="noreferrer">
+              <strong>Screenshot artifact</strong>
+              <span>Public static image</span>
+            </a>
+          ) : (
+            <div class="evidence-card__placeholder">
+              <strong>Screenshot artifact · {screenshotState}</strong>
+              <span>{row.screenshot_evidence?.state_reason ?? 'No public static screenshot is published.'}</span>
             </div>
           )}
         </div>
+      </section>
+    </div>
 
-        {/* ── Historical Dot-Timeline ── */}
-        {row.details?.history?.length ? (
-          <div class="history-timeline" style="flex-direction: column; align-items: stretch; gap: 0.75rem;">
-            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; width: 100%;">
-              <span class="timeline-label">Execution Timeline (Last 15 Runs)</span>
-              <div class="timeline-dots">
-                {[...row.details.history].reverse().map((entry) => {
-                  const rate = detailPassRate(entry.scenarios, entry.failed);
-                  const runTimestamp = entry.run_date || (entry as any).run;
-                  const formattedDate = runTimestamp ? new Date(runTimestamp).toLocaleDateString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  }) : 'Unknown Date';
-                  const durationText = entry.duration_seconds ? ` | Duration: ${formatDuration(entry.duration_seconds)}` : '';
-                  const tooltip = `Workflow: ${entry.workflow_name || 'Manual'} | Pass Rate: ${rate !== null ? `${rate}%` : '—'} | Failed: ${entry.failed}/${entry.scenarios}${durationText} | ${formattedDate}`;
-                  return (
-                    <span 
-                      class:list={['dot', entry.status === 'passed' ? 'passed' : 'failed']} 
-                      data-tooltip={tooltip}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-
-            <div class="timeline-stats-grid">
-              <div class="timeline-stat-item">
-                <span class="timeline-stat-label">Avg Pass Rate</span>
-                <span class="timeline-stat-value">{avgPassRate !== null ? `${avgPassRate}%` : '—'}</span>
-              </div>
-              <div class="timeline-stat-item">
-                <span class="timeline-stat-label">Active Streak</span>
-                <span class:list={['timeline-stat-value', streakCount.status === 'passed' ? 'value--passed' : 'value--failed']}>
-                  {streakCount.count} {streakCount.status === 'passed' ? 'passes' : 'failures'}
-                </span>
-              </div>
-              <div class="timeline-stat-item">
-                <span class="timeline-stat-label">Peak Failures</span>
-                <span class="timeline-stat-value">{maxFailed} failed</span>
-              </div>
-              <div class="timeline-stat-item">
-                <span class="timeline-stat-label">Latest Delta</span>
-                <span class:list={['timeline-stat-value', failureDelta !== null && failureDelta > 0 ? 'value--failed' : (failureDelta !== null && failureDelta < 0 ? 'value--passed' : '')]}>
-                  {failureDelta === null ? '—' : (failureDelta > 0 ? `+${failureDelta} fails` : (failureDelta < 0 ? `${failureDelta} fails` : 'No change'))}
-                </span>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        <div class="detail-grid detail-grid--split">
-          <article>
-            <h4>Latest Diagnostics & Logs</h4>
-            
-            {(row.details?.failed_scenarios_detailed?.length || row.details?.failed_scenarios?.length) ? (
-              <div class="failure-list-widget">
-                <div class="failure-search-wrapper">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="failure-search-icon"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                  <input 
-                    type="text" 
-                    placeholder={`Search ${row.scenarios_failed} failed scenarios...`} 
-                    class="failure-search-input" 
-                    data-card-id={row.id}
-                  />
-                </div>
-                
-                <div class="failures-list-container" data-failures-list={row.id}>
-                  {row.details.failed_scenarios_detailed?.length ? (
-                    row.details.failed_scenarios_detailed.map((detailed) => {
-                      const copyCmd = `behave -n "${detailed.scenario_name}"`;
-                      return (
-                        <div class="failure-row" data-search-text={detailed.scenario_name.toLowerCase()}>
-                          <div class="failure-row__header">
-                            <span class="failure-row__name">Failed: {detailed.scenario_name}</span>
-                            <button 
-                              class="failure-action-btn btn-copy-command" 
-                              data-command={copyCmd}
-                              title="Copy local reproduction command"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                              <span>Copy Cmd</span>
-                            </button>
-                          </div>
-                          <div class="failure-row__meta">
-                            <span>Failing Step: <code>{detailed.failing_step}</code></span>
-                            {detailed.duration_seconds > 0 && (
-                              <span>· Duration: <strong>{detailed.duration_seconds}s</strong></span>
-                            )}
-                          </div>
-                          {detailed.error_message && (
-                            <pre class="failure-traceback">{detailed.error_message}</pre>
-                          )}
-                        </div>
-                      );
-                    })
-                  ) : (
-                    row.details.failed_scenarios?.map((scenarioName) => {
-                      const copyCmd = `behave -n "${scenarioName}"`;
-                      return (
-                        <div class="failure-row" data-search-text={scenarioName.toLowerCase()}>
-                          <div class="failure-row__header">
-                            <span class="failure-row__name">Failed: {scenarioName}</span>
-                            <button 
-                              class="failure-action-btn btn-copy-command" 
-                              data-command={copyCmd}
-                              title="Copy local reproduction command"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                              <span>Copy Cmd</span>
-                            </button>
-                          </div>
-                          <div class="failure-row__meta">
-                            <span class="text-dim">Note: Upgrade results pipeline to see detailed error traces and step runtimes.</span>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div class="suite-pass-success-widget">
-                <div class="success-icon-badge">OK</div>
-                <h5>Suite Verification Complete</h5>
-                <p>
-                  All <strong>{row.scenarios_total}</strong> scenarios executed and validated successfully on this variant without any failures. The core operating system contract is fully verified.
-                </p>
-                <div class="success-run-meta">
-                  <span>Pass rate: <strong>100%</strong></span>
-                  <span>Last verified: <strong>{row.last_run ? new Date(row.last_run).toLocaleDateString() : 'Awaiting Run'}</strong></span>
-                </div>
-              </div>
-            )}
-          </article>
-
-          <article>
-            <h4>History Details</h4>
-            {row.details?.history?.length ? (
-              <details class="history-table-collapsible">
-                <summary class="history-table-summary">
-                  <span>View Full Run History ({row.details.history.length})</span>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="summary-icon"><polyline points="6 9 12 15 18 9"/></svg>
-                </summary>
-                <div class="table-scroll">
-                  <table class="history-table" style="margin-top: 0;">
-                    <thead>
-                      <tr>
-                        <th scope="col">Run date</th>
-                        <th scope="col">Workflow</th>
-                        <th scope="col">Status</th>
-                        <th scope="col">Duration</th>
-                        <th scope="col">Failed</th>
-                        <th scope="col">Pass rate</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {row.details.history.map((entry) => {
-                        const rate = detailPassRate(entry.scenarios, entry.failed);
-                        const runTimestamp = entry.run_date || (entry as any).run;
-                        return (
-                          <tr>
-                            <td>{runTimestamp ? new Date(runTimestamp).toLocaleString() : 'Unknown Date'}</td>
-                            <td>
-                              {entry.workflow_name ? (
-                                <a href={workflowHref(entry.workflow_name)} target="_blank" rel="noreferrer" style="color: #38bdf8; text-decoration: none;">
-                                  {entry.workflow_name}
-                                </a>
-                              ) : (
-                                'Unavailable'
-                              )}
-                            </td>
-                            <td>
-                              <span class={`pill pill--${entry.status}`} style="font-size: 0.65rem; padding: 0.1rem 0.4rem;">
-                                {entry.status}
-                              </span>
-                            </td>
-                            <td>{entry.duration_seconds !== undefined && entry.duration_seconds > 0 ? formatDuration(entry.duration_seconds) : '—'}</td>
-                            <td>{entry.failed}/{entry.scenarios}</td>
-                            <td class="rate-col">
-                              <strong>{rate === null ? '—' : `${rate}%`}</strong>
-                              {rate !== null && (
-                                <div class="progress-bar-container progress-bar-container--small">
-                                  <div
-                                    class="progress-bar"
-                                    style={`width: ${rate}%; background: ${
-                                      rate >= 90
-                                        ? 'linear-gradient(90deg, #10b981, #4ade80)'
-                                        : rate >= 60
-                                          ? 'linear-gradient(90deg, #f59e0b, #fbbf24)'
-                                          : 'linear-gradient(90deg, #ef4444, #f87171)'
-                                    };`}
-                                  />
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </details>
-            ) : (
-              <p class="detail-note">No published history rows in the linked result JSON yet.</p>
-            )}
-          </article>
-        </div>
-      </>
+    {row.evidence_state_reason && (
+      <p class="evidence-card__reason">{row.evidence_state_reason}</p>
     )}
+
+    {row.terminal_failure_streak && row.terminal_failure_streak > 0 && (
+      <p class="evidence-card__signal">
+        Terminal failure streak: <strong>{row.terminal_failure_streak}</strong>
+      </p>
+    )}
+
+    {row.repeated_failed_scenarios.length > 0 && (
+      <p class="evidence-card__signal">
+        Repeated failures:
+        {row.repeated_failed_scenarios.map((scenario) => (
+          <span class="evidence-card__scenario">{scenario.scenario} ({scenario.failed_runs} runs)</span>
+        ))}
+      </p>
+    )}
+
+    <section class="evidence-card__history">
+      <h4>Timestamped history</h4>
+      {row.run_history.length > 0 ? (
+        <ol>
+          {[...row.run_history].reverse().map((run) => (
+            <li>
+              <span class:list={['pill', `pill--${run.state}`]}>{run.state}</span>
+              <span>{formatUtc(run.finished_at ?? run.observed_at)}</span>
+              <code>{run.workflow_uid ?? 'Workflow ID unavailable'}</code>
+              {run.source_url && <a href={run.source_url} target="_blank" rel="noreferrer">source</a>}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p class="evidence-card__empty">
+          {row.evidence_source === 'legacy-results-v1'
+            ? 'History is unavailable: this row is a legacy compatibility projection.'
+            : 'No immutable QA-run history has been published.'}
+        </p>
+      )}
+    </section>
   </div>
 </details>
+
+<style>
+  .evidence-card {
+    scroll-margin-top: 1rem;
+  }
+  .evidence-card:target {
+    border-color: rgba(56, 189, 248, 0.65);
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12);
+  }
+  .evidence-card__summary,
+  .evidence-card__reason,
+  .evidence-card__signal,
+  .evidence-card__empty {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 0.82rem;
+  }
+  .evidence-card__role {
+    color: #fda4af;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+  }
+  .evidence-card__grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+  .evidence-card h4 {
+    margin: 0 0 0.75rem;
+  }
+  .evidence-card dl {
+    gap: 0;
+  }
+  .evidence-card dl div {
+    align-items: baseline;
+    border-bottom: 1px dashed rgba(148, 163, 184, 0.16);
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+    padding: 0.4rem 0;
+  }
+  .evidence-card dt {
+    color: #94a3b8;
+    font-size: 0.78rem;
+  }
+  .evidence-card dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    text-align: right;
+  }
+  .evidence-card code {
+    color: #cbd5e1;
+    font-size: 0.74rem;
+  }
+  .evidence-card__links {
+    display: grid;
+    gap: 0.6rem;
+  }
+  .evidence-card__links > * {
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 10px;
+    display: grid;
+    gap: 0.2rem;
+    padding: 0.75rem;
+  }
+  .evidence-card__links a {
+    color: #7dd3fc;
+    text-decoration: none;
+  }
+  .evidence-card__links a:hover {
+    border-color: rgba(125, 211, 252, 0.5);
+  }
+  .evidence-card__links span {
+    color: #94a3b8;
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
+  }
+  .evidence-card__placeholder {
+    background: rgba(71, 85, 105, 0.16);
+    color: #cbd5e1;
+  }
+  .evidence-card__reason,
+  .evidence-card__signal {
+    border-left: 2px solid #fbbf24;
+    margin-top: 1rem;
+    padding-left: 0.75rem;
+  }
+  .evidence-card__scenario {
+    background: rgba(244, 63, 94, 0.12);
+    border: 1px solid rgba(244, 63, 94, 0.24);
+    border-radius: 999px;
+    color: #fda4af;
+    display: inline-block;
+    font-size: 0.74rem;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.45rem;
+  }
+  .evidence-card__history {
+    border-top: 1px solid rgba(148, 163, 184, 0.14);
+    margin-top: 1rem;
+    padding-top: 1rem;
+  }
+  .evidence-card__history ol {
+    display: grid;
+    gap: 0.4rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .evidence-card__history li {
+    align-items: center;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    display: grid;
+    gap: 0.6rem;
+    grid-template-columns: max-content minmax(11rem, 1fr) minmax(0, 1.5fr) max-content;
+    padding: 0.45rem 0;
+  }
+  .evidence-card__history a {
+    color: #7dd3fc;
+    font-size: 0.78rem;
+  }
+  @media (max-width: 760px) {
+    .evidence-card__grid {
+      grid-template-columns: 1fr;
+    }
+    .evidence-card__history li {
+      align-items: start;
+      grid-template-columns: max-content 1fr;
+    }
+    .evidence-card__history li code,
+    .evidence-card__history li a {
+      grid-column: 2;
+    }
+  }
+</style>

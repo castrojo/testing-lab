@@ -363,6 +363,34 @@ def test_dakota_qa_pipeline_exposes_and_forwards_image_digest():
     assert "name: run-container-tests" in dakota
 
 
+def test_dakota_digest_poller_forwards_remote_digest_to_pipeline_parameter():
+    import yaml
+
+    poller = yaml.safe_load(
+        (ROOT / "manifests/image-poll-dakota.yaml").read_text(encoding="utf-8")
+    )
+    pipeline = yaml.safe_load(
+        (ROOT / "argo/workflow-templates/dakota-qa-pipeline.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    pipeline_parameters = {
+        parameter["name"]
+        for parameter in pipeline["spec"]["arguments"]["parameters"]
+    }
+    tasks = poller["spec"]["workflowSpec"]["templates"][0]["dag"]["tasks"]
+    run_pipeline = next(task for task in tasks if task["name"] == "run-pipeline")
+    arguments = {
+        parameter["name"]: parameter["value"]
+        for parameter in run_pipeline["arguments"]["parameters"]
+    }
+
+    assert "image-digest" in pipeline_parameters
+    assert arguments["image-digest"] == (
+        "{{tasks.check-digest.outputs.parameters.remote-digest}}"
+    )
+
+
 def test_pr_poller_carries_image_digest_into_dakota_qa_workflow():
     poller = (ROOT / "argo/workflow-templates/pr-poller.yaml").read_text(
         encoding="utf-8"
