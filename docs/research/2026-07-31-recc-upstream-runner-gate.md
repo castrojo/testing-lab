@@ -19,6 +19,21 @@ This is source evidence, not a live cluster claim. Adding a speculative field
 to `runner.jsonnet` would either fail schema validation or silently leave the
 pod-local `recc-casd` socket unused.
 
+The latest upstream tag (`20260722T162832Z-236bcd9`) is the same revision
+already pinned by the worker DaemonSet. Its `cmd/bb_runner/main.go` constructs
+the native local/chroot runner from `ApplicationConfiguration`; the source
+contains no `remoteApisSocketPath`, `remote_apis_socket`, LocalCAS handoff, or
+BuildBox runner invocation. Consequently it cannot satisfy either open runner
+requirement:
+
+- #515 needs proc-backed `/dev/stdin` to be visible inside the action root.
+- #513/#533 need BuildStream's `remoteApisSocketPath` to reach the pod-local
+  `buildbox-casd` socket.
+
+No upstream-only candidate was found that satisfies both requirements. The
+candidate gate is therefore blocked, not a reason to weaken the existing
+fail-closed admission checks.
+
 ## Gate for adopting an upstream runner
 
 An upstream candidate is eligible only when all of these are proven:

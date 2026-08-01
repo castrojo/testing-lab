@@ -120,6 +120,12 @@ def test_recc_seam_does_not_enable_unsupported_runner_fields_or_host_namespaces(
     assert "Shared RECC config contract" in docs
     assert "## Concrete blocker" in docs
     assert "remoteApisSocketPath" in docs
+    gate = (ROOT / "docs/research/2026-07-31-recc-upstream-runner-gate.md").read_text(
+        encoding="utf-8"
+    )
+    assert "No upstream-only candidate was found" in gate
+    assert "proc-backed `/dev/stdin`" in gate
+    assert "20260722T162832Z-236bcd9" in gate
 
 
 def test_all_buildstream_pipelines_mount_the_shared_recc_contract():
