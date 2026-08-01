@@ -496,6 +496,10 @@ def test_kde_linux_workflow_calls_native_runner_with_current_contract():
     assert "testsuite-branch" not in workflow
     assert 'value: "aurora-test"' in provision
     assert "kde-test-namespace" not in workflow
+    assert "--connect-timeout 30" in provision
+    assert "--speed-limit 1024" in provision
+    assert "--speed-time 120" in provision
+    assert "--remove-on-error" in provision
 
 
 def test_kde_workflow_images_are_digest_pinned():
