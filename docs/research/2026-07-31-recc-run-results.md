@@ -28,7 +28,8 @@ runs predate the supported handoff now checked in for issue #532: the RECC
 metrics file is written under the ephemeral BuildStream build root, printed
 into the element log, and removed before artifact creation. The workflow
 collects that log through BuildStream's configured `/work/buildstream-logs`
-directory and fails closed if a RECC mode produces no metrics lines. A fresh
+directory and fails closed if a RECC mode produces no valid StatsD metric
+lines. A fresh
 cache-only run is required before claiming action-cache hits/misses, local
 fallbacks, or compiler timing from live evidence.
 

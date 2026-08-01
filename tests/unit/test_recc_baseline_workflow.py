@@ -158,7 +158,9 @@ def test_metadata_outputs_preserve_remote_cache_and_unavailable_fields():
     assert "logdir: ${BST_LOGDIR}" in text
     assert "BST_LOGDIR=/work/buildstream-logs" in text
     assert "collect_recc_buildstream_logs" in text
-    assert "RECC metrics/log evidence missing from BuildStream logdir" in text
+    assert "RECC_STATSD_PATTERN=" in text
+    assert "RECC StatsD metric evidence missing from BuildStream logdir" in text
+    assert 'grep -Eiq "${RECC_STATSD_PATTERN}" "${phase_log}"' in text
     assert "--prometheus-before" in text
     assert "--prometheus-after" in text
     assert "/work/recc.log" in text

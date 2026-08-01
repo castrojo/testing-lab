@@ -95,7 +95,7 @@ The workflow sets BuildStream's supported `logdir` to `/work/buildstream-logs`
 and extracts RECC-marked lines from those per-element logs into the workflow
 evidence. This keeps the StatsD/log handoff outside the deterministic artifact;
 cache-only and upload-local-build phases fail closed when that handoff produces
-no RECC evidence.
+no valid RECC StatsD metric evidence.
 
 The acceptance comparison is mode-specific: `cache-only` and
 `upload-local-build` must prove stable action keys and a warm action-cache hit.
