@@ -347,6 +347,15 @@ def lane_data(workflow: dict, values: dict[str, str]) -> dict[str, str | None]:
             "state": "unavailable",
             "state_reason": "Workflow parameters do not provide both variant and branch/image tag.",
         }
+    if not suite:
+        return {
+            "name": f"{variant}-{branch}",
+            "variant": variant,
+            "branch": branch,
+            "suite": None,
+            "state": "unavailable",
+            "state_reason": "Workflow parameters do not provide a selected suite.",
+        }
     return {
         "name": f"{variant}-{branch}",
         "variant": variant,
