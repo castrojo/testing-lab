@@ -145,7 +145,7 @@ run-aurora-kde-sabotage:
 # Evaluate the rolling KDE soak window. A qualified result still needs human
 # approval before the suite is promoted to CI gating.
 evaluate-kde-soak:
-    python3 scripts/evaluate_kde_soak.py docs/results/aurora-testing-smoke.json
+    python3 scripts/evaluate_kde_soak.py docs/results/aurora-testing-kde-smoke.json
 
 # ── Observation ─────────────────────────────────────────────────────────────
 
