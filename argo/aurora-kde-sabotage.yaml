@@ -14,6 +14,16 @@ spec:
   serviceAccountName: argo
   activeDeadlineSeconds: 5400
   onExit: cleanup
+  volumeClaimGC:
+    strategy: OnWorkflowCompletion
+  volumeClaimTemplates:
+  - metadata:
+      name: staging
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 100Gi
   arguments:
     parameters:
     - name: vm-name

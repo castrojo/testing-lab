@@ -82,6 +82,10 @@ The workflow authoring guidance is split by topic:
   the matching `volumeClaimTemplates` entry; define the claim at workflow scope
   and set `volumeClaimGC.strategy: OnWorkflowCompletion` so failed builds do not
   leave staging storage behind.
+- A direct `Workflow` that calls a containerDisk builder with `templateRef`
+  but omits that builder's `staging` claim. A referenced task cannot define a
+  workflow-scoped PVC for its caller; put the `staging` `volumeClaimTemplates`
+  and `volumeClaimGC.strategy: OnWorkflowCompletion` on the submitted Workflow.
 - A workflow that declares `volumeClaimTemplates` without
   `volumeClaimGC.strategy: OnWorkflowCompletion` — completed runs leave staging
   PVCs behind.
