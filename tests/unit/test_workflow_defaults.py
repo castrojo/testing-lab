@@ -409,6 +409,10 @@ def test_kde_runner_adapts_gnome_runner_contract_for_webdriver():
     assert "KDE_WEBDRIVER_URL" in kde
     assert "XDG_SESSION_DESKTOP=kde" in kde
     assert "/status" in kde
+    assert "for tool in bash curl find" not in kde
+    assert 'find "${XDG_RUNTIME_DIR}"' not in kde
+    assert "find /tmp/results" not in kde
+    assert "shopt -s nullglob globstar" in kde
     assert "publish_test_results.py" in kde
     assert "/var/mnt/ghost-data/test-results" in kde
     template = yaml.safe_load(kde)["spec"]["templates"][0]

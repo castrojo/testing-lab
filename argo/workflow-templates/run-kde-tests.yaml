@@ -169,7 +169,7 @@ spec:
       args:
       - |
         set -euo pipefail
-        for tool in bash curl find git python3 scp ssh timeout; do
+        for tool in bash curl git python3 scp ssh timeout; do
           command -v "${tool}" >/dev/null ||
             { echo "Required tool is missing: ${tool}" >&2; exit 2; }
         done
@@ -199,8 +199,12 @@ spec:
           if [ -z "${SESSION_BUS}" ] && [ -S "${XDG_RUNTIME_DIR}/bus" ]; then
             SESSION_BUS="unix:path=${XDG_RUNTIME_DIR}/bus"
           fi
-          WAYLAND_DISPLAY=$(find "${XDG_RUNTIME_DIR}" -maxdepth 1 \
-            -name "wayland-*" -printf "%f\n" 2>/dev/null | head -1)
+          shopt -s nullglob
+          wayland_sockets=("${XDG_RUNTIME_DIR}"/wayland-*)
+          WAYLAND_DISPLAY=""
+          if ((${#wayland_sockets[@]})); then
+            WAYLAND_DISPLAY="${wayland_sockets[0]##*/}"
+          fi
           AT_SPI_BUS_ADDRESS="${SESSION_BUS}"
           KDE_WEBDRIVER_URL=http://127.0.0.1:4723
           printf "%s\n" \
@@ -268,7 +272,9 @@ spec:
         # Keep both the directory and a portable tarball for each kde_faillog
         # bundle produced by the testsuite failure hook. lab-runner does not
         # provide tar, so use the guaranteed Python standard library tool.
-        while IFS= read -r -d '' bundle; do
+        shopt -s nullglob globstar
+        for bundle in /tmp/results/**/faillog_*; do
+          [[ -d "${bundle}" ]] || continue
           if ! (
             cd "$(dirname "${bundle}")" &&
             python3 -m tarfile -c "${bundle}.tar.gz" "$(basename "${bundle}")"
@@ -276,7 +282,7 @@ spec:
             echo "ERROR: failed to archive KDE failure bundle ${bundle}" >&2
             ARTIFACT_RC=1
           fi
-        done < <(find /tmp/results -type d -name 'faillog_*' -print0)
+        done
 
         RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}/${SUITE}"
         mkdir -p "${RESULT_DIR}"
@@ -341,7 +347,8 @@ spec:
         # screenshot is disabled repo-wide — see
         # docs/superpowers/specs/2026-07-30-block-ghcr-pushes-design.md —
         # so the screenshot is retained only in the hostPath results bundle.
-        SHOT=$(find /tmp/results -type f -name '*.png' -print -quit)
+        screenshots=(/tmp/results/**/*.png)
+        SHOT="${screenshots[0]:-}"
         if [[ -z "${SHOT}" || ! -f "${SHOT}" ]]; then
           echo "ERROR: KDE test did not produce a screenshot artifact" >&2
           ARTIFACT_RC=1
