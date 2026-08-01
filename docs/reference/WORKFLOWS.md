@@ -277,10 +277,17 @@ triggers, and retains failed workflows for seven days.
 Each live run must publish the structured result and screenshot through
 `run-kde-tests`, and persist the result/artifact bundle before teardown. A
 qualified 30-run window is evidence only: retain the Argo workflow URL, the
-published `docs/results/aurora-testing-smoke.json` history, screenshot URL,
-and any filed issue URL for every classified infrastructure flake. Live-run
-evidence is required after ArgoCD reconciles the Git change; local lint cannot
-substitute for that evidence.
+published `docs/results/aurora-testing-kde-smoke.json` history, screenshot
+URL, and any filed issue URL for every classified infrastructure flake.
+Live-run evidence is required after ArgoCD reconciles the Git change; local
+lint cannot substitute for that evidence.
+
+`aurora-testing-kde-smoke.json` (suite `kde-smoke`, the name `nightly-kde` and
+`aurora-qa-pipeline` pass to `run-kde-tests`) is a distinct file from the
+pre-existing `aurora-testing-smoke.json`, which belongs to the unrelated
+generic `bluefin-qa-pipeline` smoke/developer/software suites triggered by
+`image-poll-aurora-testing`. Do not conflate the two: `just evaluate-kde-soak`
+and the soak gate only ever read the `kde-smoke` file.
 
 ### `aurora-kde-sabotage`
 
