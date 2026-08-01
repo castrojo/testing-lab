@@ -66,14 +66,14 @@ setup-arc-github-secret pem="" app_id="" installation_id="" namespace="arc-runne
 
 # Force ArgoCD to sync now instead of waiting for the next poll interval
 argocd-sync:
-    argocd app sync lab lab-infra --timeout 120
-    argocd app wait lab --health --timeout 120
-    argocd app wait lab-infra --health --timeout 120
+    argocd app sync testing-lab testing-lab-infra --timeout 120
+    argocd app wait testing-lab --health --timeout 120
+    argocd app wait testing-lab-infra --health --timeout 120
 
 # Show ArgoCD sync status for the test suite
 argocd-status:
-    argocd app get lab
-    argocd app get lab-infra
+    argocd app get testing-lab
+    argocd app get testing-lab-infra
 
 # ── Test execution ───────────────────────────────────────────────────────────
 
