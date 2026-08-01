@@ -354,6 +354,16 @@ def test_aurora_kde_sabotage_workflow_runs_both_controlled_failures():
     path = ROOT / "argo/aurora-kde-sabotage.yaml"
     workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert workflow["spec"]["onExit"] == "cleanup"
+    assert workflow["spec"]["volumeClaimGC"] == {"strategy": "OnWorkflowCompletion"}
+    assert workflow["spec"]["volumeClaimTemplates"] == [
+        {
+            "metadata": {"name": "staging"},
+            "spec": {
+                "accessModes": ["ReadWriteOnce"],
+                "resources": {"requests": {"storage": "100Gi"}},
+            },
+        }
+    ]
     tasks = workflow["spec"]["templates"][0]["dag"]["tasks"]
     sabotage_tasks = [
         task for task in tasks if task["name"] in {"missing-binary", "kill-plasmashell"}
