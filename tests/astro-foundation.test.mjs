@@ -117,7 +117,11 @@ test('tests page renders matrix views, chart mounts, evidence links, and unavail
   assert.match(testsPage, /Suite\/variant heatmap/i, 'tests page shows suite variant heatmap section');
   assert.match(testsPage, /Flaky rows and run history sparklines/i, 'tests page shows flaky rows panel');
   assert.match(testsPage, /bluefin-testing-smoke/i, 'tests page renders available matrix row details');
-  assert.match(testsPage, /results\/bluefin-testing-smoke\.json/i, 'tests page links results evidence');
+  assert.match(
+    testsPage,
+    /results\/bluefin-testing-smoke\.json|data\/history\/qa-runs\.ndjson/i,
+    'tests page links legacy or immutable QA evidence',
+  );
   assert.match(testsPage, /Not Enrolled|Awaiting Test Run Evidence/i, 'tests page keeps unavailable states explicit');
 
   // KPI and lane verdict strip
