@@ -245,6 +245,13 @@ two action slots, and observable current worker actions.
 **RECC (Remote Execution C/C++ Compiler) integration:**
 The lab provides a live, lab-owned overlay and a worker-local preparation seam to support fine-grained C/C++ compiler distribution via RECC (`recc` wrapper). The current deployment exposes the shared RECC environment contract and a `buildbox-casd` sidecar on workers, and the overlay/adapter helper (`scripts/apply_recc_overlay.py`) is mounted into build pods by the WorkflowTemplates. However, nested RECC remote execution is not enabled in production workflows until the pinned BuildBarn runner demonstrably honors BuildStream's `remoteApisSocketPath` platform property; until then only cache-only or upload-local modes are permitted for pilot runs.
 
+The same pinned native chroot runner also cannot provide proc-backed
+`/dev/stdin` inside the action root. Worker-side device-node preparation does not
+solve that proc visibility gap. An upstream-only qualification found no runner
+candidate that currently satisfies both proc-backed stdio and nested
+`remoteApisSocketPath`; keep the production lanes fail-closed and do not add
+speculative runner fields or a custom runner.
+
 - **Macro level:** BuildStream schedules element-level builds across BuildBarn workers (outer REAPI).
 - **Micro level (RECC):** RECC distributes individual C/C++ compiler invocations inside an element; this is distinct from outer BuildStream remote execution. Linking steps, Rust, and other language toolchains are not remotely executed unless a specific wrapper exists (e.g., `RECC_LINK` or a language-specific launcher).
 - **Configuration:** The shared `recc-environment.conf` ConfigMap (`manifests/buildstream-remote-cache-config.yaml`) supplies `RECC_SERVER`, `RECC_CAS_SERVER`, `RECC_ACTION_CACHE_SERVER`, `RECC_PROJECT_ROOT`, and cache policy. Toolchain integrations must add `RECC_REMOTE_PLATFORM_chrootRootDigest`; the lab will not invent or globally supply that digest.

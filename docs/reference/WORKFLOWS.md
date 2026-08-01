@@ -222,12 +222,12 @@ starts the VM's `selenium-webdriver-at-spi-run` service, waits for its
 `/status` endpoint, and runs `tests/kde-smoke/features` with Behave. Results
 and in-guest PNG screenshots are copied back even when Behave fails, then
 persisted under the standard ghost test-results host path. `faillog_*`
-directories are retained alongside `.tar.gz` bundles, and the first screenshot
-is pushed as the stable `desktop-screenshot` OCI artifact. The GitHub
+directories are retained alongside `.tar.gz` bundles. The first screenshot is
+pushed as the stable `desktop-screenshot` OCI artifact to the lab-local Zot
+registry (`192.168.1.102:30500`); GHCR remains pull-only. The GitHub
 credential, ORAS tool, screenshot, artifact persistence, and result publication
 are required and fail the runner when unavailable. QEMU-level screendumps are
-not used because
-KubeVirt's `virt-launcher` does not expose a QEMU monitor.
+not used because KubeVirt's `virt-launcher` does not expose a QEMU monitor.
 
 The runner accepts `failure-class: test|infra` and `failure-issue-url`
 parameters. A failed run classified as infrastructure must include the URL of
@@ -285,10 +285,12 @@ triggers, and retains failed workflows for seven days.
 Each live run must publish the structured result and screenshot through
 `run-kde-tests`, and persist the result/artifact bundle before teardown. A
 qualified 30-run window is evidence only: retain the Argo workflow URL, the
-published `docs/results/aurora-testing-smoke.json` history, screenshot URL,
-and any filed issue URL for every classified infrastructure flake. Live-run
-evidence is required after ArgoCD reconciles the Git change; local lint cannot
-substitute for that evidence.
+published `docs/results/aurora-testing-kde-smoke.json` history, screenshot
+reference, and any filed issue URL for every classified infrastructure flake.
+The generic `aurora-testing-smoke.json` file belongs to the container-only
+Aurora smoke lane and is not KDE soak evidence. Live-run evidence is required
+after ArgoCD reconciles the Git change; local lint cannot substitute for that
+evidence.
 
 ### `aurora-kde-sabotage`
 
