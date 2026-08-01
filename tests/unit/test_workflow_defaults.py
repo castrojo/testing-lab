@@ -40,6 +40,20 @@ def test_image_poller_cron_manifests_do_not_pass_containerdisk_tag():
     assert not offenders, f"obsolete containerdisk-tag in: {', '.join(offenders)}"
 
 
+def test_image_poller_declares_the_digest_parameter_used_by_its_qa_reference():
+    poller = yaml.safe_load(
+        (ROOT / "argo/workflow-templates/image-poller.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    parameters = {
+        parameter["name"]: parameter.get("value")
+        for parameter in poller["spec"]["arguments"]["parameters"]
+    }
+
+    assert parameters["image-digest"] == ""
+
+
 def test_dakota_requires_distributed_capacity_matched_execution():
     config = (ROOT / "manifests/buildstream-remote-cache-config.yaml").read_text(
         encoding="utf-8"

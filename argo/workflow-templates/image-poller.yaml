@@ -19,6 +19,10 @@ spec:
     parameters:
       - name: image
       - name: image-tag
+      # This caller resolves a digest at runtime for the referenced QA
+      # template; declare the parameter so Argo can validate that reference.
+      - name: image-digest
+        value: ""
       - name: state-key
       - name: namespace
         value: "bluefin-test"
