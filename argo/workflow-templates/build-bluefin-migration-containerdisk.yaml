@@ -389,6 +389,7 @@ spec:
               kf6-kwayland-devel kf6-kwindowsystem-devel kf6-kcoreaddons-devel \
               kpipewire-devel plasma-wayland-protocols-devel \
               libxkbcommon-devel wayland-devel \
+              qemu-guest-agent \
               python3-devel python3-flask python3-pyatspi python3-lxml \
               python3-gobject ruby ruby-devel \
             && dnf clean all \
@@ -524,6 +525,9 @@ spec:
             DEPLOY_DIR=$(find "${SYSROOT}/ostree/deploy" -maxdepth 5 -name "*.0" -type d \
               -not -path "*/backing/*" 2>/dev/null | head -1)
             if [ -n "${DEPLOY_DIR}" ]; then
+              QGA_UNIT="${DEPLOY_DIR}/usr/lib/systemd/system/qemu-guest-agent.service"
+              test -f "${QGA_UNIT}" ||
+                { echo "[POST-INSTALL] qemu-guest-agent.service is absent" >&2; exit 1; }
               QGA_WANTS="${DEPLOY_DIR}/etc/systemd/system/multi-user.target.wants/qemu-guest-agent.service"
               if [ ! -e "${QGA_WANTS}" ]; then
                 mkdir -p "$(dirname "${QGA_WANTS}")"
