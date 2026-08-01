@@ -259,6 +259,7 @@ def test_aurora_containerdisk_builder_isolated_and_prebaked():
     assert "selenium-webdriver-at-spi-inputsynth" in builder
     assert "qt6-qtbase-private-devel" in builder
     assert "libxkbcommon-devel wayland-devel \\\n              qemu-guest-agent \\" in builder
+    assert "systemctl enable qemu-guest-agent.service" in builder
     assert 'test -f "${QGA_UNIT}"' in builder
     assert "192.168.1.102:30500/{{inputs.parameters.containerdisk-repo}}:${TAG}" in builder
 
