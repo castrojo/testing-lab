@@ -446,6 +446,8 @@ def test_kde_runner_adapts_gnome_runner_contract_for_webdriver():
     assert 'find "${XDG_RUNTIME_DIR}"' not in kde
     assert "find /tmp/results" not in kde
     assert "shopt -s nullglob globstar" in kde
+    assert "VIRTCTL=/tmp/virtctl" in kde
+    assert "VIRTCTL=/usr/local/bin/virtctl" not in kde
     assert "publish_test_results.py" in kde
     assert "/var/mnt/ghost-data/test-results" in kde
     template = yaml.safe_load(kde)["spec"]["templates"][0]
