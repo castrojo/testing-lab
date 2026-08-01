@@ -159,6 +159,11 @@ The workflow authoring guidance is split by topic:
   Python, `curl`, and `jq`, but not `tar`. Download archives to a workspace,
   extract them with `python3 -m tarfile`, and remove the archive afterward, or
   use a pinned image that provides the required utility.
+- **Assuming conventional filesystem tools and paths exist in `lab-runner`**:
+  do not require `find`, and do not download executables to `/usr/local/bin`.
+  Use Bash globbing for discovery and a writable `/tmp` path for transient
+  executables such as `virtctl`; `curl --output` fails when its target cannot
+  be opened (source: `/curl/curl`).
 - **Doubling braces for generated child workflows**: `{{{{workflow.*}}}}`
   reaches a child Workflow literally and its `when` expressions compare the
   wrong value. When an outer script must emit an Argo expression, build the
