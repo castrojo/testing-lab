@@ -84,6 +84,14 @@ remain explicit `unavailable_fields` entries and are never represented as zero
 or a successful warm hit. The workflow emits compact `metadata` and `evidence`
 output parameters.
 
+RECC's metrics file is written under BuildStream's ephemeral `%{build-root}`,
+then printed into the element build log and removed before artifact creation.
+The workflow sets BuildStream's supported `logdir` to `/work/buildstream-logs`
+and extracts RECC-marked lines from those per-element logs into the workflow
+evidence. This keeps the StatsD/log handoff outside the deterministic artifact;
+cache-only and upload-local-build phases fail closed when that handoff produces
+no RECC evidence.
+
 The acceptance comparison is mode-specific: `cache-only` and
 `upload-local-build` must prove stable action keys and a warm action-cache hit.
 A successful outer BuildStream build alone is not RECC evidence.
@@ -91,7 +99,8 @@ A successful outer BuildStream build alone is not RECC evidence.
 The first lab measurements are recorded in
 `docs/research/2026-07-31-recc-run-results.md`. They include real
 BuildStream/BuildBarn timings and CAS deltas; RECC action-level fields remain
-unavailable until the sandbox metrics-file handoff is proven.
+available only when the workflow's BuildStream logdir handoff captures the
+metrics section.
 
 ## Evidence boundaries
 
