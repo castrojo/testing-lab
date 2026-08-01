@@ -329,7 +329,15 @@ spec:
           IMG_SLUG="aurora-${{inputs.parameters.containerdisk-tag}}"
         fi
 
-        # Screenshot discovery; GHCR upload is disabled, retained locally only.
+        # Screenshot discovery. Screenshots are captured in-guest by the
+        # selenium-webdriver-at-spi/KPipeWire session. KubeVirt's
+        # virt-launcher does not expose a QEMU monitor, so a monitor-based
+        # screendump helper (the approach testsuite's disabled fallback
+        # script relies on) is impossible here and is intentionally never
+        # invoked by this template. GHCR OCI artifact publication of the
+        # screenshot is disabled repo-wide — see
+        # docs/superpowers/specs/2026-07-30-block-ghcr-pushes-design.md —
+        # so the screenshot is retained only in the hostPath results bundle.
         SHOT=$(find /tmp/results -type f -name '*.png' -print -quit)
         if [[ -z "${SHOT}" || ! -f "${SHOT}" ]]; then
           echo "ERROR: KDE test did not produce a screenshot artifact" >&2
