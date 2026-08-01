@@ -18,6 +18,9 @@ spec:
   timezone: "UTC"
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 300
+  workflowMetadata:
+    labels:
+      bluefin.io/evidence-contract: qa-run-v1
   workflowSpec:
     serviceAccountName: argo
     podGC:
@@ -70,6 +73,8 @@ spec:
                     value: "{{workflow.parameters.image}}"
                   - name: image-tag
                     value: "{{workflow.parameters.image-tag}}"
+                  - name: image-digest
+                    value: "{{tasks.check-digest.outputs.parameters.remote-digest}}"
                   - name: suites
                     value: "{{workflow.parameters.suites}}"
                   - name: variant

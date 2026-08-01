@@ -183,6 +183,20 @@ The workflow authoring guidance is split by topic:
   Argo output parameters use `valueFrom.path` and are consumed as
   `{{steps.<step>.outputs.parameters.<name>}}` (source:
   `/argoproj/argo-workflows`).
+- QA scenario evidence must use a separate `failed-scenarios` JSON output
+  parameter with `valueFrom.path` and `default: "[]"`. Generate it only from
+  structured `results.json`, retain at most 20 unique safe scenario names, and
+  never export raw errors, logs, stack traces, credentials, or token-like
+  content. The evidence publisher consumes this named output only; it must not
+  scrape logs or overload `outputs.result` (source:
+  `/argoproj/argo-workflows` — Output Parameters).
+- GNOME/KDE runners must also publish a `result` output parameter from a
+  `valueFrom.path` summary derived only after parsing `results.json`; do not
+  set a default such as "No results generated." A missing summary is
+  unavailable evidence, not a passing execution. A non-empty validated
+  `failed-scenarios` output can preserve failure evidence, while terminal
+  workflow phase remains the authority for execution status (source:
+  `/argoproj/argo-workflows` — Output Parameters).
 - A Dakota PR-poller call omits the `registry` argument — local PR builds must
   receive the NodePort registry address explicitly or the workflow can stall
   before its build child starts.

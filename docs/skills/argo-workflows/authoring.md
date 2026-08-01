@@ -1,7 +1,11 @@
 ---
 name: argo-authoring
 description: >
-  Argo Workflows template authoring rules and structure for the lab.
+  Argo Workflows template authoring rules and structure for the lab. Use when
+  creating or changing WorkflowTemplates, CronWorkflows, or workflow metadata.
+metadata:
+  context7-sources:
+    - /argoproj/argo-workflows
 ---
 
 # Argo Workflows Authoring Rules
@@ -120,6 +124,7 @@ payload:
 
 - `image`
 - `image-tag`
+- `image-digest` (optional; required when the caller resolved an exact OCI digest)
 - `suites`
 - `variant`
 - `branch`
@@ -131,6 +136,56 @@ Do **not** pass legacy VM-era parameters such as `containerdisk-tag`,
 PRs, override both `testsuite-repo` and `testsuite-branch` with the PR head
 repository and branch; keep the canonical repository and `main` for other
 repos.
+
+### 3b. QA workflow evidence enrollment
+
+To enroll a top-level QA WorkflowTemplate in the canonical evidence reconciler,
+add a stable label through `spec.workflowMetadata`, not only through the
+WorkflowTemplate object's metadata:
+
+```yaml
+spec:
+  workflowMetadata:
+    labels:
+      bluefin.io/evidence-contract: qa-run-v1
+```
+
+`workflowMetadata` is applied to Workflows created from the template (including
+`workflowTemplateRef` callers), so the reconciler can select real run objects.
+Pass an `image-digest` parameter whenever a caller has resolved one; retain an
+explicit empty default for manual tag-based submissions. Source:
+`/argoproj/argo-workflows`, Workflow Templates > Adding labels/annotations to
+Workflows with workflowMetadata.
+
+For a digest-poller DAG, pass the poller's
+`{{tasks.check-digest.outputs.parameters.remote-digest}}` explicitly to the QA
+pipeline's declared `image-digest` parameter. A matching task dependency does
+not propagate the value on its own. Source: `/argoproj/argo-workflows`,
+Workflow Inputs > Pass Outputs Between DAG Tasks.
+
+When a CronWorkflow defines its own `workflowSpec` and calls a QA pipeline only
+through a DAG task `templateRef`, it creates the parent Workflow itself; the
+referenced template does not create a child Workflow. Put the evidence label on
+the CronWorkflow's own `spec.workflowMetadata` as well:
+
+```yaml
+spec:
+  workflowMetadata:
+    labels:
+      bluefin.io/evidence-contract: qa-run-v1
+  workflowSpec:
+    templates:
+      - name: pipeline
+        dag:
+          tasks:
+            - name: run-qa
+              templateRef:
+                name: dakota-qa-pipeline
+                template: pipeline
+```
+
+Source: `/argoproj/argo-workflows`, Cron Workflows > CronWorkflow Spec >
+`workflowSpec` and `workflowMetadata`.
 
 ### 4. Output parameters — use `script` with stdout
 
@@ -486,3 +541,38 @@ spec:
     secondsAfterCompletion: 86400  # 24h for successful runs
     secondsAfterFailure: 604800    # 7d for failed runs (matches controller configmap)
 ```
+
+## When to Use
+
+- Creating or changing an Argo WorkflowTemplate, Workflow, or CronWorkflow.
+- Adding labels, parameters, task references, resource limits, or lifecycle
+  policy to a workflow.
+
+## When NOT to Use
+
+- ArgoCD Application ownership or sync policy changes; use the GitOps skill.
+- KubeVirt VM design or test-suite behavior changes; use the corresponding
+  KubeVirt or test-authoring skill.
+
+## Common Rationalizations
+
+| Rationalization | Reality |
+| --- | --- |
+| "The referenced template's labels will label the CronWorkflow run." | A DAG `templateRef` is not a child Workflow; put selection labels on the CronWorkflow's `spec.workflowMetadata`. |
+| "The template linted, so it is live." | GitOps changes must be reconciled and the live template verified before submitting a run. |
+
+## Red Flags
+
+- A reconciler selects labels that exist only on a referenced template while a
+  CronWorkflow creates the parent Workflow inline.
+- A workflow task relies on inherited parameters or emits a combined suite
+  result as though it were per-suite evidence.
+- A GitOps-managed workflow was applied manually.
+
+## Verification
+
+- [ ] `just lint` passes.
+- [ ] Every top-level Workflow or CronWorkflow selected by an external
+  reconciler has the required label on the created Workflow metadata.
+- [ ] ArgoCD has reconciled the tracked manifest, and the live template was
+  verified before resubmission.

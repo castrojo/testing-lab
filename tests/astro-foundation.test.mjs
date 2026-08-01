@@ -136,6 +136,84 @@ test('tests page renders matrix views, chart mounts, evidence links, and unavail
   assert.match(testsPage, /toast-notification/i, 'tests page renders toast notification styling');
 });
 
+test('tests page keeps triage before evidence, collapses cards, and preserves chart drilldown semantics', () => {
+  const testsPage = html('docs/tests/index.html');
+  const triageIndex = testsPage.indexOf('Needs triage');
+  const scorecardIndex = testsPage.indexOf('Tests at a glance');
+
+  assert.ok(triageIndex >= 0 && triageIndex < scorecardIndex, 'triage leads the page');
+  assert.match(
+    testsPage,
+    /Gate failures lead; then freshness, failure streak, flakes, and coverage gaps\./,
+    'triage explains its ordering',
+  );
+  assert.match(testsPage, /All links stay on this static page\./, 'triage discloses static-only evidence');
+  const triageList = testsPage.slice(triageIndex, testsPage.indexOf('</ol>', triageIndex));
+  assert.ok(
+    triageList.indexOf('Failed gate') < triageList.indexOf('Flake signal')
+      && triageList.indexOf('Flake signal') < triageList.indexOf('Not enrolled'),
+    'triage ranks failed gates ahead of flakes and coverage gaps',
+  );
+  assert.match(
+    testsPage,
+    /<details[^>]*\bid="bluefin-testing-smoke"[^>]*\bclass="detail-card evidence-card"[^>]*>/,
+    'evidence cards start collapsed',
+  );
+  assert.doesNotMatch(
+    testsPage,
+    /<details[^>]*\bid="bluefin-testing-smoke"[^>]*\sopen(?:\s|>)/,
+    'the initial evidence card is not expanded',
+  );
+
+  const sourceLinks = [...testsPage.matchAll(
+    /<a href="(https:\/\/[^"]+)"[^>]*>\s*<strong[^>]*>Published source<\/strong>/g,
+  )].map((match) => match[1]);
+  assert.ok(sourceLinks.length > 0, 'evidence cards expose public provenance links');
+  assert.ok(
+    sourceLinks.every((href) => href.startsWith('https://github.com/projectbluefin/lab/')),
+    'provenance links point only at public static GitHub evidence',
+  );
+
+  const payloadMatch = testsPage.match(
+    /<script type="application\/json" id="tests-chart-data">([\s\S]*?)<\/script>/,
+  );
+  assert.ok(payloadMatch, 'tests page serializes its chart payload');
+  const payload = JSON.parse(payloadMatch[1]);
+  assert.ok(payload.rows.length > 0, 'chart payload keeps matrix rows');
+  for (const row of payload.rows) {
+    for (const key of [
+      'id',
+      'variant',
+      'branch',
+      'suite',
+      'evidence_state',
+      'evidence_state_reason',
+      'started_at',
+      'finished_at',
+      'observed_at',
+      'terminal_failure_streak',
+      'run_history',
+    ]) {
+      assert.ok(Object.hasOwn(row, key), `chart row preserves ${key}`);
+    }
+  }
+
+  assert.match(testsPage, /aria-live="polite"/, 'chart selection announces its result');
+  assert.match(testsPage, /Open evidence from chart selections/, 'keyboard chart controls are available');
+  assert.match(testsPage, /data-tests-chart-select[^>]*aria-controls=/, 'chart controls target evidence cards');
+
+  const chartScript = [...testsPage.matchAll(/<script[^>]+src="([^"]*tests-charts[^"]*)"[^>]*>/g)]
+    .map((match) => match[1])
+    .find((src) => src.startsWith('/_astro/'));
+  assert.ok(chartScript, 'tests chart activation script is emitted');
+  const chartSource = readFileSync(path.join(repo, 'docs', chartScript), 'utf8');
+  assert.match(chartSource, /\.open\s*=\s*true/, 'chart activation opens the matching disclosure');
+  assert.match(chartSource, /history\.replaceState/, 'chart activation updates the location hash');
+  assert.match(chartSource, /\.querySelector\(['"]summary['"]\)/, 'chart activation finds the disclosure summary');
+  assert.match(chartSource, /summary\?\.focus/, 'chart activation focuses the disclosure summary');
+  assert.match(chartSource, /addEventListener\(['"]hashchange['"]/, 'direct hash navigation opens matching evidence');
+});
+
 test('images page renders grouped views, chart mounts, evidence links, and unavailable states', () => {
   const imagesPage = html('docs/images/index.html');
 
