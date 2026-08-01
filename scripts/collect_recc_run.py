@@ -252,13 +252,15 @@ RECC_STATSD = re.compile(
 )
 
 
-def _parse_recc_statsd(text: str) -> dict[str, list[float]]:
-    metrics: dict[str, list[float]] = {}
+def _parse_recc_statsd(text: str) -> dict[str, list[tuple[float, str]]]:
+    metrics: dict[str, list[tuple[float, str]]] = {}
     for line in text.splitlines():
         match = RECC_STATSD.match(line)
         if not match:
             continue
-        metrics.setdefault(match.group("name"), []).append(float(match.group("value")))
+        metrics.setdefault(match.group("name"), []).append(
+            (float(match.group("value")), match.group("kind").lower())
+        )
     return metrics
 
 
@@ -655,7 +657,8 @@ def parse_recc_verbose(text: Any) -> dict[str, Any]:
         statsd = _parse_recc_statsd(text)
         if statsd:
             values["metrics"] = {
-                name: sum(samples) for name, samples in sorted(statsd.items())
+                name: sum(value for value, _ in samples)
+                for name, samples in sorted(statsd.items())
             }
             for metric_name, field in (
                 ("action_cache_hit", "cache_hits"),
@@ -663,12 +666,47 @@ def parse_recc_verbose(text: Any) -> dict[str, Any]:
                 ("fallback", "local_fallbacks"),
             ):
                 if metric_name in statsd:
-                    values[field] = sum(statsd[metric_name])
-            if values["cache_hits"] is not None or values["cache_misses"] is not None:
-                values["action_count"] = sum(
-                    value or 0
-                    for value in (values["cache_hits"], values["cache_misses"])
+                    values[field] = sum(value for value, _ in statsd[metric_name])
+            cache_action_counts = [
+                sum(value for value, kind in statsd[name] if kind in {"c", "count"})
+                for name in (
+                    "action_cache_hit",
+                    "action_cache_miss",
                 )
+                if name in statsd
+                and any(kind in {"c", "count"} for _, kind in statsd[name])
+            ]
+            if cache_action_counts:
+                values["action_count"] = sum(cache_action_counts)
+            else:
+                execution_action_counts = [
+                    sum(
+                        value
+                        for value, kind in statsd[name]
+                        if kind in {"c", "count"}
+                    )
+                    for name in (
+                        "execute_local_no_action_result",
+                        "execute_local_with_action_result",
+                        "execute_remote_with_action_result",
+                    )
+                    if name in statsd
+                    and any(
+                        kind in {"c", "count"} for _, kind in statsd[name]
+                    )
+                ]
+                if execution_action_counts:
+                    values["action_count"] = sum(execution_action_counts)
+            if "execute_local_no_action_result" in statsd:
+                local_fallbacks = sum(
+                    value
+                    for value, kind in statsd["execute_local_no_action_result"]
+                    if kind in {"c", "count"}
+                )
+                if local_fallbacks:
+                    values["local_fallbacks"] = (
+                        values["local_fallbacks"] or 0
+                    ) + local_fallbacks
             compile_values = [
                 value
                 for metric_name in (
@@ -676,7 +714,8 @@ def parse_recc_verbose(text: Any) -> dict[str, Any]:
                     "execute_local_with_action_result",
                     "execute_remote_with_action_result",
                 )
-                for value in statsd.get(metric_name, [])
+                for value, kind in statsd.get(metric_name, [])
+                if kind in {"ms", "millisecond", "milliseconds"}
             ]
             if compile_values:
                 values["compile_seconds"] = sum(compile_values) / 1000
