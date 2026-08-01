@@ -276,6 +276,8 @@ def test_aurora_containerdisk_builder_isolated_and_prebaked():
     assert "libxkbcommon-devel wayland-devel \\\n              qemu-guest-agent \\" in builder
     assert "systemctl enable qemu-guest-agent.service" in builder
     assert 'test -f "${QGA_UNIT}"' in builder
+    assert "sshd.service enabled" not in builder
+    assert 'multi-user.target.wants/sshd.service' not in builder
     assert 'ROOT_UUID="$(blkid -s UUID -o value "${PART}")"' in builder
     assert '"${ESP_ROOT}"/EFI/*/grub.cfg' in builder
     assert 'bootuuid.cfg' in builder

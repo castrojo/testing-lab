@@ -509,13 +509,12 @@ spec:
           --via-loopback \
           "${DISK}"
 
-        # Some images disable the runtime services the lab depends on.
-        # Bluefin needs qemu-guest-agent for KubeVirt accessCredentials, and
-        # the lab also needs sshd.service to be enabled in the ostree deployment.
-        echo "[POST-INSTALL] Enabling qemu-guest-agent.service and sshd.service for lab access..."
+        # Bluefin needs qemu-guest-agent for KubeVirt accessCredentials.
+        # The provision workflow starts sshd.socket after the agent is ready;
+        # enabling sshd.service here would make the socket fail to bind port 22.
+        echo "[POST-INSTALL] Enabling qemu-guest-agent.service for lab access..."
         LOOP_DEV=$(losetup -f --show -P "${DISK}")
         SYSROOT=$(mktemp -d)
-        SSHD_ENABLED=false
         QGA_ENABLED=false
         for PARTNUM in 4 3 2; do
           PART="${LOOP_DEV}p${PARTNUM}"
@@ -538,16 +537,6 @@ spec:
                 echo "[POST-INSTALL] qemu-guest-agent.service already enabled"
               fi
               QGA_ENABLED=true
-
-              WANTS="${DEPLOY_DIR}/etc/systemd/system/multi-user.target.wants/sshd.service"
-              if [ ! -e "${WANTS}" ]; then
-                mkdir -p "$(dirname "${WANTS}")"
-                ln -sf /usr/lib/systemd/system/sshd.service "${WANTS}"
-                echo "[POST-INSTALL] sshd.service enabled in ${DEPLOY_DIR}"
-              else
-                echo "[POST-INSTALL] sshd.service already enabled"
-              fi
-              SSHD_ENABLED=true
 
               # --with-static-configs avoids the btrfs findmnt bug above, but
               # does not write the boot filesystem UUID.  A generic disk's
@@ -592,9 +581,6 @@ spec:
         losetup -d "${LOOP_DEV}" 2>/dev/null || true
         if [ "${QGA_ENABLED}" = false ]; then
           echo "[POST-INSTALL] WARNING: could not find ostree deploy dir to enable qemu-guest-agent"
-        fi
-        if [ "${SSHD_ENABLED}" = false ]; then
-          echo "[POST-INSTALL] WARNING: could not find ostree deploy dir to enable sshd"
         fi
 
   - name: convert-and-push
