@@ -214,12 +214,16 @@ starts the VM's `selenium-webdriver-at-spi-run` service, waits for its
 `/status` endpoint, and runs `tests/kde-smoke/features` with Behave. Results
 and in-guest PNG screenshots are copied back even when Behave fails, then
 persisted under the standard ghost test-results host path. `faillog_*`
-directories are retained alongside `.tar.gz` bundles, and the first screenshot
-is pushed as the stable `desktop-screenshot` OCI artifact. The GitHub
-credential, ORAS tool, screenshot, artifact persistence, and result publication
-are required and fail the runner when unavailable. QEMU-level screendumps are
-not used because
-KubeVirt's `virt-launcher` does not expose a QEMU monitor.
+directories are retained alongside `.tar.gz` bundles. The first screenshot is
+required as evidence but its GHCR/`oras push` publication is disabled
+repo-wide (see
+`docs/superpowers/specs/2026-07-30-block-ghcr-pushes-design.md`); it is
+retained only in the hostPath results bundle, and the runner reports "GHCR
+screenshot publication disabled" instead of silently claiming success. The
+GitHub credential, screenshot presence, artifact persistence, and result
+publication are required and fail the runner when unavailable. QEMU-level
+screendumps are not used because KubeVirt's `virt-launcher` does not expose a
+QEMU monitor.
 
 The runner accepts `failure-class: test|infra` and `failure-issue-url`
 parameters. A failed run classified as infrastructure must include the URL of
