@@ -167,6 +167,29 @@ If a template change is in git but not yet live:
 2. If OutOfSync, run `just argocd-sync`
 3. If sync fails, check ArgoCD logs: `kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller`
 
+#### Diagnosing a repo-specific reconciliation stall (not a full ArgoCD outage)
+
+A merged PR can sit unsynced for 10+ minutes even though ArgoCD itself is
+healthy. Don't assume the whole controller is down — check whether the stall
+is scoped to one repo:
+
+```
+kubernetes-mcp-resources_list apiVersion=argoproj.io/v1alpha1 kind=Application namespace=argocd
+```
+
+Compare the `REVISION` column across all Applications. If Applications
+tracking a *different* repo (e.g. `flatcar-update`) pick up new revisions
+during the same window while every Application tracking `projectbluefin/lab`
+(`testing-lab`, `testing-lab-infra`, `kubestellar-applications`) stays pinned
+to the same old commit SHA across two or more subsequent merges to `main`,
+that's a **repo-specific** reconciliation stall, not a generic ArgoCD
+failure — and not something a hard-refresh from an individual contributor
+should paper over, since it likely has a shared root cause other in-flight
+work also depends on. Confirm via `git log --format='%H %ci %s' origin/main`
+that the stuck revision is genuinely behind, then treat the fix as merged and
+correct, but flag live-verification as blocked pending reconciliation, rather
+than forcing a resync that may mask the underlying problem.
+
 #### The WorkflowTemplate Snapshot Gotcha (CRITICAL):
 - **Snapshot at Submit Time**: In Argo Workflows, a WorkflowTemplate is snapshotted inside the cluster at the *exact moment a workflow is submitted*.
 - **Sync Race Condition**: If you push a fix to git and immediately run `argo submit` or trigger a build, the workflow may snapshot a stale template version if ArgoCD has not yet completed its poll or sync loop.
