@@ -246,7 +246,7 @@ installing the deterministic artifact. The workflow points `logdir` at its
 This preserves artifact determinism while making action-cache hits/misses,
 local fallbacks, and compiler timing available to the collector. A cache-only
 or upload-local-build pilot must fail closed when the BuildStream logdir has no
-RECC evidence rather than report zeros or infer a warm hit from outer
+valid RECC StatsD metric evidence rather than report zeros or infer a warm hit from outer
 BuildStream success. This follows BuildStream's documented writable
 `%{build-root}`/`%{install-root}` sandbox paths and user-configured `logdir`
 (`source: /apache/buildstream`).
