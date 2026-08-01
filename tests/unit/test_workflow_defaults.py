@@ -246,6 +246,16 @@ def test_buildbarn_runner_uses_stable_tmpdir_after_chroot():
     assert "filePool:" not in config
 
 
+def test_virtio_console_module_can_enter_host_mount_namespace():
+    daemonset = yaml.safe_load(
+        (ROOT / "manifests/virtio-console-module.yaml").read_text(encoding="utf-8")
+    )
+
+    assert daemonset["spec"]["template"]["spec"]["securityContext"] == {
+        "seccompProfile": {"type": "Unconfined"}
+    }
+
+
 def test_aurora_containerdisk_builder_isolated_and_prebaked():
     builder = (
         ROOT / "argo/workflow-templates/build-bluefin-migration-containerdisk.yaml"

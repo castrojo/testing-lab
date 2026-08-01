@@ -25,6 +25,9 @@ spec:
         app.kubernetes.io/component: node-tuning
         app.kubernetes.io/part-of: bluefin-test-suite
     spec:
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       tolerations:
         - operator: Exists
       hostPID: true
