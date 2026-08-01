@@ -51,6 +51,28 @@ def test_bluefin_test_lane_depends_on_suite_validation():
     assert content.index("- name: validate-suites") < content.index("- name: test-lane")
 
 
+def test_bluefin_pipeline_accepts_explicit_template_ref_arguments():
+    import yaml
+
+    pipeline = yaml.safe_load(PIPELINE.read_text(encoding="utf-8"))
+    templates = {template["name"]: template for template in pipeline["spec"]["templates"]}
+    parameters = {
+        parameter["name"]
+        for parameter in templates["pipeline"]["inputs"]["parameters"]
+    }
+
+    assert parameters == {
+        "image",
+        "image-tag",
+        "image-digest",
+        "suites",
+        "variant",
+        "branch",
+        "testsuite-branch",
+        "testsuite-repo",
+    }
+
+
 def test_run_container_tests_explicitly_allows_system_suite():
     content = (ROOT / "argo/workflow-templates/run-container-tests.yaml").read_text(
         encoding="utf-8"
