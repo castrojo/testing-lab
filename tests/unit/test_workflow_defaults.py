@@ -411,6 +411,8 @@ def test_kde_runner_adapts_gnome_runner_contract_for_webdriver():
     assert "/status" in kde
     assert "publish_test_results.py" in kde
     assert "/var/mnt/ghost-data/test-results" in kde
+    template = yaml.safe_load(kde)["spec"]["templates"][0]
+    assert template["nodeSelector"] == {"kubernetes.io/hostname": "ghost"}
     assert "- name: failure-class" in kde
     assert "- name: failure-issue-url" in kde
     assert "- name: behave-retries" in kde
