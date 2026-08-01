@@ -18,7 +18,7 @@ def load_module():
 def test_upstream_dataset_derives_required_families(monkeypatch):
     module = load_module()
 
-    # Monkeypatch load_json to intercept factory-stats.json and make bluefin-testing available
+    # Monkeypatch load_json to make release lanes available deterministically.
     orig_load_json = module.load_json
     def mock_load_json(path):
         if Path(path).name == 'factory-stats.json':
@@ -26,7 +26,7 @@ def test_upstream_dataset_derives_required_families(monkeypatch):
             # Restore the 8 lanes to their expected available timestamps for test determinism
             if 'factory' in data and 'images' in data['factory']:
                 images = data['factory']['images']
-                for variant in ['bluefin', 'bluefin-lts', 'aurora', 'bazzite']:
+                for variant in ['bluefin', 'bluefin-lts', 'dakota', 'aurora', 'bazzite']:
                     if variant in images:
                         images[variant]['stable_seen_at'] = '2026-06-28T16:10:04Z'
                         images[variant]['testing_seen_at'] = '2026-06-28T16:10:04Z'
