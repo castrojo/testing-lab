@@ -68,8 +68,9 @@ def test_upstream_dataset_derives_required_families(monkeypatch):
     assert all(metric['collected_at'] == '2026-06-29T19:22:22Z' for metric in dataset['summary_metrics'])
 
 
-def test_tests_matrix_derives_rows_from_surface_and_results():
+def test_tests_matrix_derives_rows_from_surface_and_results(monkeypatch):
     module = load_module()
+    monkeypatch.setattr(module, 'load_qa_run_records', lambda root: [])
 
     dataset = module.build_tests_matrix(ROOT, '2026-06-29T19:22:22Z')
 
@@ -230,6 +231,7 @@ def test_public_evidence_url_allows_only_static_public_destinations():
 
 def test_tests_matrix_rejects_unsafe_legacy_and_enrollment_urls(monkeypatch):
     module = load_module()
+    monkeypatch.setattr(module, 'load_qa_run_records', lambda root: [])
     results = module.load_results_by_relative_path(ROOT)
     legacy_path = 'results/bluefin-testing-smoke.json'
     results[legacy_path] = {
