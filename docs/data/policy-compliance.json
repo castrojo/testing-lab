@@ -3,12 +3,12 @@
   "_meta": {
     "page": "compliance",
     "description": "GitOps and running cluster compliance scorecard.",
-    "generated_at": "2026-08-01T16:51:21Z",
+    "generated_at": "2026-08-01T17:45:23Z",
     "live_snapshot_ok": false,
     "git_manifests_scanned": 151,
     "live_pods_scanned": 0
   },
-  "score": 78.5,
+  "score": 78.1,
   "rules": [
     {
       "id": "registry_allowlist_git",
@@ -176,8 +176,8 @@
       "name": "No Hard Node Selectors in Git",
       "description": "Workloads must not use hard nodeName or hostname nodeSelectors to bypass scheduler placement.",
       "status": "failed",
-      "total_checked": 20,
-      "violations_count": 12,
+      "total_checked": 21,
+      "violations_count": 13,
       "violations": [
         {
           "source": "git:manifests/orphan-pod-gc.yaml",
@@ -205,6 +205,10 @@
         },
         {
           "source": "git:manifests/orphan-vm-cleanup.yaml",
+          "detail": "Hard node hostname selector pin found: 'kubernetes.io/hostname: ghost'"
+        },
+        {
+          "source": "git:argo/workflow-templates/run-kde-tests.yaml",
           "detail": "Hard node hostname selector pin found: 'kubernetes.io/hostname: ghost'"
         },
         {
