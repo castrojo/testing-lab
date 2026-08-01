@@ -1,7 +1,11 @@
 ---
 name: cluster-buildstream
 description: >
-  USB4 admission rules, BuildStream distributed builds, and Buildbarn recovery.
+  Use when operating USB4 admission, BuildStream distributed builds, Buildbarn
+  recovery, or the isolated RECC pilot evidence path.
+metadata:
+  context7-sources:
+    - /apache/buildstream
 ---
 
 # BuildStream and Distributed Builds
@@ -228,6 +232,24 @@ the pod-local LocalCAS socket.
   evidence. The collector preserves missing RECC action fields as
   `unavailable`; current runs have real BuildStream/BuildBarn timing and CAS
   data but no trustworthy RECC hit/miss metrics.
+
+### RECC pilot evidence handoff
+
+The operator-only `recc-baseline-pipeline` must use BuildStream's configured
+`logdir` as the sandbox-to-workflow evidence path. The fixture writes its
+StatsD output under `%{build-root}`, prints each record with a
+`[RECC_METRICS]` marker into the element build log, and removes the file before
+installing the deterministic artifact. The workflow points `logdir` at its
+`/work` volume and extracts only RECC-marked lines; do not put metrics in
+`%{install-root}`, a checked-out artifact, or a host mount.
+
+This preserves artifact determinism while making action-cache hits/misses,
+local fallbacks, and compiler timing available to the collector. A cache-only
+or upload-local-build pilot must fail closed when the BuildStream logdir has no
+RECC evidence rather than report zeros or infer a warm hit from outer
+BuildStream success. This follows BuildStream's documented writable
+`%{build-root}`/`%{install-root}` sandbox paths and user-configured `logdir`
+(`source: /apache/buildstream`).
 
 ### 1. Shared Buildbarn frontend
 - **Endpoint**: `grpc://frontend.buildbarn.svc.cluster.local:8980`

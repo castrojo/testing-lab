@@ -375,8 +375,11 @@ spec:
             echo "unexpected BuildStream project name: ${PROJECT_NAME}" >&2
             exit 1
           }
+          BST_LOGDIR=/work/buildstream-logs
+          mkdir -p "${BST_LOGDIR}"
           cp /etc/buildstream/buildstream.conf /work/buildstream.conf
           cat >> /work/buildstream.conf <<EOF
+          logdir: ${BST_LOGDIR}
           projects:
             ${PROJECT_NAME}:
               artifacts:
@@ -385,6 +388,29 @@ spec:
           EOF
           BST_CONF=/work/buildstream.conf
           echo "=== BuildStream configuration ready ==="
+          RECC_LOG_PATTERN='(^|[^[:alnum:]_])RECC(_VERBOSE|_METRICS)?([^[:alnum:]_-]|$)'
+
+          collect_recc_buildstream_logs() {
+            local destination="$1"
+            local log
+            local found=0
+            if [[ ! -d "${BST_LOGDIR}" ]]; then
+              printf '[RECC_LOGDIR] missing BuildStream log directory: %s\n' \
+                "${BST_LOGDIR}" >> "${destination}"
+              return
+            fi
+            while IFS= read -r -d '' log; do
+              if grep -Eiq "${RECC_LOG_PATTERN}" "${log}"; then
+                found=1
+                printf '\n=== BuildStream element log: %s ===\n' "${log}" >> "${destination}"
+                grep -Ei "${RECC_LOG_PATTERN}" "${log}" >> "${destination}"
+              fi
+            done < <(find "${BST_LOGDIR}" -type f -print0 | sort -z)
+            if [[ "${found}" -eq 0 ]]; then
+              printf '[RECC_LOGDIR] no RECC-marked lines found in %s\n' \
+                "${BST_LOGDIR}" >> "${destination}"
+            fi
+          }
 
           run_phase() {
             local phase="$1"
@@ -403,6 +429,8 @@ spec:
             local cache_origin="unavailable"
             phase_start="$(date +%s)"
             find /root/.cache/buildstream -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+            rm -rf "${BST_LOGDIR}"
+            mkdir -p "${BST_LOGDIR}"
             printf '\n=== %s phase: BuildStream cache cleared; remote RECC cache preserved ===\n' "${phase}" > "${phase_log}"
             if ! capture_buildbarn_metrics "/work/prometheus-${phase}-before.txt"; then
               EVIDENCE_FAILED=1
@@ -410,6 +438,12 @@ spec:
             bst --config "${BST_CONF}" --no-interactive \
               --option recc "${MODE}" \
               build "${ELEMENT}" >> "${phase_log}" 2>&1 || rc=$?
+            collect_recc_buildstream_logs "${phase_log}"
+            if [[ "${MODE}" != "buildstream-only" ]] && \
+              ! grep -Eiq "${RECC_LOG_PATTERN}" "${phase_log}"; then
+              echo "RECC metrics/log evidence missing from BuildStream logdir" >> "${phase_log}"
+              EVIDENCE_FAILED=1
+            fi
             if [[ "${rc}" -eq 0 ]]; then
               state="$(bst --config "${BST_CONF}" --no-interactive show \
                 --deps none --format '%{state}' "${ELEMENT}" 2>>"${phase_log}" \

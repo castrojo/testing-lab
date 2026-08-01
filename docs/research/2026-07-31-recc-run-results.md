@@ -23,12 +23,14 @@ result.
 
 ## Evidence limitation
 
-The outer BuildStream and BuildBarn evidence is available. RECC-specific
-action-cache hits/misses, fallbacks, and compiler timings remain explicitly
-`unavailable` in the emitted evidence. RECC was configured with verbose/StatsD
-metrics, but the nested BuildStream sandbox did not expose its metrics file
-through the install-root handoff; the workflow therefore does not claim a
-RECC hit or miss from these runs.
+The outer BuildStream and BuildBarn evidence is available. These historical
+runs predate the supported handoff now checked in for issue #532: the RECC
+metrics file is written under the ephemeral BuildStream build root, printed
+into the element log, and removed before artifact creation. The workflow
+collects that log through BuildStream's configured `/work/buildstream-logs`
+directory and fails closed if a RECC mode produces no metrics lines. A fresh
+cache-only run is required before claiming action-cache hits/misses, local
+fallbacks, or compiler timing from live evidence.
 
 Nested RECC remote execution was not measured. The pinned upstream `bb_runner`
 source still lacks `remoteApisSocketPath`/LocalCAS socket handoff support, so
