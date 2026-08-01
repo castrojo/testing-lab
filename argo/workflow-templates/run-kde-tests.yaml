@@ -51,6 +51,9 @@ spec:
           path: /tmp/results/failed-scenarios.json
           default: "[]"
     activeDeadlineSeconds: 3600
+    # The durable result store is local to ghost.
+    nodeSelector:
+      kubernetes.io/hostname: ghost
     initContainers:
     - name: git-sync
       image: ghcr.io/projectbluefin/lab-runner@sha256:fe097bb3b85a126b9a16093fbc498b4b6fb7b24e0f74162ad3d91a402dcfa940
