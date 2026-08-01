@@ -186,9 +186,7 @@ spec:
         PF_PID=$!
         trap 'kill "${PF_PID}" 2>/dev/null || true' EXIT
         timeout 600 bash -c '
-          until ssh -i "${SSH_KEY}" -p 2222 -o StrictHostKeyChecking=no
-              -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10
-              "${VM_USER}@127.0.0.1" true 2>/dev/null; do sleep 5; done'
+          until ssh -i "${SSH_KEY}" -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 "${VM_USER}@127.0.0.1" true 2>/dev/null; do sleep 5; done'
         ssh -i "${SSH_KEY}" -p 2222 -o StrictHostKeyChecking=no \
           -o UserKnownHostsFile=/dev/null "${VM_USER}@127.0.0.1" \
           '

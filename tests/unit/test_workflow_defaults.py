@@ -464,6 +464,10 @@ def test_kde_runner_adapts_gnome_runner_contract_for_webdriver():
     assert "shopt -s nullglob globstar" in kde
     assert "VIRTCTL=/tmp/virtctl" in kde
     assert "VIRTCTL=/usr/local/bin/virtctl" not in kde
+    assert (
+        '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null '
+        '-o ConnectTimeout=10 "${VM_USER}@127.0.0.1" true'
+    ) in kde
     assert "publish_test_results.py" in kde
     assert "/var/mnt/ghost-data/test-results" in kde
     template = yaml.safe_load(kde)["spec"]["templates"][0]
