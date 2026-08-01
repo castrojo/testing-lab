@@ -171,7 +171,10 @@ spec:
             if [[ -n "${GITHUB_TOKEN:-}" ]]; then
               SKOPEO_ARGS+=(--creds "_token:${GITHUB_TOKEN}")
             fi
-            DIGEST=$(skopeo inspect "${SKOPEO_TLS_ARGS[@]}" "${SKOPEO_ARGS[@]}" --no-tags --format '{{.Digest}}' "docker://${IMAGE}" 2>/dev/null || true)
+            # Bounded so a stalled registry mirror connection cannot hang
+            # digest resolution; a timeout falls through to the existing
+            # tag-based fallback below, same as any other inspect failure.
+            DIGEST=$(timeout 120 skopeo inspect "${SKOPEO_TLS_ARGS[@]}" "${SKOPEO_ARGS[@]}" --no-tags --format '{{.Digest}}' "docker://${IMAGE}" 2>/dev/null || true)
           fi
           if [[ -z "${DIGEST:-}" ]]; then
             echo "Warning: could not resolve digest for ${IMAGE}; result will still be published but may fall back to tag-based matching." >&2
@@ -195,14 +198,36 @@ spec:
           exit 1
         }
         mkdir -p /tmp/results
-        if [[ "${#PODMAN_PULL_TLS_ARGS[@]}" -gt 0 ]]; then
-          podman pull "${PODMAN_PULL_TLS_ARGS[@]}" "${TARGET_IMAGE}" >/dev/null
+
+        # Bound every pull attempt. The shared Zot pull-through cache
+        # occasionally hits "unexpected EOF" reconnecting mid-blob against
+        # ghcr.io; without a client-side timeout that hang blocks this pod
+        # (and its ghost-container-qa semaphore slot) for up to
+        # activeDeadlineSeconds instead of minutes. Retry a bounded number of
+        # times first, since a stall is often resolved by Zot's own
+        # reconnect-and-resume on the next attempt.
+        PULL_ATTEMPTS=3
+        PULL_TIMEOUT_SECONDS=480
+        pull_ok=false
+        for attempt in $(seq 1 "${PULL_ATTEMPTS}"); do
+          echo "Pulling ${TARGET_IMAGE} (attempt ${attempt}/${PULL_ATTEMPTS}, ${PULL_TIMEOUT_SECONDS}s timeout)..." >&2
+          if timeout "${PULL_TIMEOUT_SECONDS}" podman pull "${PODMAN_PULL_TLS_ARGS[@]}" "${TARGET_IMAGE}" >/dev/null; then
+            pull_ok=true
+            break
+          fi
+          echo "Pull attempt ${attempt} for ${TARGET_IMAGE} failed or timed out after ${PULL_TIMEOUT_SECONDS}s" >&2
+          sleep 30
+        done
+        if [[ "${pull_ok}" != true ]]; then
+          echo "Giving up on ${TARGET_IMAGE} after ${PULL_ATTEMPTS} pull attempts; registry appears stalled or unreachable" >&2
+          exit 1
         fi
         podman run --detach --systemd=always --network host --privileged \
           --cgroupns=host \
           --security-opt seccomp=unconfined \
           --tmpfs /run:rw,nosuid,nodev,mode=755,size=256m \
           --name "${TARGET_NAME}" \
+          --pull=never \
           --mount type=bind,source=/sys,destination=/sys,ro,bind-propagation=rprivate \
           --mount type=bind,source=/run/udev,destination=/run/udev,ro,bind-propagation=rprivate \
           --volume /workspace:/workspace:ro \
