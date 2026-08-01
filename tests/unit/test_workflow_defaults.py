@@ -254,6 +254,11 @@ def test_virtio_console_module_can_enter_host_mount_namespace():
     assert daemonset["spec"]["template"]["spec"]["securityContext"] == {
         "seccompProfile": {"type": "Unconfined"}
     }
+    modprobe = daemonset["spec"]["template"]["spec"]["initContainers"][0]
+    assert modprobe["securityContext"] == {
+        "privileged": True,
+        "runAsUser": 0,
+    }
 
 
 def test_aurora_containerdisk_builder_isolated_and_prebaked():
