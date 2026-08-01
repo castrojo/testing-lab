@@ -229,6 +229,27 @@ def test_image_tag_defines_the_matrix_branch_before_source_branch():
     assert record["lane"]["branch"] == "testing"
 
 
+def test_workflow_without_a_selected_suite_is_explicitly_unavailable():
+    module = load_module()
+    run = workflow(phase="Error", finished_at="2026-08-01T14:03:00Z")
+    run["spec"]["arguments"]["parameters"] = [
+        parameter
+        for parameter in run["spec"]["arguments"]["parameters"]
+        if parameter["name"] != "suites"
+    ]
+
+    record = module.normalize_workflow(run, "2026-08-01T14:04:00Z")
+
+    assert record["lane"] == {
+        "name": "bluefin-testing",
+        "variant": "bluefin",
+        "branch": "testing",
+        "suite": None,
+        "state": "unavailable",
+        "state_reason": "Workflow parameters do not provide a selected suite.",
+    }
+
+
 def test_multi_suite_parent_emits_per_suite_task_node_evidence():
     module = load_module()
     parent = workflow(phase="Failed", finished_at="2026-08-01T14:04:00Z")
