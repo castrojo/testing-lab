@@ -54,6 +54,23 @@ def test_image_poller_declares_the_digest_parameter_used_by_its_qa_reference():
     assert parameters["image-digest"] == ""
 
 
+def test_image_poller_cron_workflows_supply_the_digest_parameter():
+    offenders = []
+
+    for manifest in sorted((ROOT / "manifests").glob("image-poll-*.yaml")):
+        document = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+        if document["spec"]["workflowSpec"].get("workflowTemplateRef", {}).get("name") != "image-poller":
+            continue
+        parameters = {
+            parameter["name"]: parameter.get("value")
+            for parameter in document["spec"]["workflowSpec"]["arguments"]["parameters"]
+        }
+        if parameters.get("image-digest") != "":
+            offenders.append(manifest.name)
+
+    assert not offenders, f"missing image-digest default in: {', '.join(offenders)}"
+
+
 def test_dakota_requires_distributed_capacity_matched_execution():
     config = (ROOT / "manifests/buildstream-remote-cache-config.yaml").read_text(
         encoding="utf-8"
