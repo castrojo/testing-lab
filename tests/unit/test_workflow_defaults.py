@@ -276,6 +276,10 @@ def test_aurora_containerdisk_builder_isolated_and_prebaked():
     assert "libxkbcommon-devel wayland-devel \\\n              qemu-guest-agent \\" in builder
     assert "systemctl enable qemu-guest-agent.service" in builder
     assert 'test -f "${QGA_UNIT}"' in builder
+    assert 'ROOT_UUID="$(blkid -s UUID -o value "${PART}")"' in builder
+    assert '"${ESP_ROOT}"/EFI/*/grub.cfg' in builder
+    assert 'bootuuid.cfg' in builder
+    assert 'set BOOT_UUID="%s"\\n' in builder
     assert "192.168.1.102:30500/{{inputs.parameters.containerdisk-repo}}:${TAG}" in builder
 
     aurora = (ROOT / "argo/workflow-templates/aurora-containerdisk-test.yaml").read_text(
