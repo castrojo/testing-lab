@@ -549,6 +549,31 @@ spec:
               fi
               SSHD_ENABLED=true
 
+              # --with-static-configs avoids the btrfs findmnt bug above, but
+              # does not write the boot filesystem UUID.  A generic disk's
+              # root filesystem is labelled "root", not "boot", so GRUB needs
+              # this bootupd-format file in its EFI vendor directory to find
+              # the real grub.cfg.
+              ROOT_UUID="$(blkid -s UUID -o value "${PART}")"
+              test -n "${ROOT_UUID}"
+              ESP_ROOT="${STAGING}/esp-root"
+              mkdir -p "${ESP_ROOT}"
+              mount "${LOOP_DEV}p2" "${ESP_ROOT}"
+              BOOTUUID_WRITTEN=false
+              for GRUB_CFG in "${ESP_ROOT}"/EFI/*/grub.cfg; do
+                [ -f "${GRUB_CFG}" ] || continue
+                printf 'set BOOT_UUID="%s"\n' "${ROOT_UUID}" \
+                  > "$(dirname "${GRUB_CFG}")/bootuuid.cfg"
+                BOOTUUID_WRITTEN=true
+              done
+              sync
+              umount "${ESP_ROOT}"
+              rmdir "${ESP_ROOT}"
+              if [ "${BOOTUUID_WRITTEN}" != true ]; then
+                echo "[POST-INSTALL] bootupd EFI vendor grub.cfg was not found" >&2
+                exit 1
+              fi
+
               # Restore original findmnt binaries by finding all findmnt.orig in the deployed system root
               echo "[POST-INSTALL] Restoring original findmnt binaries..."
               find "${DEPLOY_DIR}" -name "findmnt.orig" | while read -r orig_file; do
