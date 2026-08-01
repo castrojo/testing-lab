@@ -250,6 +250,28 @@ def test_workflow_without_a_selected_suite_is_explicitly_unavailable():
     }
 
 
+def test_reconciler_service_account_can_report_argo_task_results():
+    import yaml
+
+    documents = list(
+        yaml.safe_load_all(
+            (ROOT / "manifests" / "qa-run-reconciler.yaml").read_text(encoding="utf-8")
+        )
+    )
+    role = next(
+        document
+        for document in documents
+        if document["kind"] == "Role"
+        and document["metadata"]["name"] == "qa-run-reconciler"
+    )
+
+    assert {
+        "apiGroups": ["argoproj.io"],
+        "resources": ["workflowtaskresults"],
+        "verbs": ["create", "patch"],
+    } in role["rules"]
+
+
 def test_multi_suite_parent_emits_per_suite_task_node_evidence():
     module = load_module()
     parent = workflow(phase="Failed", finished_at="2026-08-01T14:04:00Z")
