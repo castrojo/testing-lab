@@ -1,6 +1,8 @@
 from pathlib import Path
+import shutil
 import subprocess
 
+import pytest
 import yaml
 
 
@@ -166,6 +168,9 @@ def test_justfile_exposes_all_operator_parameters():
 
 
 def test_justfile_named_recc_arguments_are_preserved_for_parsing():
+    if not shutil.which("just"):
+        pytest.skip("just is not installed in this test environment")
+
     result = subprocess.run(
         [
             "just",
