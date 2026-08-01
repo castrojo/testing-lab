@@ -8,6 +8,11 @@ metadata:
     app.kubernetes.io/part-of: bluefin-test-suite
 spec:
   serviceAccountName: argo
+  # The poller is the Workflow that owns digest-triggered container QA; the
+  # child templateRef is a DAG node, not a distinct Workflow.
+  workflowMetadata:
+    labels:
+      bluefin.io/evidence-contract: qa-run-v1
   activeDeadlineSeconds: 14400
   entrypoint: check-and-trigger
   arguments:
@@ -57,6 +62,8 @@ spec:
                   value: "{{workflow.parameters.image}}"
                 - name: image-tag
                   value: "{{workflow.parameters.image-tag}}"
+                - name: image-digest
+                  value: "{{tasks.check-digest.outputs.parameters.remote-digest}}"
                 - name: suites
                   value: "{{workflow.parameters.suites}}"
                 - name: variant

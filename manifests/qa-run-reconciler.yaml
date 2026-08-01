@@ -1,0 +1,93 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: qa-run-reconciler
+  namespace: argo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: qa-run-reconciler
+  namespace: argo
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflows"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: qa-run-reconciler
+  namespace: argo
+subjects:
+  - kind: ServiceAccount
+    name: qa-run-reconciler
+    namespace: argo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: qa-run-reconciler
+---
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: qa-run-reconciler
+  namespace: argo
+  annotations:
+    workflows.argoproj.io/description: >
+      Exports labelled QA Workflow lifecycle snapshots through the append-only,
+      public-safe QA-run evidence contract.
+spec:
+  schedules:
+    - "*/5 * * * *"
+  timezone: UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  workflowSpec:
+    serviceAccountName: qa-run-reconciler
+    activeDeadlineSeconds: 300
+    podGC:
+      strategy: OnWorkflowCompletion
+    ttlStrategy:
+      secondsAfterSuccess: 3600
+      secondsAfterFailure: 86400
+    entrypoint: reconcile
+    volumes:
+      - name: workspace
+        emptyDir: {}
+    templates:
+      - name: reconcile
+        script:
+          image: ghcr.io/projectbluefin/lab-runner:latest
+          command: [bash]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+                  optional: true
+          source: |
+            set -euo pipefail
+            kubectl get workflows.argoproj.io -n argo \
+              -l bluefin.io/evidence-contract=qa-run-v1 \
+              -o json > /workspace/workflows.json
+            if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+              echo "QA evidence export unavailable: github-token is not configured." >&2
+              exit 1
+            fi
+            curl --fail --silent --show-error --location \
+              https://raw.githubusercontent.com/projectbluefin/lab/main/scripts/publish_qa_run.py \
+              -o /workspace/publish_qa_run.py
+            python3 /workspace/publish_qa_run.py /workspace/workflows.json \
+              --publish --work-dir /workspace

@@ -12,6 +12,9 @@ metadata:
     app.kubernetes.io/part-of: bluefin-test-suite
 spec:
   serviceAccountName: argo
+  workflowMetadata:
+    labels:
+      bluefin.io/evidence-contract: qa-run-v1
   # Generous ceiling because the run-container-tests template now queues behind a
   # cross-workflow semaphore; the workflow-level deadline must outlive queue wait
   # plus the 1h per-suite test pod deadline.

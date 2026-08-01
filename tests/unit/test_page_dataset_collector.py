@@ -1,5 +1,7 @@
-from pathlib import Path
+from copy import deepcopy
 import importlib.util
+import json
+from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -71,7 +73,7 @@ def test_tests_matrix_derives_rows_from_surface_and_results():
 
     dataset = module.build_tests_matrix(ROOT, '2026-06-29T19:22:22Z')
 
-    assert dataset['schema_version'] == 'v2'
+    assert dataset['schema_version'] == 'v3'
     assert dataset['_meta']['page'] == 'tests'
     assert dataset['_meta']['starter_artifact'] is False
     # Surface comes from docs/data/test-surface.json, so the row count changes
@@ -109,6 +111,268 @@ def test_tests_matrix_derives_rows_from_surface_and_results():
         'gnomeos',
         'snosi',
     }
+
+
+def test_tests_matrix_derives_branch_safe_qa_run_lifecycle_evidence(monkeypatch):
+    module = load_module()
+    fixture = ROOT / 'tests/unit/fixtures/qa-run-derivation.ndjson'
+    records = [json.loads(line) for line in fixture.read_text().splitlines()]
+    monkeypatch.setattr(module, 'load_qa_run_records', lambda root: records)
+
+    dataset = module.build_tests_matrix(ROOT, '2026-08-01T12:00:00Z')
+    rows = {row['id']: row for row in dataset['rows']}
+
+    running = rows['bluefin-testing-smoke']
+    assert running['evidence_source'] == 'qa-run-v1'
+    assert running['evidence_state'] == 'running'
+    assert running['started_at'] == '2026-08-01T11:01:00Z'
+    assert running['finished_at'] is None
+    assert running['digest'] == 'sha256:' + 'b' * 64
+    assert running['screenshot_url'] is None
+    assert running['screenshot_evidence']['state'] == 'not_applicable'
+
+    # The exact branch key prevents testing evidence from bleeding into stable.
+    stable = rows['bluefin-stable-smoke']
+    assert stable['evidence_state'] == 'passed'
+    assert stable['digest'] == 'sha256:' + 'c' * 64
+
+    early_infra_failure = rows['bluefin-testing-system']
+    assert early_infra_failure['evidence_state'] == 'failed'
+    assert early_infra_failure['started_at'] == '2026-08-01T10:56:00Z'
+    assert early_infra_failure['finished_at'] == '2026-08-01T11:01:00Z'
+    assert early_infra_failure['results_evidence']['state'] == 'unavailable'
+    assert early_infra_failure['scenarios_total'] is None
+    assert early_infra_failure['scenarios_failed'] is None
+
+
+def test_tests_matrix_marks_stale_at_the_documented_boundary_and_derives_signals(monkeypatch):
+    module = load_module()
+    fixture = ROOT / 'tests/unit/fixtures/qa-run-derivation.ndjson'
+    records = [json.loads(line) for line in fixture.read_text().splitlines()]
+    monkeypatch.setattr(module, 'load_qa_run_records', lambda root: records)
+
+    dataset = module.build_tests_matrix(ROOT, '2026-08-01T12:00:00Z')
+    rows = {row['id']: row for row in dataset['rows']}
+
+    # Exactly 24 hours is fresh; one second over is stale.
+    assert rows['bluefin-testing-developer']['evidence_state'] == 'passed'
+    stale = rows['bluefin-testing-software']
+    assert stale['evidence_state'] == 'stale'
+    assert '24-hour freshness threshold' in stale['evidence_state_reason']
+
+    persistent = rows['dakota-testing-smoke']
+    assert persistent['evidence_state'] == 'failed'
+    assert persistent['terminal_failure_streak'] == 3
+    assert persistent['runs_recorded'] == 3
+    assert persistent['repeated_failed_scenarios'] == [
+        {'scenario': 'Shell opens', 'failed_runs': 3}
+    ]
+
+    flaky = rows['bluefin-lts-testing-smoke']
+    assert flaky['flake_flips'] == 2
+    assert flaky['runs_recorded'] == 3
+    assert flaky['run_history'][-1]['state'] == 'passed'
+
+
+def test_tests_matrix_keeps_qa_evidence_public_and_does_not_invent_screenshots(monkeypatch):
+    module = load_module()
+    fixture = ROOT / 'tests/unit/fixtures/qa-run-derivation.ndjson'
+    records = [json.loads(line) for line in fixture.read_text().splitlines()]
+    monkeypatch.setattr(module, 'load_qa_run_records', lambda root: records)
+
+    dataset = module.build_tests_matrix(ROOT, '2026-08-01T12:00:00Z')
+    canonical_rows = [
+        row for row in dataset['rows'] if row['evidence_source'] == 'qa-run-v1'
+    ]
+
+    assert canonical_rows
+    for row in canonical_rows:
+        assert row['source_url'].startswith('https://github.com/projectbluefin/lab/')
+        assert all(
+            history['source_url'] is None
+            or history['source_url'].startswith('https://github.com/projectbluefin/lab/')
+            for history in row['run_history']
+        )
+
+    running = next(row for row in canonical_rows if row['id'] == 'bluefin-testing-smoke')
+    assert running['results_evidence']['state'] == 'unavailable'
+    assert running['screenshot_evidence'] == {
+        'state': 'not_applicable',
+        'state_reason': 'No screenshot runner.',
+    }
+
+
+def test_public_evidence_url_allows_only_static_public_destinations():
+    module = load_module()
+
+    assert module.public_evidence_url(
+        'https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson'
+    )
+    assert module.public_evidence_url(
+        'https://projectbluefin.github.io/lab/screenshots/bluefin-testing-smoke-latest.png'
+    )
+    for value in (
+        'http://github.com/projectbluefin/lab',
+        'https://localhost/evidence',
+        'https://127.0.0.1/evidence',
+        'https://10.0.0.1/evidence',
+        'https://172.20.0.1/evidence',
+        'https://192.168.1.1/evidence',
+        'https://169.254.1.1/evidence',
+        'https://[::1]/evidence',
+        'https://[fd00::1]/evidence',
+        'https://argo-server.argo.svc.cluster.local/evidence',
+        'https://github.com@127.0.0.1/evidence',
+        'https://github.com.evil.example/evidence',
+    ):
+        assert module.public_evidence_url(value) is None
+
+
+def test_tests_matrix_rejects_unsafe_legacy_and_enrollment_urls(monkeypatch):
+    module = load_module()
+    results = module.load_results_by_relative_path(ROOT)
+    legacy_path = 'results/bluefin-testing-smoke.json'
+    results[legacy_path] = {
+        **results[legacy_path],
+        'source_url': 'https://127.0.0.1/private-result',
+    }
+    monkeypatch.setattr(module, 'load_results_by_relative_path', lambda root: results)
+    monkeypatch.setattr(
+        module,
+        'load_enrollment_issues',
+        lambda root: {'aurora': {'issue_url': 'https://argo-server.argo.svc.cluster.local/issues/278'}},
+    )
+
+    dataset = module.build_tests_matrix(ROOT, '2026-08-01T12:00:00Z')
+    rows = {row['id']: row for row in dataset['rows']}
+
+    assert rows['bluefin-testing-smoke']['source_url'] == (
+        'https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-testing-smoke.json'
+    )
+    assert rows['aurora-testing-smoke']['enrollment_issue_url'] is None
+    assert rows['aurora-testing-smoke']['source_url'] == (
+        'https://github.com/projectbluefin/lab/blob/main/docs/data/enrollment-issues.json'
+    )
+
+
+def test_normalize_result_source_url_preserves_allowed_github_and_pages_urls():
+    module = load_module()
+
+    github_url = 'https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-testing-smoke.json'
+    pages_url = 'https://projectbluefin.github.io/lab/screenshots/bluefin-testing-smoke-latest.png'
+
+    assert module.normalize_result_source_url('results/bluefin-testing-smoke.json', {'source_url': github_url}) == github_url
+    assert module.normalize_result_source_url('results/bluefin-testing-smoke.json', {'source_url': pages_url}) == pages_url
+
+
+def test_completed_metric_excludes_running_and_stale_qa_evidence(monkeypatch):
+    module = load_module()
+    fixture = ROOT / 'tests/unit/fixtures/qa-run-derivation.ndjson'
+    records = [json.loads(line) for line in fixture.read_text().splitlines()]
+    monkeypatch.setattr(module, 'load_qa_run_records', lambda root: records)
+
+    dataset = module.build_tests_matrix(ROOT, '2026-08-01T12:00:00Z')
+    rows = {row['id']: row for row in dataset['rows']}
+    completed = {
+        row['id'] for row in dataset['rows']
+        if row['evidence_source'] == 'qa-run-v1'
+        and row['evidence_state'] in ('passed', 'failed')
+    }
+    metrics = {metric['id']: metric for metric in dataset['summary_metrics']}
+
+    assert rows['bluefin-testing-smoke']['evidence_state'] == 'running'
+    assert rows['bluefin-testing-software']['evidence_state'] == 'stale'
+    assert 'bluefin-testing-smoke' not in completed
+    assert 'bluefin-testing-software' not in completed
+    assert metrics['rows_with_completed_runs']['value'] == sum(
+        1
+        for row in dataset['rows']
+        if (
+            row['evidence_source'] == 'qa-run-v1'
+            and row['evidence_state'] in ('passed', 'failed')
+        ) or (
+            row['evidence_source'] == 'legacy-results-v1'
+            and row['last_run']
+            and row['result_status'] in ('passed', 'failed')
+        )
+    )
+
+
+def test_tests_matrix_v3_schema_validates_legacy_and_canonical_projections(monkeypatch):
+    module = load_module()
+    fixture = ROOT / 'tests/unit/fixtures/qa-run-derivation.ndjson'
+    records = [json.loads(line) for line in fixture.read_text().splitlines()]
+    monkeypatch.setattr(module, 'load_qa_run_records', lambda root: records)
+
+    from jsonschema import Draft202012Validator
+
+    schema = json.loads((ROOT / 'schemas/v2/tests-matrix.schema.json').read_text())
+    dataset = module.build_tests_matrix(ROOT, '2026-08-01T12:00:00Z')
+    errors = list(Draft202012Validator(schema).iter_errors(dataset))
+    assert not errors, '; '.join(error.message for error in errors)
+
+
+def test_tests_matrix_v3_schema_rejects_incomplete_page_contract(monkeypatch):
+    module = load_module()
+    fixture = ROOT / 'tests/unit/fixtures/qa-run-derivation.ndjson'
+    records = [json.loads(line) for line in fixture.read_text().splitlines()]
+    monkeypatch.setattr(module, 'load_qa_run_records', lambda root: records)
+
+    from jsonschema import Draft202012Validator
+
+    schema = json.loads((ROOT / 'schemas/v2/tests-matrix.schema.json').read_text())
+    Draft202012Validator.check_schema(schema)
+    validator = Draft202012Validator(schema)
+    dataset = module.build_tests_matrix(ROOT, '2026-08-01T12:00:00Z')
+
+    invalid_payloads = []
+
+    missing_metadata = deepcopy(dataset)
+    del missing_metadata['_meta']['generated_at']
+    invalid_payloads.append(missing_metadata)
+
+    missing_metric_provenance = deepcopy(dataset)
+    del missing_metric_provenance['summary_metrics'][0]['source_url']
+    invalid_payloads.append(missing_metric_provenance)
+
+    empty_dimensions = deepcopy(dataset)
+    empty_dimensions['dimensions']['suites'] = []
+    invalid_payloads.append(empty_dimensions)
+
+    missing_legacy_row_field = deepcopy(dataset)
+    del missing_legacy_row_field['rows'][0]['result_status']
+    invalid_payloads.append(missing_legacy_row_field)
+
+    missing_canonical_row_field = deepcopy(dataset)
+    del missing_canonical_row_field['rows'][0]['evidence_state']
+    invalid_payloads.append(missing_canonical_row_field)
+
+    public_urls = deepcopy(dataset)
+    public_urls['rows'][0]['source_url'] = (
+        'https://github.com/projectbluefin/lab/blob/main/docs/data/tests-matrix.json'
+    )
+    public_urls['rows'][0]['screenshot_url'] = (
+        'https://projectbluefin.github.io/lab/screenshots/bluefin-testing-smoke-latest.png'
+    )
+    assert not list(validator.iter_errors(public_urls))
+
+    for unsafe_url in (
+        'https://localhost/evidence',
+        'https://127.0.0.1/evidence',
+        'https://10.0.0.1/evidence',
+        'https://172.20.0.1/evidence',
+        'https://192.168.1.1/evidence',
+        'https://169.254.1.1/evidence',
+        'https://[::1]/evidence',
+        'https://[fd00::1]/evidence',
+        'https://argo-server.argo.svc.cluster.local/evidence',
+    ):
+        private_url = deepcopy(dataset)
+        private_url['rows'][0]['source_url'] = unsafe_url
+        invalid_payloads.append(private_url)
+
+    for payload in invalid_payloads:
+        assert list(validator.iter_errors(payload))
 
 
 def test_applications_matrix_keeps_bazaar_fallbacks_explicit():

@@ -41,6 +41,15 @@ spec:
         value: ""
       - name: behave-retries
         value: "2"
+    outputs:
+      parameters:
+      - name: result
+        valueFrom:
+          path: /tmp/results/result-summary.txt
+      - name: failed-scenarios
+        valueFrom:
+          path: /tmp/results/failed-scenarios.json
+          default: "[]"
     activeDeadlineSeconds: 3600
     initContainers:
     - name: git-sync
@@ -277,6 +286,38 @@ spec:
             echo "ERROR: failed to persist results.json to ${RESULT_DIR}" >&2
             ARTIFACT_RC=1
           fi
+          python3 - <<'PY'
+        import json
+        import re
+
+        with open("/results/results.json", encoding="utf-8") as result_file:
+            data = json.load(result_file)
+        failed = sum(
+            1
+            for feature in data
+            for scenario in feature.get("elements", [])
+            if scenario.get("status") == "failed"
+        )
+        total = sum(len(feature.get("elements", [])) for feature in data)
+        with open("/tmp/results/result-summary.txt", "w", encoding="utf-8") as summary_file:
+            summary_file.write(f"{total - failed}/{total} scenarios passed\n")
+        safe_name = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,:;()/_+-]{0,159}$")
+        failed_scenarios = []
+        for feature in data:
+            for scenario in feature.get("elements", []):
+                name = scenario.get("name")
+                if (
+                    scenario.get("status") == "failed"
+                    and isinstance(name, str)
+                    and safe_name.fullmatch(name)
+                    and not any(word in name.lower() for word in
+                                ("token", "password", "secret", "authorization"))
+                    and name not in failed_scenarios
+                ):
+                    failed_scenarios.append(name)
+        with open("/tmp/results/failed-scenarios.json", "w", encoding="utf-8") as artifact_file:
+            json.dump(failed_scenarios[:20], artifact_file, separators=(",", ":"))
+        PY
         else
           echo "ERROR: Behave did not produce /results/results.json" >&2
           ARTIFACT_RC=1

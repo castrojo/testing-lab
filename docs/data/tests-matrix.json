@@ -1,9 +1,9 @@
 {
-  "schema_version": "v2",
+  "schema_version": "v3",
   "_meta": {
     "page": "tests",
-    "description": "Collector-derived contract for the multipage tests matrix view. Schema v2 adds suite_roles, unenrolled variant rows, flake metrics, and git-tracked test-runs.ndjson history.",
-    "generated_at": "2026-07-31T00:26:27Z",
+    "description": "Collector-derived contract for the multipage tests matrix view. Schema v3 derives branch-safe current and historical lifecycle evidence from immutable qa-run-v1 snapshots, with a deliberate legacy result compatibility projection.",
+    "generated_at": "2026-08-01T15:38:24Z",
     "starter_artifact": false,
     "status": "partial"
   },
@@ -16,7 +16,7 @@
       "state": "available",
       "state_reason": null,
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/test-surface.json",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Count rows emitted by the collector for the tests matrix."
     },
     {
@@ -27,8 +27,8 @@
       "state": "available",
       "state_reason": null,
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Count matrix rows whose joined docs/results/*.json file has last_run set."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Count fresh terminal qa-run-v1 rows and legacy rows with a completed passed/failed result; exclude running and stale evidence."
     },
     {
       "id": "rows_waiting_for_results",
@@ -38,7 +38,7 @@
       "state": "available",
       "state_reason": null,
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/test-surface.json",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Count matrix rows still marked unavailable after joining published results and enrollment issues."
     },
     {
@@ -49,8 +49,19 @@
       "state": "available",
       "state_reason": null,
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/test-runs.ndjson",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Count matrix rows with at least two pass/fail status flips in their recorded run history."
+    },
+    {
+      "id": "qa_run_evidence_rows",
+      "label": "Rows with canonical QA-run evidence",
+      "value": 0,
+      "unit": "count",
+      "state": "available",
+      "state_reason": null,
+      "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/reference/qa-run-evidence-contract.md",
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Count rows derived from exact single-suite immutable qa-run-v1 snapshots."
     }
   ],
   "suite_roles": {
@@ -112,9 +123,33 @@
       "enrollment_issue_url": null,
       "flake_flips": 0,
       "runs_recorded": 1,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "available",
+        "state_reason": null
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/bluefin-lts-testing-developer.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-lts-testing-developer.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/bluefin-lts-testing-developer.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/bluefin-lts-testing-developer.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "bluefin-lts-testing-smoke",
@@ -138,9 +173,33 @@
       "enrollment_issue_url": null,
       "flake_flips": 0,
       "runs_recorded": 2,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "available",
+        "state_reason": null
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/bluefin-lts-testing-smoke.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-lts-testing-smoke.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/bluefin-lts-testing-smoke.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/bluefin-lts-testing-smoke.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "bluefin-lts-testing-software",
@@ -164,9 +223,33 @@
       "enrollment_issue_url": null,
       "flake_flips": 0,
       "runs_recorded": 2,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "No static public screenshot evidence URL is published."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/bluefin-lts-testing-software.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-lts-testing-software.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/bluefin-lts-testing-software.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/bluefin-lts-testing-software.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "bluefin-lts-testing-system",
@@ -190,9 +273,33 @@
       "enrollment_issue_url": null,
       "flake_flips": 0,
       "runs_recorded": 1,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "available",
+        "state_reason": null
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/bluefin-lts-testing-system.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-lts-testing-system.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/bluefin-lts-testing-system.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/bluefin-lts-testing-system.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "bluefin-testing-common",
@@ -216,9 +323,33 @@
       "enrollment_issue_url": null,
       "flake_flips": 0,
       "runs_recorded": 2,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "available",
+        "state_reason": null
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/bluefin-testing-common.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-testing-common.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/bluefin-testing-common.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/bluefin-testing-common.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "bluefin-testing-developer",
@@ -242,9 +373,33 @@
       "enrollment_issue_url": null,
       "flake_flips": 1,
       "runs_recorded": 4,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "available",
+        "state_reason": null
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/bluefin-testing-developer.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-testing-developer.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/bluefin-testing-developer.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/bluefin-testing-developer.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "bluefin-testing-smoke",
@@ -268,9 +423,33 @@
       "enrollment_issue_url": null,
       "flake_flips": 0,
       "runs_recorded": 10,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "available",
+        "state_reason": null
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/bluefin-testing-smoke.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-testing-smoke.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/bluefin-testing-smoke.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/bluefin-testing-smoke.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "bluefin-testing-software",
@@ -294,9 +473,33 @@
       "enrollment_issue_url": null,
       "flake_flips": 1,
       "runs_recorded": 3,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "No static public screenshot evidence URL is published."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/bluefin-testing-software.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-testing-software.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/bluefin-testing-software.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/bluefin-testing-software.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "bluefin-testing-system",
@@ -320,9 +523,33 @@
       "enrollment_issue_url": null,
       "flake_flips": 0,
       "runs_recorded": 1,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "available",
+        "state_reason": null
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/bluefin-testing-system.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-testing-system.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/bluefin-testing-system.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/bluefin-testing-system.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "dakota-testing-developer",
@@ -346,9 +573,33 @@
       "enrollment_issue_url": null,
       "flake_flips": 0,
       "runs_recorded": 2,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "available",
+        "state_reason": null
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/dakota-testing-developer.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/dakota-testing-developer.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/dakota-testing-developer.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/dakota-testing-developer.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "dakota-testing-smoke",
@@ -372,9 +623,33 @@
       "enrollment_issue_url": null,
       "flake_flips": 1,
       "runs_recorded": 3,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "available",
+        "state_reason": null
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/dakota-testing-smoke.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/dakota-testing-smoke.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/dakota-testing-smoke.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/dakota-testing-smoke.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "dakota-testing-software",
@@ -398,9 +673,33 @@
       "enrollment_issue_url": null,
       "flake_flips": 1,
       "runs_recorded": 2,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "No static public screenshot evidence URL is published."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/dakota-testing-software.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/dakota-testing-software.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/dakota-testing-software.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/dakota-testing-software.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "dakota-testing-system",
@@ -424,9 +723,33 @@
       "enrollment_issue_url": null,
       "flake_flips": 1,
       "runs_recorded": 2,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "available",
+        "state_reason": null
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/dakota-testing-system.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/dakota-testing-system.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/dakota-testing-system.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/dakota-testing-system.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "flatcar-testing-flatcar",
@@ -450,9 +773,33 @@
       "enrollment_issue_url": null,
       "flake_flips": 0,
       "runs_recorded": 1,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "No static public screenshot evidence URL is published."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/flatcar-testing-flatcar.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/flatcar-testing-flatcar.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/flatcar-testing-flatcar.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/flatcar-testing-flatcar.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "bluefin-stable-smoke",
@@ -470,15 +817,39 @@
       "history_points": 0,
       "results_path": "results/bluefin-stable-smoke.json",
       "screenshot_path": "screenshots/bluefin-stable-smoke-latest.png",
-      "screenshot_url": "https://factory.projectbluefin.io/screenshots/bluefin-stable-smoke-latest.png",
+      "screenshot_url": null,
       "state": "unavailable",
       "state_reason": "Result file exists, but no completed run is published for this matrix cell yet.",
       "enrollment_issue_url": null,
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "No static public screenshot evidence URL is published."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/bluefin-stable-smoke.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-stable-smoke.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/bluefin-stable-smoke.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/bluefin-stable-smoke.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "bluefin-lts-stable-smoke",
@@ -496,15 +867,39 @@
       "history_points": 0,
       "results_path": "results/bluefin-lts-stable-smoke.json",
       "screenshot_path": "screenshots/bluefin-lts-stable-smoke-latest.png",
-      "screenshot_url": "https://factory.projectbluefin.io/screenshots/bluefin-lts-stable-smoke-latest.png",
+      "screenshot_url": null,
       "state": "unavailable",
       "state_reason": "Result file exists, but no completed run is published for this matrix cell yet.",
       "enrollment_issue_url": null,
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "No exact single-suite immutable qa-run-v1 evidence is published for this cell; legacy result projection is retained for existing dashboard consumers.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "No static public screenshot evidence URL is published."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Legacy result projections are not immutable QA-run records.",
+      "run_history": [],
+      "evidence_source": "legacy-results-v1",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "Legacy result projection until exact qa-run-v1 evidence is published.",
+        "legacy_results_path": "results/bluefin-lts-stable-smoke.json"
+      },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-lts-stable-smoke.json",
-      "collected_at": "2026-07-31T00:26:27Z",
-      "derivation": "Join docs/data/test-surface.json row with docs/results/bluefin-lts-stable-smoke.json; compute pass_rate when scenarios_total > 0; attach suite role and flake metrics."
+      "collected_at": "2026-08-01T15:38:24Z",
+      "derivation": "Compatibility projection from docs/results/bluefin-lts-stable-smoke.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
       "id": "aurora-testing-common",
@@ -528,8 +923,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/278",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/278",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -554,8 +973,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/278",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/278",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -580,8 +1023,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/278",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/278",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -606,8 +1073,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/278",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/278",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -632,8 +1123,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/278",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/278",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -658,8 +1173,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/278",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/278",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -684,8 +1223,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/284",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/284",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -710,8 +1273,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/284",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/284",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -736,8 +1323,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/284",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/284",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -762,8 +1373,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/284",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/284",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -788,8 +1423,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/284",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/284",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -814,8 +1473,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/284",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/284",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -840,8 +1523,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/285",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/285",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -866,8 +1573,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/285",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/285",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -892,8 +1623,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/285",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/285",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -918,8 +1673,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/285",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/285",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -944,8 +1723,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/285",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/285",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -970,8 +1773,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/285",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/285",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -996,8 +1823,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/283",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/283",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1022,8 +1873,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/283",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/283",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1048,8 +1923,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/283",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/283",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1074,8 +1973,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/283",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/283",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1100,8 +2023,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/283",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/283",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1126,8 +2073,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/283",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/283",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1152,8 +2123,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/280",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/280",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1178,8 +2173,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/280",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/280",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1204,8 +2223,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/280",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/280",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1230,8 +2273,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/280",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/280",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1256,8 +2323,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/280",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/280",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1282,8 +2373,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/280",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/280",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1308,8 +2423,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/279",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/279",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1334,8 +2473,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/279",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/279",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1360,8 +2523,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/279",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/279",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1386,8 +2573,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/279",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/279",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1412,8 +2623,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/279",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/279",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1438,8 +2673,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/279",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/279",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1464,8 +2723,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/281",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/281",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1490,8 +2773,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/281",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/281",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1516,8 +2823,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/281",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/281",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1542,8 +2873,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/281",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/281",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1568,8 +2923,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/281",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/281",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1594,8 +2973,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/281",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/281",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1620,8 +3023,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/282",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/282",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1646,8 +3073,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/282",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/282",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1672,8 +3123,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/282",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/282",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1698,8 +3173,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/282",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/282",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1724,8 +3223,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/282",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/282",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -1750,8 +3273,32 @@
       "enrollment_issue_url": "https://github.com/projectbluefin/lab/issues/282",
       "flake_flips": 0,
       "runs_recorded": 0,
+      "evidence_state": "unavailable",
+      "evidence_state_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "started_at": null,
+      "finished_at": null,
+      "observed_at": null,
+      "workflow_uid": null,
+      "image_ref": null,
+      "image_state": "unavailable",
+      "results_evidence": null,
+      "screenshot_evidence": {
+        "state": "unavailable",
+        "state_reason": "Not enrolled in the QA pipeline yet; tracking issue open."
+      },
+      "terminal_failure_streak": null,
+      "repeated_failed_scenarios": [],
+      "repeated_failed_scenarios_state": "unavailable",
+      "repeated_failed_scenarios_reason": "Not enrolled in the QA pipeline yet; tracking issue open.",
+      "run_history": [],
+      "evidence_source": "none",
+      "compatibility": {
+        "contract": "tests-matrix-v2",
+        "reason": "No legacy or canonical result exists because this variant is not enrolled.",
+        "legacy_results_path": null
+      },
       "source_url": "https://github.com/projectbluefin/lab/issues/282",
-      "collected_at": "2026-07-31T00:26:27Z",
+      "collected_at": "2026-08-01T15:38:24Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     }
   ]

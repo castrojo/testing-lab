@@ -1,0 +1,204 @@
+---
+interface TriageRow {
+  id: string;
+  variant: string;
+  branch: string;
+  suite: string;
+  role: string;
+  result_status: string;
+  state: string;
+  state_reason: string | null;
+  enrollment_issue_url: string | null;
+  evidence_state: string;
+  evidence_state_reason: string | null;
+  finished_at: string | null;
+  observed_at: string | null;
+  last_run: string | null;
+  terminal_failure_streak: number | null;
+  flake_flips: number;
+  evidence_source: string;
+}
+
+interface Props {
+  rows: TriageRow[];
+  formatUtc: (value: string | null) => string;
+}
+
+const { rows, formatUtc } = Astro.props;
+const terminalFailed = (row: TriageRow) => row.role === 'gate' && row.evidence_state === 'failed';
+const persistentFailure = (row: TriageRow) => terminalFailed(row) && (row.terminal_failure_streak ?? 0) > 1;
+const timestampFor = (row: TriageRow) => row.finished_at ?? row.observed_at ?? row.last_run;
+
+const labelFor = (row: TriageRow) => {
+  if (persistentFailure(row)) return 'Persistent failure';
+  if (terminalFailed(row)) return 'Terminal failed gate';
+  if (row.role === 'gate' && row.result_status === 'failed') return 'Failed gate · legacy evidence';
+  if (row.evidence_state === 'stale') return 'Stale evidence';
+  if (row.evidence_state === 'running') return 'Running work';
+  if (row.flake_flips > 0) return 'Flake signal';
+  if (row.enrollment_issue_url) return 'Not enrolled';
+  return 'Evidence unavailable';
+};
+
+const toneFor = (row: TriageRow) => {
+  if (terminalFailed(row) || row.result_status === 'failed') return 'failed';
+  if (row.evidence_state === 'running') return 'running';
+  if (row.evidence_state === 'stale' || row.flake_flips > 0) return 'warning';
+  return 'unavailable';
+};
+
+const queueSummary = {
+  terminal: rows.filter(terminalFailed).length,
+  persistent: rows.filter(persistentFailure).length,
+  flakes: rows.filter((row) => row.flake_flips > 0).length,
+  unavailable: rows.filter((row) => row.state === 'unavailable').length,
+};
+---
+
+<section class="triage-queue" aria-labelledby="triage-heading">
+  <div class="triage-queue__heading">
+    <div>
+      <p>Operator order</p>
+      <h2 id="triage-heading">Needs triage</h2>
+      <span>Gate failures lead; then freshness, failure streak, flakes, and coverage gaps. All links stay on this static page.</span>
+    </div>
+    <dl>
+      <div><dt>Terminal gates</dt><dd>{queueSummary.terminal}</dd></div>
+      <div><dt>Persistent</dt><dd>{queueSummary.persistent}</dd></div>
+      <div><dt>Flakes</dt><dd>{queueSummary.flakes}</dd></div>
+      <div><dt>Unavailable</dt><dd>{queueSummary.unavailable}</dd></div>
+    </dl>
+  </div>
+
+  {rows.length > 0 ? (
+    <ol class="triage-queue__list">
+      {rows.map((row) => (
+        <li class:list={['triage-queue__item', `triage-queue__item--${toneFor(row)}`]}>
+          <a href={`#${row.id}`}>
+            <span class={`triage-queue__signal triage-queue__signal--${toneFor(row)}`}>{labelFor(row)}</span>
+            <strong>{row.variant} / {row.branch} / {row.suite}</strong>
+            <span class="triage-queue__meta">
+              {row.role === 'gate' ? 'GATE' : 'INFO'} · {formatUtc(timestampFor(row))}
+              {row.terminal_failure_streak && row.terminal_failure_streak > 0 && ` · ${row.terminal_failure_streak}-run failure streak`}
+              {row.flake_flips > 0 && ` · ${row.flake_flips} status flips`}
+            </span>
+            <span class="triage-queue__reason">
+              {row.evidence_state_reason ?? row.state_reason ?? 'Open selected evidence'}
+            </span>
+          </a>
+        </li>
+      ))}
+    </ol>
+  ) : (
+    <p class="triage-queue__empty">No published rows currently need triage.</p>
+  )}
+</section>
+
+<style>
+  .triage-queue {
+    background:
+      linear-gradient(90deg, rgba(244, 63, 94, 0.12), transparent 38%),
+      rgba(15, 23, 42, 0.55);
+    border: 1px solid rgba(244, 63, 94, 0.32);
+    border-radius: 18px;
+    margin: 0 0 2rem;
+    padding: 1.25rem;
+  }
+  .triage-queue__heading {
+    align-items: end;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+  }
+  .triage-queue__heading p {
+    color: #fda4af;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    margin: 0 0 0.25rem;
+    text-transform: uppercase;
+  }
+  .triage-queue__heading h2 {
+    font-size: 1.5rem;
+    margin: 0 0 0.25rem;
+  }
+  .triage-queue__heading > div > span,
+  .triage-queue__reason,
+  .triage-queue__meta {
+    color: #94a3b8;
+    font-size: 0.78rem;
+  }
+  .triage-queue dl {
+    display: grid;
+    gap: 0.6rem;
+    grid-template-columns: repeat(4, minmax(4.5rem, 1fr));
+    margin: 0;
+  }
+  .triage-queue dl div {
+    border-left: 1px solid rgba(148, 163, 184, 0.2);
+    padding-left: 0.6rem;
+  }
+  .triage-queue dt {
+    color: #94a3b8;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+  }
+  .triage-queue dd {
+    color: #f8fafc;
+    font-size: 1.15rem;
+    font-weight: 800;
+    margin: 0.15rem 0 0;
+  }
+  .triage-queue__list {
+    display: grid;
+    gap: 0.5rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .triage-queue__item {
+    border-left: 3px solid #64748b;
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.45);
+  }
+  .triage-queue__item--failed { border-left-color: #fb7185; }
+  .triage-queue__item--warning { border-left-color: #fbbf24; }
+  .triage-queue__item--running { border-left-color: #38bdf8; }
+  .triage-queue__item a {
+    display: grid;
+    gap: 0.2rem;
+    padding: 0.75rem 0.9rem;
+    text-decoration: none;
+  }
+  .triage-queue__item a:hover {
+    background: rgba(255, 255, 255, 0.035);
+  }
+  .triage-queue__item strong {
+    color: #f8fafc;
+    font-size: 0.92rem;
+  }
+  .triage-queue__signal {
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .triage-queue__signal--failed { color: #fda4af; }
+  .triage-queue__signal--warning { color: #fde68a; }
+  .triage-queue__signal--running { color: #7dd3fc; }
+  .triage-queue__signal--unavailable { color: #cbd5e1; }
+  .triage-queue__empty {
+    color: #cbd5e1;
+    margin: 0;
+  }
+  @media (max-width: 760px) {
+    .triage-queue__heading {
+      align-items: start;
+      flex-direction: column;
+    }
+    .triage-queue dl {
+      width: 100%;
+    }
+  }
+</style>

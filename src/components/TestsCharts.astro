@@ -3,16 +3,23 @@ import { serializeJsonScript } from '../lib/json-script';
 import testsChartsScript from '../scripts/tests-charts.js?url';
 
 interface ChartHistoryPoint {
-  run_date: string;
-  workflow_name: string | null;
-  status: string;
-  scenarios: number;
-  failed: number;
+  recorded_at?: string | null;
+  run_date?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  observed_at?: string | null;
+  workflow_name?: string | null;
+  workflow_uid?: string | null;
+  status?: string | null;
+  evidence_state?: string | null;
+  scenarios?: number | null;
+  failed?: number | null;
+  scenarios_total?: number | null;
+  scenarios_failed?: number | null;
 }
 
 interface ChartRowDetails {
-  history: ChartHistoryPoint[];
-  failed_scenarios?: string[];
+  history?: ChartHistoryPoint[];
 }
 
 interface ChartRow {
@@ -20,50 +27,38 @@ interface ChartRow {
   variant: string;
   branch: string;
   suite: string;
-  role: string;
-  pass_rate: number | null;
-  scenarios_total: number;
-  scenarios_failed: number;
-  state: string;
-  state_reason: string | null;
-  enrollment_issue_url: string | null;
-  flake_flips: number;
-  runs_recorded: number;
-  details: ChartRowDetails | null;
+  role?: string;
+  result_status?: string | null;
+  pass_rate?: number | null;
+  scenarios_total?: number | null;
+  scenarios_failed?: number | null;
+  state?: string | null;
+  state_reason?: string | null;
+  evidence_state?: string | null;
+  evidence_state_reason?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  observed_at?: string | null;
+  terminal_failure_streak?: number | null;
+  flake_flips?: number | null;
+  runs_recorded?: number | null;
+  run_history?: ChartHistoryPoint[];
+  details?: ChartRowDetails | null;
 }
 
-interface TestRun {
-  recorded_at: string;
+interface TestRun extends ChartHistoryPoint {
   variant: string;
   branch: string;
   suite: string;
-  role: string;
-  workflow_name: string;
-  status: 'passed' | 'failed';
-  scenarios_total: number;
-  scenarios_failed: number;
-  failed_scenarios: string[];
-  digest: string | null;
-}
-
-interface ReleaseVerdictHistoryPoint {
-  recorded_at: string;
-  lane: string;
-  digest: string | null;
-  verdict: string;
-  build: string;
-  qa: string;
-  signature: string;
 }
 
 interface ChartPayload {
-  generatedAt: string;
-  status: string;
-  suites: string[];
-  variants: string[];
+  generatedAt?: string;
+  status?: string;
+  suites?: string[];
+  variants?: string[];
   rows: ChartRow[];
-  testRuns: TestRun[];
-  releaseVerdictHistory: ReleaseVerdictHistoryPoint[];
+  testRuns?: TestRun[];
 }
 
 interface Props {
@@ -72,9 +67,16 @@ interface Props {
 
 const { payload } = Astro.props;
 const payloadJson = serializeJsonScript(payload);
+const stateFor = (row: ChartRow) =>
+  row.evidence_state ?? (row.state === 'available' ? row.result_status ?? 'unavailable' : 'unavailable');
+const selectionLabel = (row: ChartRow) => {
+  const state = stateFor(row);
+  const streak = Number(row.terminal_failure_streak);
+  return `${row.variant} ${row.branch} · ${row.suite} — ${state}${streak > 1 ? `, ${streak} consecutive failures` : ''}`;
+};
 ---
 
-<section class="status-card chart-card">
+<section class="status-card chart-card" aria-labelledby="tests-charts-heading">
   <style>
     .chart-grid {
       display: grid;
@@ -109,8 +111,8 @@ const payloadJson = serializeJsonScript(payload);
       box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
       display: flex;
       flex-direction: column;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      min-width: 0; /* Let ECharts shrink on resize */
+      min-width: 0;
+      transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease;
     }
     .chart-panel:hover {
       border-color: rgba(56, 189, 248, 0.2);
@@ -128,7 +130,7 @@ const payloadJson = serializeJsonScript(payload);
     }
     .chart-panel__header p {
       font-size: 0.82rem;
-      color: #64748b;
+      color: #94a3b8;
       margin: 0;
       line-height: 1.4;
     }
@@ -145,17 +147,40 @@ const payloadJson = serializeJsonScript(payload);
       min-height: 340px;
       border: 1px dashed rgba(255, 255, 255, 0.08);
       border-radius: 14px;
-      color: #64748b;
+      color: #94a3b8;
       font-size: 0.875rem;
       text-align: center;
       background: rgba(30, 41, 59, 0.15);
       padding: 1.5rem;
     }
+    .chart-state-key {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      color: #94a3b8;
+      font-size: 0.75rem;
+      margin: 1rem 0 0;
+    }
+    .chart-state-key span {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+    .chart-state-key i {
+      width: 0.6rem;
+      height: 0.6rem;
+      border-radius: 50%;
+    }
+    .chart-state-key .passed { background: #16a34a; }
+    .chart-state-key .failed { background: #dc2626; }
+    .chart-state-key .running { background: #2563eb; }
+    .chart-state-key .stale { background: #d97706; }
+    .chart-state-key .unavailable { background: #475569; }
     #tests-chart-flakes {
       min-height: 120px;
     }
     :global(.flake-panel__empty) {
-      color: #64748b;
+      color: #94a3b8;
       font-size: 0.875rem;
       padding: 1rem 0;
     }
@@ -172,65 +197,168 @@ const payloadJson = serializeJsonScript(payload);
       padding: 0.9rem 1rem;
     }
     :global(.flake-item__header) {
+      align-items: start;
       display: flex;
-      align-items: center;
-      justify-content: space-between;
       gap: 0.5rem;
+      justify-content: space-between;
       margin-bottom: 0.5rem;
     }
     :global(.flake-item__title) {
+      background: transparent;
+      border: 0;
+      color: #cbd5e1;
+      cursor: pointer;
+      font: inherit;
       font-size: 0.82rem;
       font-weight: 700;
-      color: #cbd5e1;
+      padding: 0;
+      text-align: left;
+      text-decoration: underline;
+      text-decoration-color: transparent;
+    }
+    :global(.flake-item__title:hover),
+    :global(.flake-item__title:focus-visible) {
+      color: #7dd3fc;
+      text-decoration-color: currentColor;
     }
     :global(.flake-item__meta) {
       font-size: 0.7rem;
-      color: #64748b;
+      color: #94a3b8;
     }
     :global(.flake-sparkline) {
       width: 100%;
       height: 40px;
+    }
+    .chart-a11y-controls {
+      margin-top: 1.5rem;
+    }
+    .chart-a11y-controls summary {
+      color: #bae6fd;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 700;
+    }
+    .chart-a11y-controls p {
+      color: #94a3b8;
+      font-size: 0.78rem;
+      margin: 0.65rem 0;
+    }
+    .chart-a11y-controls__list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      list-style: none;
+      margin: 0;
+      max-height: 15rem;
+      overflow: auto;
+      padding: 0;
+    }
+    .chart-a11y-controls__list button {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(125, 211, 252, 0.2);
+      border-radius: 0.5rem;
+      color: #cbd5e1;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.75rem;
+      padding: 0.4rem 0.6rem;
+      text-align: left;
+    }
+    .chart-a11y-controls__list button:hover,
+    .chart-a11y-controls__list button:focus-visible {
+      border-color: #38bdf8;
+      color: #f8fafc;
+    }
+    .sr-only {
+      height: 1px;
+      margin: -1px;
+      overflow: hidden;
+      padding: 0;
+      position: absolute;
+      white-space: nowrap;
+      width: 1px;
+      clip: rect(0, 0, 0, 0);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .chart-panel,
+      .chart-a11y-controls__list button {
+        transition: none;
+      }
+      .chart-panel:hover {
+        transform: none;
+      }
     }
   </style>
 
   <div class="section-heading">
     <div>
       <p class="status-card__eyebrow">Trends</p>
-      <h2>Run history and current state</h2>
+      <h2 id="tests-charts-heading">Run history and current state</h2>
       <p>
-        Pass-rate history per lane-suite, a current-state heatmap, and a compact flake panel. Gray cells are unavailable or not enrolled.
+        Charts summarize the static matrix and evidence cards below; they do not replace them. Select a chart point or use the keyboard controls to open the matching evidence.
       </p>
     </div>
   </div>
+
+  <p id="tests-chart-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></p>
 
   <div class="chart-grid chart-grid--wide-first" data-tests-charts>
     <article class="chart-panel chart-panel--wide">
       <div class="chart-panel__header">
         <p class="status-card__eyebrow">History</p>
         <h3>Pass-rate trends per lane-suite</h3>
-        <p>Historical pass rate and scenario failures from git-tracked test-runs.ndjson.</p>
+        <p>Each series is an exact variant, branch, and suite. Timestamps come from the published QA-run lifecycle record.</p>
       </div>
-      <div class="chart-panel__plot" id="tests-chart-trends" role="img" aria-label="Pass rate trend chart"></div>
+      <div class="chart-panel__plot" id="tests-chart-trends" role="img" aria-label="Pass rate trends by branch-aware lane and suite"></div>
     </article>
 
     <article class="chart-panel">
       <div class="chart-panel__header">
         <p class="status-card__eyebrow">Coverage</p>
-        <h3>Suite/variant heatmap</h3>
-        <p>Current result status by variant and suite. Green pass, red fail, grey unavailable.</p>
+        <h3>Suite/variant heatmap by branch-aware lane</h3>
+        <p>Passed is green, failed red, running blue, stale amber, and unavailable grey. A failure multiplier marks a persistent terminal failure streak.</p>
       </div>
-      <div class="chart-panel__plot" id="tests-chart-heatmap" role="img" aria-label="Suite variant heatmap"></div>
+      <div class="chart-panel__plot" id="tests-chart-heatmap" role="img" aria-label="Suite status heatmap by variant and branch"></div>
+      <div class="chart-state-key" aria-label="Evidence state key">
+        <span><i class="passed"></i>Passed</span>
+        <span><i class="failed"></i>Failed</span>
+        <span><i class="running"></i>Running</span>
+        <span><i class="stale"></i>Stale</span>
+        <span><i class="unavailable"></i>Unavailable</span>
+      </div>
     </article>
 
     <article class="chart-panel chart-panel--wide">
       <div class="chart-panel__header">
-        <p class="status-card__eyebrow">Flakes</p>
+        <p class="status-card__eyebrow">Flakes and persistence</p>
         <h3>Flaky rows and run history sparklines</h3>
-        <p>Rows with at least one pass/fail flip across their recorded history.</p>
+        <p>Rows show recorded pass/fail flips or a current terminal failure streak of two or more runs.</p>
       </div>
-      <div id="tests-chart-flakes" role="img" aria-label="Flaky rows panel"></div>
+      <div id="tests-chart-flakes" role="region" aria-label="Flaky and persistently failing rows"></div>
     </article>
   </div>
+
+  <details class="chart-a11y-controls">
+    <summary>Open evidence from chart selections</summary>
+    <p>These controls provide the same drilldown as selecting a chart cell or point.</p>
+    <ul class="chart-a11y-controls__list">
+      {payload.rows.map((row) => (
+        <li>
+          <button
+            type="button"
+            data-tests-chart-select
+            data-test-id={row.id}
+            data-test-variant={row.variant}
+            data-test-branch={row.branch}
+            data-test-suite={row.suite}
+            aria-controls={row.id}
+          >
+            {selectionLabel(row)}
+          </button>
+        </li>
+      ))}
+    </ul>
+  </details>
 
   <script type="application/json" id="tests-chart-data" set:html={payloadJson}></script>
   <script is:inline src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js" defer data-cfasync="false"></script>

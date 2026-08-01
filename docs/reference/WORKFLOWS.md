@@ -28,6 +28,7 @@ run test suites → teardown VM on exit.
 |---|---|---|
 | `image` | `ghcr.io/ublue-os/bluefin` | Source image. Tag is appended from `image-tag` for some callers; pass with tag if invoking directly. |
 | `image-tag` | `latest` | `latest`, `lts`, etc. Also used as the golden-disk dir name. |
+| `image-digest` | empty | Optional exact OCI digest. Digest-triggered callers pass it so QA runs the observed image, not a moving tag. |
 | `namespace` | `bluefin-test` | KubeVirt VM namespace. Use `bluefin-lts-test` for LTS. |
 | `suites` | `smoke,developer` | Comma list; valid: `smoke`, `developer`, `software`. |
 | `variant` | `bluefin` | Selects test fixtures (e.g. `dakota` for Ghostty). |

@@ -103,6 +103,24 @@ schema `1.0` records, bucket by UTC start date, and preserve provenance plus
 explicit unavailable states when no validated records remain in the retention
 window.
 
+92. For QA status, consume the generator-derived `evidence_state`,
+`evidence_state_reason`, exact lifecycle timestamps, digest, and static public
+evidence URL from immutable `qa-run-v1` snapshots. Treat legacy
+`state`/`result_status`/`last_run` only as compatibility fields until every
+cell is enrolled; do not infer a per-suite state from a multi-suite Workflow
+or synthesize screenshot URLs. Summary counts for completed runs include only
+fresh terminal canonical states (`passed`/`failed`), never `running` or
+`stale` compatibility projections. Source: `/withastro/docs` confirms local
+data belongs in build-time frontmatter, not browser fetches.
+
+## Verification
+
+- Run the focused dataset collector tests and validate the generated JSON
+  against its schema.
+- Confirm unavailable evidence remains visible with its reason and that every
+  rendered evidence URL is a static public URL.
+- For QA state changes, verify the current row has exact snapshot timestamps
+  and never maps a multi-suite Workflow to a single suite.
 
 ## Common Rationalizations
 
@@ -226,3 +244,31 @@ Guidelines:
 - Do not parse GitHub Actions artifacts directly. Artifacts hold screenshots,
   logs, and SBOMs; link to them from the page but derive chart data from the
   repo-tracked NDJSON lines.
+
+## Accessible chart drilldown
+
+Charts supplement static evidence; they must not be the only path to a row.
+
+- Keep every chart key branch-aware: use the full `(variant, branch, suite)`
+  tuple, never a `variant + suite` shortcut.
+- Pass canonical QA lifecycle fields through the chart payload unchanged:
+  `evidence_state`, exact lifecycle timestamps, `terminal_failure_streak`, and
+  `run_history`. Compatibility result fields are only a fallback.
+- Encode `running`, `stale`, `unavailable`, and persistent terminal failures
+  distinctly. Do not calculate freshness in browser code when the derived
+  contract already declares it.
+- Provide native buttons that dispatch a page-level custom row-activation
+  event. Handle that event by opening the matching existing `<details>`,
+  updating its hash, focusing its `<summary>`, and announcing the selection in
+  an `aria-live` region. Intercept static matrix links through the same event
+  so pointer and keyboard activation are equivalent.
+- Use `chart.on('click', callback)` only to dispatch the same activation event;
+  chart canvas interaction is supplementary. Respect
+  `prefers-reduced-motion` for ECharts animation and scrolling.
+- Build dynamic chart cards with DOM APIs and `textContent`; do not interpolate
+  evidence values with `innerHTML`. Use ECharts' non-HTML tooltip rendering
+  when evidence strings are displayed.
+
+Sources: Apache ECharts Handbook `/apache/echarts-handbook` (chart `click`
+events); Apache ECharts `/apache/echarts-website` (the `richText` tooltip
+render mode avoids an HTML tooltip).
