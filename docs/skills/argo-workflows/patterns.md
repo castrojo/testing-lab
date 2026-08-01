@@ -150,7 +150,7 @@ However, for complex updates (such as parsing BDD/behave test results, merging w
 #### KDE GUI runner: persist guest artifacts before re-raising failures
 
 KDE GUI tests run through a WebDriver service inside the VM, so screenshots and
-`faillog_*` diagnostics are written in the guest session. Set the shared
+`kde_faillog` diagnostics are written in the guest session. Set the shared
 results directory in both environments, copy it back with `scp` after Behave
 returns (including non-zero returns), archive each failure directory with
 `python3 -m tarfile` (the runner has no `tar`), then copy the complete directory
@@ -158,13 +158,14 @@ to the runner's `/var/mnt/ghost-data/test-results` hostPath. Surface archive
 failures after persistence and publication instead of silently dropping them;
 re-raise the saved Behave status only after that cleanup.
 
-Require the GitHub credential, screenshot, and ORAS CLI. Publish the in-guest
-screenshot with the ORAS CLI's `path:media-type` syntax (verified against
-Context7 `/oras-project/oras`); missing inputs or a failed upload must fail the
-runner after artifact persistence:
+Require the screenshot and ORAS CLI. Publish the in-guest screenshot to the
+lab-local registry (GHCR is pull-only) with the ORAS CLI's
+`path:media-type` syntax (verified against Context7 `/oras-project/oras`);
+missing inputs or a failed upload must fail the runner after artifact
+persistence:
 
 ```bash
-oras push "${SCREENSHOT_IMAGE}:${PUSH_TAG}" \
+oras push --plain-http "192.168.1.102:30500/desktop-screenshot:${PUSH_TAG}" \
   --annotation "io.github.projectbluefin.caller_repo=projectbluefin/lab" \
   "${SHOT}:image/png"
 ```

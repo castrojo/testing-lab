@@ -357,16 +357,17 @@ def test_kde_runner_persists_failure_artifacts_and_pushes_guest_screenshots():
         encoding="utf-8"
     )
 
-    assert "faillog_" in kde
+    assert "kde_faillog" in kde
     assert "python3 -m tarfile -c" in kde
     assert "tar -czf" not in kde
     assert "ARTIFACT_RC=1" in kde
     assert "evidence artifacts were not fully retained" in kde
     assert "scp" in kde
     assert "BEHAVE_RC=0" in kde
-    assert "SCREENSHOT_IMAGE=" not in kde
-    assert "oras login" not in kde
-    assert "oras push" not in kde
+    assert "SCREENSHOT_IMAGE=\"192.168.1.102:30500/desktop-screenshot\"" in kde
+    assert "oras push --plain-http" in kde
+    assert "oras login ghcr.io" not in kde
+    assert "ghcr.io/projectbluefin/testsuite/desktop-screenshot" not in kde
     assert "TESTSUITE_RESULTS_DIR" in kde
     assert "qemu_screendump" not in kde
 

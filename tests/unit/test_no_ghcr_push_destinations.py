@@ -291,13 +291,11 @@ def test_push_scripts_inventory():
     )
 
 
-def test_screenshot_templates_are_disabled_unconditionally():
+def test_screenshot_templates_do_not_push_to_ghcr():
     """
-    KDE and GNOME screenshot publication must stay explicitly disabled.
+    Screenshot publication must never target GHCR.
 
-    Asserted by template file name rather than through push_scripts() so the
-    diagnostic is still required once the last upload verb is removed from the
-    source (otherwise these templates would silently drop out of coverage).
+    KDE screenshots may use the lab-local registry; GNOME remains disabled.
     """
     for template_name in SCREENSHOT_TEMPLATES:
         template_file = TEMPLATES_PATH / f"{template_name}.yaml"
@@ -309,14 +307,18 @@ def test_screenshot_templates_are_disabled_unconditionally():
         ]
         combined = "\n".join(sources)
 
-        assert "GHCR screenshot publication disabled" in combined, (
-            f"{template_name}: missing 'GHCR screenshot publication disabled' diagnostic"
-        )
-
-        for source in sources:
-            assert not is_executable_oras_push(source), (
-                f"{template_name}: contains executable oras push (should be disabled)"
+        assert "ghcr.io/projectbluefin/testsuite/desktop-screenshot" not in combined
+        if template_name == "run-kde-tests":
+            assert "192.168.1.102:30500/desktop-screenshot" in combined
+            assert any(is_executable_oras_push(source) for source in sources)
+        else:
+            assert "GHCR screenshot publication disabled" in combined, (
+                f"{template_name}: missing 'GHCR screenshot publication disabled' diagnostic"
             )
+            for source in sources:
+                assert not is_executable_oras_push(source), (
+                    f"{template_name}: contains executable oras push (should be disabled)"
+                )
 
 
 def test_push_patterns_do_not_match_read_only_commands():

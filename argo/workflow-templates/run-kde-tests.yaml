@@ -264,7 +264,7 @@ spec:
             echo "ERROR: failed to archive KDE failure bundle ${bundle}" >&2
             ARTIFACT_RC=1
           fi
-        done < <(find /tmp/results -type d -name 'faillog_*' -print0)
+        done < <(find /tmp/results -type d -name 'kde_faillog' -print0)
 
         RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}/${SUITE}"
         mkdir -p "${RESULT_DIR}"
@@ -288,13 +288,37 @@ spec:
           IMG_SLUG="aurora-${{inputs.parameters.containerdisk-tag}}"
         fi
 
-        # Screenshot discovery; GHCR upload is disabled, retained locally only.
+        # KubeVirt exposes no QEMU monitor, so screenshots come from the guest's
+        # selenium/KPipeWire failure hook and are published to the lab registry.
         SHOT=$(find /tmp/results -type f -name '*.png' -print -quit)
         if [[ -z "${SHOT}" || ! -f "${SHOT}" ]]; then
           echo "ERROR: KDE test did not produce a screenshot artifact" >&2
           ARTIFACT_RC=1
         else
-          echo "GHCR screenshot publication disabled; retaining screenshot locally only." >&2
+          ORAS_BIN=/workspace/oras-bin/oras
+          if [[ ! -x "${ORAS_BIN}" ]]; then
+            mkdir -p "$(dirname "${ORAS_BIN}")"
+            ORAS_ARCHIVE=/workspace/oras-bin/oras.tar.gz
+            curl --fail --silent --show-error --location \
+              --output "${ORAS_ARCHIVE}" \
+              "https://github.com/oras-project/oras/releases/download/v1.2.3/oras_1.2.3_linux_amd64.tar.gz"
+            python3 -m tarfile -e "${ORAS_ARCHIVE}" "$(dirname "${ORAS_BIN}")"
+            rm -f "${ORAS_ARCHIVE}"
+          fi
+          if ! {
+            [[ -x "${ORAS_BIN}" ]] ||
+              { echo "Required tool is unavailable: ${ORAS_BIN}" >&2; false; }
+            export PATH="$(dirname "${ORAS_BIN}"):${PATH}"
+            SCREENSHOT_IMAGE="192.168.1.102:30500/desktop-screenshot"
+            PUSH_TAG="${IMG_SLUG}-${SUITE}-latest"
+            oras push --plain-http "${SCREENSHOT_IMAGE}:${PUSH_TAG}" \
+              --annotation "org.opencontainers.image.description=Bluefin KDE desktop screenshot from lab e2e suite: ${SUITE}" \
+              --annotation "io.github.projectbluefin.caller_repo=projectbluefin/lab" \
+              "${SHOT}:image/png"
+          }; then
+            echo "ERROR: failed to publish KDE screenshot artifact" >&2
+            ARTIFACT_RC=1
+          fi
         fi
 
         PUBLISH_RC=0
