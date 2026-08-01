@@ -3,8 +3,8 @@
   "_meta": {
     "page": "applications",
     "description": "Live ArgoCD GitOps application health and sync status.",
-    "generated_at": "2026-08-01T15:47:59Z",
-    "live_snapshot_ok": true
+    "generated_at": "2026-08-01T15:54:10Z",
+    "live_snapshot_ok": false
   },
   "applications": [
     {
@@ -12,68 +12,39 @@
       "namespace": "argocd",
       "sync_status": "Synced",
       "health_status": "Healthy",
-      "target_revision": "0.9.3",
-      "path": "gha-runner-scale-set",
-      "repo_url": "ghcr.io/actions/actions-runner-controller-charts",
-      "destination_namespace": "arc-runners",
+      "target_revision": "main",
+      "path": "argo",
+      "repo_url": "https://github.com/projectbluefin/lab",
+      "destination_namespace": "argo",
       "drifted_count": 0,
       "drifted_resources": [],
-      "collected_at": "2026-08-01T15:47:59Z"
+      "collected_at": "2026-08-01T15:54:10Z"
     },
     {
       "name": "arc-systems",
       "namespace": "argocd",
-      "sync_status": "OutOfSync",
+      "sync_status": "Synced",
       "health_status": "Healthy",
-      "target_revision": "0.9.3",
-      "path": "gha-runner-scale-set-controller",
-      "repo_url": "ghcr.io/actions/actions-runner-controller-charts",
-      "destination_namespace": "arc-systems",
-      "drifted_count": 4,
-      "drifted_resources": [
-        {
-          "group": "apiextensions.k8s.io",
-          "kind": "CustomResourceDefinition",
-          "name": "autoscalinglisteners.actions.github.com",
-          "namespace": "",
-          "status": "OutOfSync"
-        },
-        {
-          "group": "apiextensions.k8s.io",
-          "kind": "CustomResourceDefinition",
-          "name": "autoscalingrunnersets.actions.github.com",
-          "namespace": "",
-          "status": "OutOfSync"
-        },
-        {
-          "group": "apiextensions.k8s.io",
-          "kind": "CustomResourceDefinition",
-          "name": "ephemeralrunners.actions.github.com",
-          "namespace": "",
-          "status": "OutOfSync"
-        },
-        {
-          "group": "apiextensions.k8s.io",
-          "kind": "CustomResourceDefinition",
-          "name": "ephemeralrunnersets.actions.github.com",
-          "namespace": "",
-          "status": "OutOfSync"
-        }
-      ],
-      "collected_at": "2026-08-01T15:47:59Z"
+      "target_revision": "main",
+      "path": "argo",
+      "repo_url": "https://github.com/projectbluefin/lab",
+      "destination_namespace": "argo",
+      "drifted_count": 0,
+      "drifted_resources": [],
+      "collected_at": "2026-08-01T15:54:10Z"
     },
     {
       "name": "argo-workflows",
       "namespace": "argocd",
       "sync_status": "Synced",
       "health_status": "Healthy",
-      "target_revision": "0.45.28",
-      "path": "argo-workflows",
-      "repo_url": "https://argoproj.github.io/argo-helm",
+      "target_revision": "main",
+      "path": "argo",
+      "repo_url": "https://github.com/projectbluefin/lab",
       "destination_namespace": "argo",
       "drifted_count": 0,
       "drifted_resources": [],
-      "collected_at": "2026-08-01T15:47:59Z"
+      "collected_at": "2026-08-01T15:54:10Z"
     },
     {
       "name": "flatcar-update",
@@ -81,77 +52,12 @@
       "sync_status": "Synced",
       "health_status": "Healthy",
       "target_revision": "main",
-      "path": "manifests",
-      "repo_url": "https://github.com/projectbluefin/testing-lab",
-      "destination_namespace": "flatcar-update",
-      "drifted_count": 0,
-      "drifted_resources": [],
-      "collected_at": "2026-08-01T15:47:59Z"
-    },
-    {
-      "name": "kubestellar",
-      "namespace": "argocd",
-      "sync_status": "Synced",
-      "health_status": "Healthy",
-      "target_revision": "0.29.0",
-      "path": "core-chart",
-      "repo_url": "ghcr.io/kubestellar/kubestellar",
-      "destination_namespace": "kubestellar",
-      "drifted_count": 0,
-      "drifted_resources": [],
-      "collected_at": "2026-08-01T15:47:59Z"
-    },
-    {
-      "name": "kubestellar-applications",
-      "namespace": "argocd",
-      "sync_status": "Synced",
-      "health_status": "Healthy",
-      "target_revision": "main",
-      "path": "argocd",
+      "path": "argo",
       "repo_url": "https://github.com/projectbluefin/lab",
-      "destination_namespace": "argocd",
+      "destination_namespace": "argo",
       "drifted_count": 0,
       "drifted_resources": [],
-      "collected_at": "2026-08-01T15:47:59Z"
-    },
-    {
-      "name": "kubestellar-console",
-      "namespace": "argocd",
-      "sync_status": "Synced",
-      "health_status": "Healthy",
-      "target_revision": "0.3.34",
-      "path": "kubestellar-console",
-      "repo_url": "https://kubestellar.github.io/console",
-      "destination_namespace": "kubestellar-console",
-      "drifted_count": 0,
-      "drifted_resources": [],
-      "collected_at": "2026-08-01T15:47:59Z"
-    },
-    {
-      "name": "kubestellar-postgres",
-      "namespace": "argocd",
-      "sync_status": "Synced",
-      "health_status": "Healthy",
-      "target_revision": "13.1.5",
-      "path": "postgresql",
-      "repo_url": "quay.io/kubestellar/charts",
-      "destination_namespace": "kubeflex-system",
-      "drifted_count": 0,
-      "drifted_resources": [],
-      "collected_at": "2026-08-01T15:47:59Z"
-    },
-    {
-      "name": "node-feature-discovery",
-      "namespace": "argocd",
-      "sync_status": "Synced",
-      "health_status": "Healthy",
-      "target_revision": "0.19.0",
-      "path": "node-feature-discovery",
-      "repo_url": "https://kubernetes-sigs.github.io/node-feature-discovery/charts",
-      "destination_namespace": "node-feature-discovery",
-      "drifted_count": 0,
-      "drifted_resources": [],
-      "collected_at": "2026-08-01T15:47:59Z"
+      "collected_at": "2026-08-01T15:54:10Z"
     },
     {
       "name": "testing-lab",
@@ -159,12 +65,12 @@
       "sync_status": "Synced",
       "health_status": "Healthy",
       "target_revision": "main",
-      "path": "argo/workflow-templates",
+      "path": "argo",
       "repo_url": "https://github.com/projectbluefin/lab",
       "destination_namespace": "argo",
       "drifted_count": 0,
       "drifted_resources": [],
-      "collected_at": "2026-08-01T15:47:59Z"
+      "collected_at": "2026-08-01T15:54:10Z"
     },
     {
       "name": "testing-lab-infra",
@@ -177,7 +83,7 @@
       "destination_namespace": "argo",
       "drifted_count": 0,
       "drifted_resources": [],
-      "collected_at": "2026-08-01T15:47:59Z"
+      "collected_at": "2026-08-01T15:54:10Z"
     }
   ]
 }
