@@ -76,6 +76,8 @@ spec:
                   value: "{{workflow.parameters.branch}}"
                 - name: testsuite-branch
                   value: "{{workflow.parameters.testsuite-branch}}"
+                - name: testsuite-repo
+                  value: "{{workflow.parameters.testsuite-repo}}"
           - name: update-digest
             depends: "check-digest.Succeeded && run-pipeline.Succeeded"
             when: "{{tasks.check-digest.outputs.parameters.changed}} == true"
