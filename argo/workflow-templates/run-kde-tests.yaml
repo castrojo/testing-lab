@@ -176,7 +176,7 @@ spec:
         [[ -n "${GITHUB_TOKEN:-}" ]] ||
           { echo "Required credential is missing: GITHUB_TOKEN" >&2; exit 2; }
         mkdir -p /tmp/results
-        VIRTCTL=/usr/local/bin/virtctl
+        VIRTCTL=/tmp/virtctl
         if [[ ! -x "${VIRTCTL}" ]]; then
           curl --fail --location --retry 3 --output "${VIRTCTL}" \
             https://github.com/kubevirt/kubevirt/releases/download/v1.8.2/virtctl-v1.8.2-linux-amd64
