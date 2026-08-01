@@ -120,6 +120,8 @@ The workflow authoring guidance is split by topic:
 - Prebaking a DUT-specific KDE automation binary without pinning the source
   commit and validating the installed server and `inputsynth` paths during the
   image build.
+- A KDE WebDriver prebake with only `qt6-qtbase-devel`: its CMake project uses
+  `Qt6GuiPrivate`, which Fedora supplies through `qt6-qtbase-private-devel`.
 - Templates annotated `DEPRECATED` that haven't been deleted from git
 - Two CronWorkflows with the same schedule covering overlapping namespaces
 - A `steps` template with the same `when` condition on 3+ sequential steps (convert to `dag` + `depends` chain)
