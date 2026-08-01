@@ -226,6 +226,7 @@ def test_aurora_containerdisk_builder_isolated_and_prebaked():
     assert "selenium-webdriver-at-spi.git" in builder
     assert "d45a21e8f1b3591dc921f0be85f1ecd834cbe413" in builder
     assert "selenium-webdriver-at-spi-inputsynth" in builder
+    assert "qt6-qtbase-private-devel" in builder
     assert "192.168.1.102:30500/{{inputs.parameters.containerdisk-repo}}:${TAG}" in builder
 
     aurora = (ROOT / "argo/workflow-templates/aurora-containerdisk-test.yaml").read_text(
