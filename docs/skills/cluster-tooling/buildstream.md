@@ -240,7 +240,7 @@ The operator-only `recc-baseline-pipeline` must use BuildStream's configured
 StatsD output under `%{build-root}`, prints each record with a
 `[RECC_METRICS]` marker into the element build log, and removes the file before
 installing the deterministic artifact. The workflow points `logdir` at its
-`/work` volume and extracts only RECC-marked lines; do not put metrics in
+`/work` volume and preserves complete RECC-marked lines; do not put metrics in
 `%{install-root}`, a checked-out artifact, or a host mount.
 
 This preserves artifact determinism while making action-cache hits/misses,

@@ -92,8 +92,8 @@ are never treated as compiler durations.
 RECC's metrics file is written under BuildStream's ephemeral `%{build-root}`,
 then printed into the element build log and removed before artifact creation.
 The workflow sets BuildStream's supported `logdir` to `/work/buildstream-logs`
-and extracts RECC-marked lines from those per-element logs into the workflow
-evidence. This keeps the StatsD/log handoff outside the deterministic artifact;
+and extracts complete RECC-marked lines from those per-element logs into the
+workflow evidence. This keeps the StatsD/log handoff outside the deterministic artifact;
 cache-only and upload-local-build phases fail closed when that handoff produces
 no valid RECC StatsD metric evidence.
 
