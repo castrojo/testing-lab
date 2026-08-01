@@ -206,7 +206,19 @@ spec:
         # activeDeadlineSeconds instead of minutes. Retry a bounded number of
         # times first, since a stall is often resolved by Zot's own
         # reconnect-and-resume on the next attempt.
-        PULL_ATTEMPTS=3
+        #
+        # Podman's local blob storage persists across attempts within this
+        # pod, so a retry never restarts from zero: it skips every
+        # already-completed blob and only re-fetches what didn't finish.
+        # Under real ghost-container-qa concurrency (up to 6 simultaneous
+        # pulls sharing one node's egress), this makes attempts
+        # monotonically faster -- observed live in bluefin-qa-pipeline-42jhj,
+        # where attempt 3/3 reached the image's final blob and missed the
+        # 480s deadline by only ~47s. 3 attempts (1500s) was sized for the
+        # original instant-hang case; one extra bounded attempt (4 total,
+        # 2010s worst case) covers the demonstrated near-miss for slow-but-
+        # progressing pulls without unbounding any single attempt.
+        PULL_ATTEMPTS=4
         PULL_TIMEOUT_SECONDS=480
         pull_ok=false
         for attempt in $(seq 1 "${PULL_ATTEMPTS}"); do

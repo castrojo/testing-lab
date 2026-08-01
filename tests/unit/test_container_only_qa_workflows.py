@@ -140,6 +140,31 @@ def test_container_runner_skips_remote_digest_resolution_when_digest_provided():
     assert "skopeo inspect" in block
 
 
+def test_container_runner_pull_retry_budget_survives_slow_contended_pulls():
+    # Live incident bluefin-qa-pipeline-42jhj: under real concurrent
+    # ghost-container-qa demand (up to 6 simultaneous podman pulls sharing one
+    # node's egress), podman's local blob cache carries completed blobs
+    # forward across attempts (each retry starts faster than the last), so
+    # attempt 3/3 reached the final blob of the image and missed the 480s
+    # deadline by only ~47s. PULL_ATTEMPTS=3 was calibrated for the original
+    # instant "unexpected EOF" hang, not for this slow-but-progressing
+    # pattern. Bumping to 4 attempts (worst case 2010s) gives one more full
+    # bounded window -- comfortably more than the ~47s that was missing --
+    # while every attempt remains individually timeout-bounded (no unbounded
+    # retries) and activeDeadlineSeconds (3600s) is untouched.
+    content = (ROOT / "argo/workflow-templates/run-container-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "PULL_ATTEMPTS=4" in content
+    assert "PULL_TIMEOUT_SECONDS=480" in content
+    assert (
+        'timeout "${PULL_TIMEOUT_SECONDS}" podman pull "${PODMAN_PULL_TLS_ARGS[@]}" "${TARGET_IMAGE}"'
+        in content
+    )
+    assert "activeDeadlineSeconds: 3600" in content
+
+
 def test_container_runner_readiness_probe_is_informative():
     content = (ROOT / "argo/workflow-templates/run-container-tests.yaml").read_text(
         encoding="utf-8"
