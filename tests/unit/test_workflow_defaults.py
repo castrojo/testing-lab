@@ -287,7 +287,7 @@ def test_aurora_qa_pipeline_is_vm_based_and_serialized():
     assert pipeline["metadata"]["name"] == "aurora-qa-pipeline"
     assert spec["entrypoint"] == "aurora-qa"
     assert spec["onExit"] == "teardown"
-    assert spec["activeDeadlineSeconds"] == 3600
+    assert spec["activeDeadlineSeconds"] == 14400
     assert spec["templates"][0]["name"] == "aurora-qa"
     assert spec["templates"][0]["synchronization"]["semaphores"][0]["configMapKeyRef"] == {
         "name": "workflow-semaphores",
