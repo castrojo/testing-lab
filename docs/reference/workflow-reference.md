@@ -199,7 +199,7 @@ must fail for repair; it must not use an Ethernet, local, or cache-only fallback
 | `image-poll-lts-testing` | every 10 min at :02 | `image-poller` when `ghcr.io/projectbluefin/bluefin-lts:testing` changes | Bluefin-LTS container-only QA (`smoke`) |
 | `image-poll-bluefin-stable` | every 10 min at :04 | `image-poller` when `ghcr.io/projectbluefin/bluefin:stable` changes | Bluefin container-only QA (full suite) |
 | `image-poll-lts-stable` | every 10 min at :06 | `image-poller` when `ghcr.io/projectbluefin/bluefin-lts:stable` changes | Bluefin-LTS container-only QA (full suite) |
-| `image-poll-dakota` | every 10 min at :08 | custom digest DAG → `dakota-qa-pipeline` when `ghcr.io/projectbluefin/dakota:testing` changes | Dakota container-only QA (`smoke`) |
+| `image-poll-dakota` | every 10 min at :08 | custom digest DAG with `run-qa=false` | Dakota testing digest freshness; daily QA runs at 03:00 UTC |
 | `image-poll-bluefin-main` | every 3h at :12 | `image-poller` when `ghcr.io/ublue-os/bluefin:latest` changes | Bluefin latest container-only QA (full suite) |
 | `image-poll-snosi-latest` | every 3h at :30 | `image-poller` when `ghcr.io/frostyard/snow:latest` changes | Snosi GNOME desktop image coverage |
 | `flatcar-kernel-poller` | 10 min | `flatcar-kernel-build` when kernel.org's latest stable version changes | Flatcar kernel build cache |
@@ -247,7 +247,7 @@ the next cycle.
 | `nightly-smoke-stable` | 03:00 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin`, `image-tag=stable`, `suites=smoke`, `variant=bluefin` |
 | `nightly-smoke-lts` | 02:30 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin-lts`, `image-tag=testing`, `suites=smoke,developer,system`, `variant=bluefin-lts` |
 | `nightly-smoke-lts-stable` | 03:30 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin-lts`, `image-tag=stable`, `suites=smoke`, `variant=bluefin-lts` |
-| `nightly-dakota` | 03:00 | `dakota-qa-pipeline` | `image=ghcr.io/projectbluefin/dakota`, `image-tag=latest`, `suites=smoke,developer,system`, `variant=dakota`; currently `suspend: true`. |
+| `nightly-dakota` | 03:00 | `dakota-qa-pipeline` | `image=ghcr.io/projectbluefin/dakota`, `image-tag=testing`, `suites=smoke,developer,system`, `variant=dakota` |
 | `nightly-knuckle` | 03:30 | `knuckle-qa-pipeline` | `branch=main`, `namespace=knuckle-test`, `suite=smoke`, `tests-branch=main` |
 
 ## Priority Classes

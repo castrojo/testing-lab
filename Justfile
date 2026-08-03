@@ -149,6 +149,15 @@ evaluate-kde-soak:
 
 # ── Observation ─────────────────────────────────────────────────────────────
 
+# Report rolling external traffic on the physical node uplinks and rank Zot
+# repository pulls. Start Prometheus locally first:
+#   kubectl -n kube-system port-forward svc/prometheus 9090:9090
+traffic-report prometheus="http://127.0.0.1:9090" window="24h" interface="enp191s0":
+    python3 scripts/traffic_report.py \
+      --prometheus-url "{{ prometheus }}" \
+      --window "{{ window }}" \
+      --interface "{{ interface }}"
+
 # List all test workflows
 list-workflows:
     argo list -n {{ argo_ns }}

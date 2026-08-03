@@ -1,5 +1,6 @@
 # CronWorkflow: polls ghcr.io/projectbluefin/bluefin-lts:testing every 10 minutes.
-# Triggers bluefin-qa-pipeline only when OCI digest changes vs ConfigMap state.
+# Tracks OCI digest changes without launching frequent QA; daily QA is scheduled
+# by nightly-smoke-lts.
 apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow
 metadata:
@@ -36,6 +37,10 @@ spec:
           value: "digest-lts-testing"
         - name: suites
           value: "smoke"
+        - name: image-digest
+          value: ""
+        - name: run-qa
+          value: "false"
         - name: variant
           value: "bluefin-lts"
         - name: testsuite-repo

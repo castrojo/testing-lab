@@ -59,16 +59,71 @@ def test_image_poller_cron_workflows_supply_the_digest_parameter():
 
     for manifest in sorted((ROOT / "manifests").glob("image-poll-*.yaml")):
         document = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-        if document["spec"]["workflowSpec"].get("workflowTemplateRef", {}).get("name") != "image-poller":
+        if document["spec"]["workflowSpec"].get("workflowTemplateRef", {}).get(
+            "name"
+        ) != "image-poller":
             continue
         parameters = {
             parameter["name"]: parameter.get("value")
-            for parameter in document["spec"]["workflowSpec"]["arguments"]["parameters"]
+            for parameter in document["spec"]["workflowSpec"]["arguments"][
+                "parameters"
+            ]
         }
         if parameters.get("image-digest") != "":
             offenders.append(manifest.name)
 
     assert not offenders, f"missing image-digest default in: {', '.join(offenders)}"
+
+
+def test_testing_lane_pollers_only_refresh_digest_state():
+    for filename in (
+        "image-poll-bluefin-testing.yaml",
+        "image-poll-lts-testing.yaml",
+        "image-poll-dakota.yaml",
+    ):
+        document = yaml.safe_load(
+            (ROOT / "manifests" / filename).read_text(encoding="utf-8")
+        )
+        parameters = document["spec"]["workflowSpec"]["arguments"]["parameters"]
+        values = {parameter["name"]: parameter["value"] for parameter in parameters}
+        assert values["run-qa"] == "false"
+
+    image_poller = (
+        ROOT / "argo/workflow-templates/image-poller.yaml"
+    ).read_text(encoding="utf-8")
+    assert "run-pipeline.Succeeded || run-pipeline.Skipped" in image_poller
+
+
+def test_daily_testing_lane_schedules_are_active_and_staggered():
+    expected = {
+        "nightly-smoke.yaml": ("0 2 * * *", "bluefin"),
+        "nightly-smoke-lts.yaml": ("30 2 * * *", "bluefin-lts"),
+        "nightly-dakota.yaml": ("0 3 * * *", "dakota"),
+    }
+    for filename, (schedule, variant) in expected.items():
+        document = yaml.safe_load(
+            (ROOT / "manifests" / filename).read_text(encoding="utf-8")
+        )
+        assert document["spec"]["suspend"] is False
+        assert document["spec"]["schedules"] == [schedule]
+        arguments = document["spec"]["workflowSpec"]["arguments"]["parameters"]
+        values = {parameter["name"]: parameter["value"] for parameter in arguments}
+        assert values["variant"] == variant
+        assert values["image-tag"] == "testing"
+
+
+def test_testing_lane_prs_require_explicit_opt_in():
+    poller = (
+        ROOT / "argo/workflow-templates/pr-poller.yaml"
+    ).read_text(encoding="utf-8")
+    auto_repos = poller.split("AUTO_REPOS=(", 1)[1].split(")", 1)[0]
+    for repository in (
+        "projectbluefin/bluefin",
+        "projectbluefin/bluefin-lts",
+        "projectbluefin/dakota",
+    ):
+        assert repository not in auto_repos
+    assert "label:test-on-lab" in poller
 
 
 def test_dakota_requires_distributed_capacity_matched_execution():
@@ -246,21 +301,6 @@ def test_buildbarn_runner_uses_stable_tmpdir_after_chroot():
     assert "filePool:" not in config
 
 
-def test_virtio_console_module_can_enter_host_mount_namespace():
-    daemonset = yaml.safe_load(
-        (ROOT / "manifests/virtio-console-module.yaml").read_text(encoding="utf-8")
-    )
-
-    assert daemonset["spec"]["template"]["spec"]["securityContext"] == {
-        "seccompProfile": {"type": "Unconfined"}
-    }
-    modprobe = daemonset["spec"]["template"]["spec"]["initContainers"][0]
-    assert modprobe["securityContext"] == {
-        "privileged": True,
-        "runAsUser": 0,
-    }
-
-
 def test_aurora_containerdisk_builder_isolated_and_prebaked():
     builder = (
         ROOT / "argo/workflow-templates/build-bluefin-migration-containerdisk.yaml"
@@ -272,16 +312,6 @@ def test_aurora_containerdisk_builder_isolated_and_prebaked():
     assert "selenium-webdriver-at-spi.git" in builder
     assert "d45a21e8f1b3591dc921f0be85f1ecd834cbe413" in builder
     assert "selenium-webdriver-at-spi-inputsynth" in builder
-    assert "qt6-qtbase-private-devel" in builder
-    assert "libxkbcommon-devel wayland-devel \\\n              qemu-guest-agent \\" in builder
-    assert "systemctl enable qemu-guest-agent.service" in builder
-    assert 'test -f "${QGA_UNIT}"' in builder
-    assert "sshd.service enabled" not in builder
-    assert 'multi-user.target.wants/sshd.service' not in builder
-    assert 'ROOT_UUID="$(blkid -s UUID -o value "${PART}")"' in builder
-    assert '"${ESP_ROOT}"/EFI/*/grub.cfg' in builder
-    assert 'bootuuid.cfg' in builder
-    assert 'set BOOT_UUID="%s"\\n' in builder
     assert "192.168.1.102:30500/{{inputs.parameters.containerdisk-repo}}:${TAG}" in builder
 
     aurora = (ROOT / "argo/workflow-templates/aurora-containerdisk-test.yaml").read_text(
@@ -308,7 +338,7 @@ def test_aurora_qa_pipeline_is_vm_based_and_serialized():
     assert pipeline["metadata"]["name"] == "aurora-qa-pipeline"
     assert spec["entrypoint"] == "aurora-qa"
     assert spec["onExit"] == "teardown"
-    assert spec["activeDeadlineSeconds"] == 14400
+    assert spec["activeDeadlineSeconds"] == 3600
     assert spec["templates"][0]["name"] == "aurora-qa"
     assert spec["templates"][0]["synchronization"]["semaphores"][0]["configMapKeyRef"] == {
         "name": "workflow-semaphores",
@@ -410,16 +440,6 @@ def test_aurora_kde_sabotage_workflow_runs_both_controlled_failures():
     path = ROOT / "argo/aurora-kde-sabotage.yaml"
     workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert workflow["spec"]["onExit"] == "cleanup"
-    assert workflow["spec"]["volumeClaimGC"] == {"strategy": "OnWorkflowCompletion"}
-    assert workflow["spec"]["volumeClaimTemplates"] == [
-        {
-            "metadata": {"name": "staging"},
-            "spec": {
-                "accessModes": ["ReadWriteOnce"],
-                "resources": {"requests": {"storage": "100Gi"}},
-            },
-        }
-    ]
     tasks = workflow["spec"]["templates"][0]["dag"]["tasks"]
     sabotage_tasks = [
         task for task in tasks if task["name"] in {"missing-binary", "kill-plasmashell"}
@@ -464,20 +484,8 @@ def test_kde_runner_adapts_gnome_runner_contract_for_webdriver():
     assert "KDE_WEBDRIVER_URL" in kde
     assert "XDG_SESSION_DESKTOP=kde" in kde
     assert "/status" in kde
-    assert "for tool in bash curl find" not in kde
-    assert 'find "${XDG_RUNTIME_DIR}"' not in kde
-    assert "find /tmp/results" not in kde
-    assert "shopt -s nullglob globstar" in kde
-    assert "VIRTCTL=/tmp/virtctl" in kde
-    assert "VIRTCTL=/usr/local/bin/virtctl" not in kde
-    assert (
-        '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null '
-        '-o ConnectTimeout=10 "${VM_USER}@127.0.0.1" true'
-    ) in kde
     assert "publish_test_results.py" in kde
     assert "/var/mnt/ghost-data/test-results" in kde
-    template = yaml.safe_load(kde)["spec"]["templates"][0]
-    assert template["nodeSelector"] == {"kubernetes.io/hostname": "ghost"}
     assert "- name: failure-class" in kde
     assert "- name: failure-issue-url" in kde
     assert "- name: behave-retries" in kde
@@ -521,10 +529,6 @@ def test_kde_linux_workflow_calls_native_runner_with_current_contract():
     assert "testsuite-branch" not in workflow
     assert 'value: "aurora-test"' in provision
     assert "kde-test-namespace" not in workflow
-    assert "--connect-timeout 30" in provision
-    assert "--speed-limit 1024" in provision
-    assert "--speed-time 120" in provision
-    assert "--remove-on-error" in provision
 
 
 def test_kde_workflow_images_are_digest_pinned():

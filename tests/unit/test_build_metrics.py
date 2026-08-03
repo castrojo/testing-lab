@@ -55,6 +55,10 @@ def test_prometheus_scrapes_required_build_and_node_targets():
     assert jobs["argo-workflow-controller"]["kubernetes_sd_configs"][0][
         "namespaces"
     ]["names"] == ["argo"]
+    assert jobs["kubernetes-cadvisor"]["sample_limit"] == 50000
+    assert jobs["zot"]["sample_limit"] == 2000
+    assert jobs["github-traffic-hooks"]["sample_limit"] == 500
+    assert jobs["github-traffic-hooks"]["relabel_configs"][1]["regex"] == "github-api"
 
 
 def test_zot_metrics_are_enabled_on_both_registries():
