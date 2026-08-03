@@ -40,6 +40,57 @@ def test_image_poller_cron_manifests_do_not_pass_containerdisk_tag():
     assert not offenders, f"obsolete containerdisk-tag in: {', '.join(offenders)}"
 
 
+def test_testing_lane_pollers_only_refresh_digest_state():
+    for filename in (
+        "image-poll-bluefin-testing.yaml",
+        "image-poll-lts-testing.yaml",
+        "image-poll-dakota.yaml",
+    ):
+        document = yaml.safe_load(
+            (ROOT / "manifests" / filename).read_text(encoding="utf-8")
+        )
+        parameters = document["spec"]["workflowSpec"]["arguments"]["parameters"]
+        values = {parameter["name"]: parameter["value"] for parameter in parameters}
+        assert values["run-qa"] == "false"
+
+    image_poller = (
+        ROOT / "argo/workflow-templates/image-poller.yaml"
+    ).read_text(encoding="utf-8")
+    assert "run-pipeline.Succeeded || run-pipeline.Skipped" in image_poller
+
+
+def test_daily_testing_lane_schedules_are_active_and_staggered():
+    expected = {
+        "nightly-smoke.yaml": ("0 2 * * *", "bluefin"),
+        "nightly-smoke-lts.yaml": ("30 2 * * *", "bluefin-lts"),
+        "nightly-dakota.yaml": ("0 3 * * *", "dakota"),
+    }
+    for filename, (schedule, variant) in expected.items():
+        document = yaml.safe_load(
+            (ROOT / "manifests" / filename).read_text(encoding="utf-8")
+        )
+        assert document["spec"]["suspend"] is False
+        assert document["spec"]["schedules"] == [schedule]
+        arguments = document["spec"]["workflowSpec"]["arguments"]["parameters"]
+        values = {parameter["name"]: parameter["value"] for parameter in arguments}
+        assert values["variant"] == variant
+        assert values["image-tag"] == "testing"
+
+
+def test_testing_lane_prs_require_explicit_opt_in():
+    poller = (
+        ROOT / "argo/workflow-templates/pr-poller.yaml"
+    ).read_text(encoding="utf-8")
+    auto_repos = poller.split("AUTO_REPOS=(", 1)[1].split(")", 1)[0]
+    for repository in (
+        "projectbluefin/bluefin",
+        "projectbluefin/bluefin-lts",
+        "projectbluefin/dakota",
+    ):
+        assert repository not in auto_repos
+    assert "label:test-on-lab" in poller
+
+
 def test_dakota_requires_distributed_capacity_matched_execution():
     config = (ROOT / "manifests/buildstream-remote-cache-config.yaml").read_text(
         encoding="utf-8"

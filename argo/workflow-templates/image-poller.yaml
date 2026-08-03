@@ -22,6 +22,8 @@ spec:
       - name: state-key
       - name: namespace
         value: "bluefin-test"
+      - name: run-qa
+        value: "true"
       - name: suites
         value: "smoke,common,developer,software,system"
       - name: variant
@@ -52,7 +54,7 @@ spec:
                   value: "{{workflow.parameters.state-key}}"
           - name: run-pipeline
             depends: "check-digest.Succeeded"
-            when: "{{tasks.check-digest.outputs.parameters.changed}} == true"
+            when: "{{tasks.check-digest.outputs.parameters.changed}} == true && {{workflow.parameters.run-qa}} == true"
             templateRef:
               name: bluefin-qa-pipeline
               template: pipeline
@@ -73,7 +75,7 @@ spec:
                 - name: testsuite-branch
                   value: "{{workflow.parameters.testsuite-branch}}"
           - name: update-digest
-            depends: "check-digest.Succeeded && run-pipeline.Succeeded"
+            depends: "check-digest.Succeeded && (run-pipeline.Succeeded || run-pipeline.Skipped)"
             when: "{{tasks.check-digest.outputs.parameters.changed}} == true"
             template: update-local
             arguments:

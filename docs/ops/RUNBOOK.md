@@ -30,10 +30,11 @@ Two steady-state execution paths exist:
 attempts to publish `results.json` when `GITHUB_TOKEN` is available. A
 publication warning does not change the suite exit status.
 
-The Bluefin/LTS digest pollers are staggered at minutes `:00`, `:02`, `:04`,
-and `:06` of each ten-minute interval. Dakota's active poller runs at `:08`,
-routes to `dakota-qa-pipeline`, and the suspended `nightly-dakota` is not active
-coverage.
+The Bluefin/LTS testing and Dakota digest pollers remain staggered at minutes
+`:00`, `:02`, and `:08` of each ten-minute interval for freshness tracking, but
+their QA trigger is disabled. Daily testing-lane coverage comes from
+`nightly-smoke` at 02:00 UTC, `nightly-smoke-lts` at 02:30 UTC, and
+`nightly-dakota` at 03:00 UTC.
 
 ## Cluster topology
 
