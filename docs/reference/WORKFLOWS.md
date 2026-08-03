@@ -384,9 +384,9 @@ required:
 | Repo | QA path |
 |---|---|
 | `projectbluefin/common` | smoke suite against bluefin `:testing` |
-| `projectbluefin/bluefin` | smoke suite against current `:testing` image |
-| `projectbluefin/bluefin-lts` | smoke suite against current `:testing` image |
-| `projectbluefin/dakota` | SHA-pinned BuildStream build + container QA |
+| `projectbluefin/bluefin` | daily scheduled QA; PR QA only with `test-on-lab` |
+| `projectbluefin/bluefin-lts` | daily scheduled QA; PR QA only with `test-on-lab` |
+| `projectbluefin/dakota` | daily scheduled QA; PR QA only with `test-on-lab` |
 | `projectbluefin/knuckle` | `knuckle-qa-pipeline` |
 | `projectbluefin/testsuite` | smoke + common suites against bluefin `:testing` |
 
@@ -502,14 +502,14 @@ Lives in `manifests/`, applied via the `lab-infra` ArgoCD app:
 | `nightly-smoke-stable` | 03:00 UTC | `bluefin-qa-pipeline` (`stable`, `smoke`) | Stable image regression coverage |
 | `nightly-smoke-lts` | 02:30 UTC | `bluefin-qa-pipeline` (`testing`) | LTS regression coverage |
 | `nightly-smoke-lts-stable` | 03:30 UTC | `bluefin-qa-pipeline` (`stable`, `smoke`) | Stable LTS regression coverage |
-| `image-poll-bluefin-testing` | Every 10 min at :00 | `bluefin-qa-pipeline` (`testing`, `smoke`) | Active Bluefin digest-triggered QA |
-| `image-poll-lts-testing` | Every 10 min at :02 | `bluefin-qa-pipeline` (`testing`, `smoke`) | Active Bluefin-LTS digest-triggered QA |
+| `image-poll-bluefin-testing` | Every 10 min at :00 | `image-poller` (`run-qa=false`) | Refresh Bluefin testing digest state; daily QA is nightly |
+| `image-poll-lts-testing` | Every 10 min at :02 | `image-poller` (`run-qa=false`) | Refresh Bluefin-LTS testing digest state; daily QA is nightly |
 | `image-poll-bluefin-stable` | Every 10 min at :04 | `bluefin-qa-pipeline` (`stable`, full suite) | Active Bluefin stable digest-triggered QA |
 | `image-poll-lts-stable` | Every 10 min at :06 | `bluefin-qa-pipeline` (`stable`, full suite) | Active Bluefin-LTS stable digest-triggered QA |
-| `image-poll-dakota` | Every 10 min at :08 | `dakota-qa-pipeline` (`testing`, `smoke`) | Active Dakota digest-triggered QA |
+| `image-poll-dakota` | Every 10 min at :08 | `image-poller` (`run-qa=false`) | Refresh Dakota testing digest state; daily QA is nightly |
 | `image-poll-bluefin-main` | Every 3h at :12 | `bluefin-qa-pipeline` (`latest`, full suite) | Active upstream Bluefin digest-triggered QA |
 | `image-poll-snosi-latest` | Every 3h at :30 | `bluefin-qa-pipeline` (`latest`, `smoke,developer,system`) | Active Snosi digest-triggered QA |
-| `nightly-dakota` | 03:00 UTC | `dakota-qa-pipeline` (`latest`) | Suspended; does not provide active coverage |
+| `nightly-dakota` | 03:00 UTC | `dakota-qa-pipeline` (`testing`) | Daily Dakota testing-lane regression coverage |
 | `orphan-vm-cleanup` | every 2h | inline | GC stale per-run hostDisks in bluefin, flatcar, and knuckle namespaces |
 
 ---

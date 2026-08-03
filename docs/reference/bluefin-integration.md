@@ -11,16 +11,17 @@ release consumers.
 
 | Image | Tag | Trigger | QA path |
 |---|---|---|---|
-| `ghcr.io/projectbluefin/bluefin` | `testing` | Nightly 02:00 UTC; digest poll every 10 minutes at :00 | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` (`smoke`) |
+| `ghcr.io/projectbluefin/bluefin` | `testing` | Nightly 02:00 UTC; digest freshness poll every 10 minutes at :00 (QA disabled) | Nightly `bluefin-qa-pipeline` → `run-container-tests` |
 | `ghcr.io/projectbluefin/bluefin` | `stable` | Nightly 03:00 UTC; digest poll every 10 minutes at :04 | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` (full suite) |
-| `ghcr.io/projectbluefin/bluefin-lts` | `testing` | Nightly 02:30 UTC; digest poll every 10 minutes at :02 | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` (`smoke`) |
+| `ghcr.io/projectbluefin/bluefin-lts` | `testing` | Nightly 02:30 UTC; digest freshness poll every 10 minutes at :02 (QA disabled) | Nightly `bluefin-qa-pipeline` → `run-container-tests` |
 | `ghcr.io/projectbluefin/bluefin-lts` | `stable` | Nightly 03:30 UTC; digest poll every 10 minutes at :06 | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` (full suite) |
 | `ghcr.io/frostyard/snow` | `latest` | Every 3 hours at :30 + digest change | `image-poller` → `bluefin-qa-pipeline` → `run-container-tests` (`smoke,developer,system`) |
-| `ghcr.io/projectbluefin/dakota` | `testing` | Digest poll every 10 minutes at :08; nightly 03:00 UTC trigger suspended | `image-poll-dakota` → `dakota-qa-pipeline` → `run-container-tests` (`smoke`) |
+| `ghcr.io/projectbluefin/dakota` | `testing` | Nightly 03:00 UTC; digest freshness poll every 10 minutes at :08 (QA disabled) | Nightly `dakota-qa-pipeline` → `run-container-tests` |
 
-Bluefin and Bluefin-LTS `:testing` and `:stable` lanes are scheduled continuously.
-Dakota's nightly CronWorkflow is suspended; its active digest-poll lane tests the
-published `:testing` image. Never use date tags in automation.
+Bluefin and Bluefin-LTS `:testing` lanes use the daily schedules above; their
+digest pollers retain freshness state without launching QA. Stable lanes retain
+their existing schedules. Dakota follows the same daily-only testing-lane
+policy. Never use date tags in automation.
 
 ---
 
