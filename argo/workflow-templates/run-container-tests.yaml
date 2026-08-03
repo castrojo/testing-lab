@@ -160,21 +160,29 @@ spec:
         esac
 
         # Resolve the digest remotely only when the caller did not supply one.
+        zot_image() {
+          case "$1" in
+            ghcr.io/*) printf '192.168.1.102:30501/ghcr/%s' "${1#ghcr.io/}" ;;
+            quay.io/*) printf '192.168.1.102:30501/quay/%s' "${1#quay.io/}" ;;
+            docker.io/*) printf '192.168.1.102:30501/docker/%s' "${1#docker.io/}" ;;
+            registry.fedoraproject.org/*) printf '192.168.1.102:30501/fedora/%s' "${1#registry.fedoraproject.org/}" ;;
+            registry.k8s.io/*) printf '192.168.1.102:30501/k8s/%s' "${1#registry.k8s.io/}" ;;
+            cgr.dev/*) printf '192.168.1.102:30501/cgr/%s' "${1#cgr.dev/}" ;;
+            public.ecr.aws/*) printf '192.168.1.102:30501/ecr/%s' "${1#public.ecr.aws/}" ;;
+            lscr.io/*) printf '192.168.1.102:30501/lscr/%s' "${1#lscr.io/}" ;;
+            *) printf '%s' "$1" ;;
+          esac
+        }
+        ZOT_IMAGE_REPO=$(zot_image "${IMAGE_REPO}")
         if [[ -z "${IMAGE_DIGEST:-}" ]]; then
           if ! command -v skopeo >/dev/null 2>&1; then
             echo "skopeo not found; installing for digest resolution..." >&2
             dnf install -y skopeo >/dev/null 2>&1 || true
           fi
           DIGEST=""
-          if command -v skopeo >/dev/null 2>&1; then
-            SKOPEO_ARGS=()
-            if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-              SKOPEO_ARGS+=(--creds "_token:${GITHUB_TOKEN}")
-            fi
-            # Bounded so a stalled registry mirror connection cannot hang
-            # digest resolution; a timeout falls through to the existing
-            # tag-based fallback below, same as any other inspect failure.
-            DIGEST=$(timeout 120 skopeo inspect "${SKOPEO_TLS_ARGS[@]}" "${SKOPEO_ARGS[@]}" --no-tags --format '{{.Digest}}' "docker://${IMAGE}" 2>/dev/null || true)
+          if command -v skopeo >/dev/null 2>&1 && [[ "${ZOT_IMAGE_REPO}" != "${IMAGE_REPO}" ]]; then
+            DIGEST=$(timeout 120 skopeo inspect --tls-verify=false --no-tags \
+              --format '{{.Digest}}' "docker://${ZOT_IMAGE_REPO}:${IMAGE_TAG}" 2>/dev/null || true)
           fi
           if [[ -z "${DIGEST:-}" ]]; then
             echo "Warning: could not resolve digest for ${IMAGE}; result will still be published but may fall back to tag-based matching." >&2
@@ -198,6 +206,13 @@ spec:
           exit 1
         }
         mkdir -p /tmp/results
+        if [[ "${ZOT_IMAGE_REPO}" != "${IMAGE_REPO}" ]]; then
+          if [[ -n "${DIGEST:-}" ]]; then
+            TARGET_IMAGE="${ZOT_IMAGE_REPO}@${DIGEST}"
+          else
+            TARGET_IMAGE="${ZOT_IMAGE_REPO}:${IMAGE_TAG}"
+          fi
+        fi
 
         # Bound every pull attempt. The shared Zot pull-through cache
         # occasionally hits "unexpected EOF" reconnecting mid-blob against
@@ -233,6 +248,7 @@ spec:
         if [[ "${pull_ok}" != true ]]; then
           echo "Giving up on ${TARGET_IMAGE} after ${PULL_ATTEMPTS} pull attempts; registry appears stalled or unreachable" >&2
           exit 1
+        fi
         fi
         podman run --detach --systemd=always --network host --privileged \
           --cgroupns=host \
