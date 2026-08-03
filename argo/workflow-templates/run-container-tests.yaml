@@ -160,18 +160,29 @@ spec:
         esac
 
         # Resolve the digest remotely only when the caller did not supply one.
+        zot_image() {
+          case "$1" in
+            ghcr.io/*) printf '192.168.1.102:30501/ghcr/%s' "${1#ghcr.io/}" ;;
+            quay.io/*) printf '192.168.1.102:30501/quay/%s' "${1#quay.io/}" ;;
+            docker.io/*) printf '192.168.1.102:30501/docker/%s' "${1#docker.io/}" ;;
+            registry.fedoraproject.org/*) printf '192.168.1.102:30501/fedora/%s' "${1#registry.fedoraproject.org/}" ;;
+            registry.k8s.io/*) printf '192.168.1.102:30501/k8s/%s' "${1#registry.k8s.io/}" ;;
+            cgr.dev/*) printf '192.168.1.102:30501/cgr/%s' "${1#cgr.dev/}" ;;
+            public.ecr.aws/*) printf '192.168.1.102:30501/ecr/%s' "${1#public.ecr.aws/}" ;;
+            lscr.io/*) printf '192.168.1.102:30501/lscr/%s' "${1#lscr.io/}" ;;
+            *) printf '%s' "$1" ;;
+          esac
+        }
+        ZOT_IMAGE_REPO=$(zot_image "${IMAGE_REPO}")
         if [[ -z "${IMAGE_DIGEST:-}" ]]; then
           if ! command -v skopeo >/dev/null 2>&1; then
             echo "skopeo not found; installing for digest resolution..." >&2
             dnf install -y skopeo >/dev/null 2>&1 || true
           fi
           DIGEST=""
-          if command -v skopeo >/dev/null 2>&1; then
-            SKOPEO_ARGS=()
-            if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-              SKOPEO_ARGS+=(--creds "_token:${GITHUB_TOKEN}")
-            fi
-            DIGEST=$(skopeo inspect "${SKOPEO_TLS_ARGS[@]}" "${SKOPEO_ARGS[@]}" --no-tags --format '{{.Digest}}' "docker://${IMAGE}" 2>/dev/null || true)
+          if command -v skopeo >/dev/null 2>&1 && [[ "${ZOT_IMAGE_REPO}" != "${IMAGE_REPO}" ]]; then
+            DIGEST=$(timeout 60s skopeo inspect --tls-verify=false --no-tags \
+              --format '{{.Digest}}' "docker://${ZOT_IMAGE_REPO}:${IMAGE_TAG}" 2>/dev/null || true)
           fi
           if [[ -z "${DIGEST:-}" ]]; then
             echo "Warning: could not resolve digest for ${IMAGE}; result will still be published but may fall back to tag-based matching." >&2
@@ -195,8 +206,17 @@ spec:
           exit 1
         }
         mkdir -p /tmp/results
+        if [[ "${ZOT_IMAGE_REPO}" != "${IMAGE_REPO}" ]]; then
+          if [[ -n "${DIGEST:-}" ]]; then
+            TARGET_IMAGE="${ZOT_IMAGE_REPO}@${DIGEST}"
+          else
+            TARGET_IMAGE="${ZOT_IMAGE_REPO}:${IMAGE_TAG}"
+          fi
+        fi
         if [[ "${#PODMAN_PULL_TLS_ARGS[@]}" -gt 0 ]]; then
-          podman pull "${PODMAN_PULL_TLS_ARGS[@]}" "${TARGET_IMAGE}" >/dev/null
+          timeout 10m podman pull "${PODMAN_PULL_TLS_ARGS[@]}" "${TARGET_IMAGE}" >/dev/null
+        elif [[ "${ZOT_IMAGE_REPO}" != "${IMAGE_REPO}" ]]; then
+          timeout 10m podman pull --tls-verify=false "${TARGET_IMAGE}" >/dev/null
         fi
         podman run --detach --systemd=always --network host --privileged \
           --cgroupns=host \
