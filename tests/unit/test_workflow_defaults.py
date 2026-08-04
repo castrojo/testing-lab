@@ -352,7 +352,7 @@ def test_kde_runner_adapts_gnome_runner_contract_for_webdriver():
     assert "gnome-ponytail-daemon" not in kde
 
 
-def test_kde_runner_persists_failure_artifacts_and_pushes_guest_screenshots():
+def test_kde_runner_persists_failure_artifacts_without_publishing_screenshots():
     kde = (ROOT / "argo/workflow-templates/run-kde-tests.yaml").read_text(
         encoding="utf-8"
     )
@@ -364,9 +364,9 @@ def test_kde_runner_persists_failure_artifacts_and_pushes_guest_screenshots():
     assert "evidence artifacts were not fully retained" in kde
     assert "scp" in kde
     assert "BEHAVE_RC=0" in kde
-    assert "SCREENSHOT_IMAGE=" in kde
-    assert "oras push" in kde
-    assert "ERROR: failed to publish KDE screenshot artifact" in kde
+    assert "GHCR screenshot publication disabled" in kde
+    assert "oras push" not in kde
+    assert "SCREENSHOT_IMAGE=" not in kde
     assert "Warning: failed" not in kde
     assert "TESTSUITE_RESULTS_DIR" in kde
     assert "qemu_screendump" not in kde
