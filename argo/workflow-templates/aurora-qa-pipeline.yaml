@@ -13,12 +13,9 @@ metadata:
       the VM when the workflow completes.
 spec:
   serviceAccountName: argo
-  workflowMetadata:
-    labels:
-      bluefin.io/evidence-contract: qa-run-v1
   entrypoint: aurora-qa
   onExit: teardown
-  activeDeadlineSeconds: 14400
+  activeDeadlineSeconds: 3600
   volumeClaimGC:
     strategy: OnWorkflowCompletion
   volumeClaimTemplates:

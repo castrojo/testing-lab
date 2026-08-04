@@ -52,9 +52,6 @@ The workflow authoring guidance is split by topic:
 - **Outage Risk**: Leaving nodes cordoned (`SchedulingDisabled`) after k3s upgrades or manual interventions. This completely blocks system pods (including CoreDNS!) from scheduling, causing cluster-wide DNS timeouts (`read udp i/o timeout`) and a silent, complete cluster outage. Always ensure nodes are uncordoned (`kubectl uncordon`) and `Ready`.
 - **Outage Risk**: Setting low memory limits (under 2Gi) for any runner/script step that performs large file transfers (e.g. copying 400MB+ Flatcar update payloads over SCP/kubectl cp). File caching and transfer buffers will instantly trigger the container OOM-killer (exit code 137). Always set memory limits to at least 2Gi–4Gi for transfer-heavy steps.
 - `synchronization.semaphore:` (singular) in any pipeline — deprecated, rejected by ArgoCD schema. Use `synchronization.semaphores:` (list with `- configMapKeyRef:` item)
-- **Semaphore Starvation by Image Pollers**: Setting `suites: "smoke,common,developer,software,system"` in image-poller CronWorkflows or templates causes every OCI digest update to launch 5 parallel test pods, consuming 5 of 6 `ghost-container-qa` semaphore slots and starving PR test pipelines. Default image pollers to `suites: "smoke"` so digest changes trigger lightweight smoke tests without locking out PR validation.
-- **HTTP Registry Pull Failure**: If a workflow rewrites image references to an HTTP registry mirror, configure `/etc/containers/registries.conf.d/` with `insecure = true` before `podman` or `skopeo` operations. `--tls-verify=false` alone still attempts HTTPS against an HTTP endpoint.
-- **CVE Scan activeDeadlineSeconds**: Setting `activeDeadlineSeconds: 3600` (1 hour) on `cve-scan` or `catalog-cve-scan` workflows can cause grype scans of multi-gigabyte OCI image layers to hit the deadline and fail with Exit Code 143. Use `activeDeadlineSeconds: 7200` (2 hours) to accommodate multi-lane image scans.
 - `spec.schedule:` (singular) on a CronWorkflow — field does not exist in CRD schema; use `spec.schedules:` (array)
 - A pipeline with VMs and no `spec.activeDeadlineSeconds` — a stuck VM holds its semaphore slot forever
 - A VM pipeline that adds a semaphore without a documented cross-workflow
@@ -83,10 +80,6 @@ The workflow authoring guidance is split by topic:
   the matching `volumeClaimTemplates` entry; define the claim at workflow scope
   and set `volumeClaimGC.strategy: OnWorkflowCompletion` so failed builds do not
   leave staging storage behind.
-- A direct `Workflow` that calls a containerDisk builder with `templateRef`
-  but omits that builder's `staging` claim. A referenced task cannot define a
-  workflow-scoped PVC for its caller; put the `staging` `volumeClaimTemplates`
-  and `volumeClaimGC.strategy: OnWorkflowCompletion` on the submitted Workflow.
 - A workflow that declares `volumeClaimTemplates` without
   `volumeClaimGC.strategy: OnWorkflowCompletion` — completed runs leave staging
   PVCs behind.
@@ -97,14 +90,6 @@ The workflow authoring guidance is split by topic:
   that consumes it — especially disk/image and host-root parameters. Trace
   every contract parameter through the call-site arguments.
 - Any `script:` template without `resources:` limits
-- The isolated `recc-baseline-pipeline` script missing
-  `privileged: true` with `seLinuxOptions.type: spc_t`; BuildStream's
-  bubblewrap sandbox then fails mounting `/newroot/proc` before compiler
-  execution. This privilege is for the pilot sandbox only and does not prove
-  nested RECC runner support.
-- A production lane passing `--pilot-cache-only` or `--runner-capability`
-  without the corresponding isolated-pilot boundary and live
-  `remoteApisSocketPath` proof.
 - Templates in `argo/workflow-templates/` applied with `kubectl apply` (not via git)
 - A `pr-poller` (or any PR-gating workflow) that skips on ANY existing commit status — it must skip only `pending` (in-flight) and `success` (already passed), and re-test on `error`/`failure`. Skipping `error` means stale statuses from deleted workflows permanently block retests.
 - A VM or build pipeline that uses a node selector to reach local storage. Use
@@ -121,8 +106,6 @@ The workflow authoring guidance is split by topic:
 - Prebaking a DUT-specific KDE automation binary without pinning the source
   commit and validating the installed server and `inputsynth` paths during the
   image build.
-- A KDE WebDriver prebake with only `qt6-qtbase-devel`: its CMake project uses
-  `Qt6GuiPrivate`, which Fedora supplies through `qt6-qtbase-private-devel`.
 - Templates annotated `DEPRECATED` that haven't been deleted from git
 - Two CronWorkflows with the same schedule covering overlapping namespaces
 - A `steps` template with the same `when` condition on 3+ sequential steps (convert to `dag` + `depends` chain)
@@ -132,7 +115,6 @@ The workflow authoring guidance is split by topic:
 - **GC CronWorkflow using `registry.k8s.io/kubectl`** — distroless, no bash; every run exits with `bash: not found` and the GC step is skipped silently. Pods and orphaned objects accumulate until the cluster fills. Use `cgr.dev/chainguard/kubectl:latest-dev`. Symptom: `kubectl get cronworkflow orphan-pod-gc -n argo` shows `LAST SCHEDULE` advancing but pods keep piling up; check the workflow pod logs for `bash: not found`.
 - Any `image:` in `argo/` or `manifests/` referencing `:5000` for the local OCI registry — `:5000` is the container-internal Zot port; use the NodePort `<lab-ip>:30500` so non-hostNetwork pods can reach it
 - Any `image:` referencing a registry not in the allowlist (`ghcr.io`, `quay.io`, `registry.fedoraproject.org`, `registry.access.redhat.com`, `registry.k8s.io`, `<lab-ip>`, `localhost`) — enforce with the lint gate in `.github/workflows/lint.yaml`
-- **GHCR is pull-only**: `ghcr.io` must never be used as a push destination in any workflow template. Pull references (`image:` fields, `FROM` lines, skopeo copy sources) are permitted; login/upload to `ghcr.io` is not. Any push-producing template must guard its destination argument before the login/upload step and reject `ghcr.io` explicitly. Screenshot publication to GHCR is intentionally disabled and must not be re-enabled.
 - `depends: "X.Succeeded"` on a task that follows a conditionally-skippable upstream — if upstream is Skipped, the downstream task is Omitted and the whole DAG may appear to succeed even though the chain broke; use `depends: "(X.Succeeded || X.Skipped)"` when the upstream has its own `when` guard
 - A downstream `when` condition that references `{{tasks.X.outputs.result}}` where task X has its own `when` guard — if X is Skipped its output is undefined and the downstream task silently skips too. Fix: let X always run; handle the bypass inside the script (see §18).
 - A `force=true` rebuild workflow where only 1–2 nodes appear (DAG + a Skipped check) and no build step ever runs — this is the §18 `when`/Skipped output bug, not a semaphore or mutex issue
@@ -160,11 +142,6 @@ The workflow authoring guidance is split by topic:
   Python, `curl`, and `jq`, but not `tar`. Download archives to a workspace,
   extract them with `python3 -m tarfile`, and remove the archive afterward, or
   use a pinned image that provides the required utility.
-- **Assuming conventional filesystem tools and paths exist in `lab-runner`**:
-  do not require `find`, and do not download executables to `/usr/local/bin`.
-  Use Bash globbing for discovery and a writable `/tmp` path for transient
-  executables such as `virtctl`; `curl --output` fails when its target cannot
-  be opened (source: `/curl/curl`).
 - **Doubling braces for generated child workflows**: `{{{{workflow.*}}}}`
   reaches a child Workflow literally and its `when` expressions compare the
   wrong value. When an outer script must emit an Argo expression, build the
@@ -189,29 +166,6 @@ The workflow authoring guidance is split by topic:
 - KDE runner and teardown containers must use the repository-approved
   digest-pinned `lab-runner` and shell-capable `kubectl` references; never
   reintroduce floating `:latest` or `:latest-dev` tags in those workflows.
-- When a workflow builds a containerDisk at runtime, publish it under a
-  workflow-unique tag, write the pushed digest to an output-parameter file, and
-  pass that output into the VM manifest as an `image@sha256:...` reference.
-  Argo output parameters use `valueFrom.path` and are consumed as
-  `{{steps.<step>.outputs.parameters.<name>}}` (source:
-  `/argoproj/argo-workflows`).
-- QA scenario evidence must use a separate `failed-scenarios` JSON output
-  parameter with `valueFrom.path` and `default: "[]"`. Generate it only from
-  structured `results.json`, retain at most 20 unique safe scenario names, and
-  never export raw errors, logs, stack traces, credentials, or token-like
-  content. The evidence publisher consumes this named output only; it must not
-  scrape logs or overload `outputs.result` (source:
-  `/argoproj/argo-workflows` — Output Parameters).
-- GNOME/KDE runners must also publish a `result` output parameter from a
-  `valueFrom.path` summary derived only after parsing `results.json`; do not
-  set a default such as "No results generated." A missing summary is
-  unavailable evidence, not a passing execution. A non-empty validated
-  `failed-scenarios` output can preserve failure evidence, while terminal
-  workflow phase remains the authority for execution status (source:
-  `/argoproj/argo-workflows` — Output Parameters).
-- A Dakota PR-poller call omits the `registry` argument — local PR builds must
-  receive the NodePort registry address explicitly or the workflow can stall
-  before its build child starts.
 
 ## Verification
 
@@ -239,12 +193,6 @@ Before marking any WorkflowTemplate change done:
 - [ ] File name matches `metadata.name` (e.g. `provision-containerdisk-vm.yaml` for `name: provision-containerdisk-vm`)
 - [ ] Any VM pipeline semaphore is justified by documented cross-workflow
       memory contention and is attached at template level, not workflow scope
-- [ ] The isolated RECC pilot uses the privileged `bst2` sandbox contract and
-      its live template has been re-read after GitOps reconciliation
-- [ ] RECC evidence keeps missing action-level fields unavailable; a successful
-      outer BuildStream build is not reported as nested RECC success
-- [ ] Production RECC lanes remain fail-closed until the runner's
-      `remoteApisSocketPath`/LocalCAS handoff is proven by a canary
 - [ ] VM pipeline spec has `activeDeadlineSeconds` (1h or 2h) so stuck VMs self-evict
 - [ ] No `nodeSelector: kubernetes.io/hostname: ghost` in VM specs — VMs float to any KubeVirt-capable node
 - [ ] GitHub Contents API write-backs use curl+jq, not inline Python; output is
@@ -254,7 +202,6 @@ Before marking any WorkflowTemplate change done:
 - [ ] No CronWorkflow with a `dry-run` parameter whose default is `"true"` — verify GC jobs actually delete
 - [ ] All local OCI registry references use `:30500` (NodePort), not `:5000` (container-internal)
 - [ ] `grep -rn 'image:' argo/ manifests/` shows only allowlisted registries: `ghcr.io`, `quay.io`, `registry.fedoraproject.org`, `registry.access.redhat.com`, `registry.k8s.io`, `<lab-ip>`, `localhost`
-- [ ] No workflow template pushes to `ghcr.io`; any push-producing template validates its destination before login/upload and rejects `ghcr.io`
 - [ ] Image pollers update digest state only after QA pipeline success (failed runs must retry on next poll)
 - [ ] Poller state writers depend on the downstream task's `.Succeeded` result and reject stale writes when the stored value changed after admission
 - [ ] After removing `suspend: true` from a CronWorkflow and syncing, live `spec.suspend` confirmed via `kubectl get -o jsonpath` — not assumed from ArgoCD's `Synced` status alone
@@ -264,8 +211,6 @@ Before marking any WorkflowTemplate change done:
 - [ ] Every PR-gated repository has either a live repository-dispatch receiver
       or an explicit direct commit-status fallback; verify the target workflow
       exists on the repository's default branch before relying on dispatch
-- [ ] Dakota PR-poller submissions pass the local registry NodePort explicitly,
-      and the live `pr-poller` template is re-checked after ArgoCD reconciliation
 - [ ] Registry workflows use a pinned image that actually contains every CLI
       invoked by the script, with flags valid for that exact version
 - [ ] KDE GUI runners preserve the GNOME runner's parameter/result contract,

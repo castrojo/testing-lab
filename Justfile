@@ -5,9 +5,8 @@
 #   - Workflow submission and monitoring: use these just targets (argo/kubectl CLI).
 #   - These recipes are the canonical interface for all routine lifecycle operations.
 #   - Agents use these recipes or call argo/kubectl directly. No MCP required.
-#   - No workstation SSH to ghost or exo-0; use just/argo/kubectl/API-driven operations.
-#   - Routine/public-agent SSH is only from workflow/probe pods to explicit test VMs.
-#   - Retained host-maintenance SSH is operator-only via an approved private channel.
+#   - ssh jorge@ghost is permitted for OS-level tasks only (k3s restart, systemd, brew).
+#   - No recipe SSHes to ghost; do NOT add workstation SSH hops.
 #   - Cluster bootstrap (setup-ssh-secret, setup-argocd) runs once from workstation.
 
 image     := env_var_or_default("BLUEFIN_IMAGE", "ghcr.io/projectbluefin/bluefin:testing")
@@ -119,6 +118,13 @@ run-migration-test tag=image_tag:
         -n {{ argo_ns }} \
         --watch
 
+# One-time: write SSH banner on ghost.
+setup-ghost-ssh-banner:
+    argo submit --from workflowtemplate/setup-ghost-ssh-banner \
+        -n {{ argo_ns }} \
+        --wait --log
+
+
 # —— [REMOVED] titan VM recipes ——
 # run-titan-smoke, run-titan-system, run-titan-developer, run-titan-software,
 # setup-titan-fixtures, run-titan-disk-cleanup
@@ -145,18 +151,9 @@ run-aurora-kde-sabotage:
 # Evaluate the rolling KDE soak window. A qualified result still needs human
 # approval before the suite is promoted to CI gating.
 evaluate-kde-soak:
-    python3 scripts/evaluate_kde_soak.py docs/results/aurora-testing-kde-smoke.json
+    python3 scripts/evaluate_kde_soak.py docs/results/aurora-testing-smoke.json
 
 # ── Observation ─────────────────────────────────────────────────────────────
-
-# Report rolling external traffic on the physical node uplinks and rank Zot
-# repository pulls. Start Prometheus locally first:
-#   kubectl -n kube-system port-forward svc/prometheus 9090:9090
-traffic-report prometheus="http://127.0.0.1:9090" window="24h" interface="enp191s0":
-    python3 scripts/traffic_report.py \
-      --prometheus-url "{{ prometheus }}" \
-      --window "{{ window }}" \
-      --interface "{{ interface }}"
 
 # List all test workflows
 list-workflows:
@@ -251,6 +248,11 @@ run-ghost-cleanup:
     argo submit --from workflowtemplate/ghost-cleanup \
       -n {{ argo_ns }} --wait --log
 
+# Set Strix Halo performance kernel args on ghost via rpm-ostree (reboot required after)
+run-kernel-args:
+    argo submit --from workflowtemplate/ghost-kernel-args \
+      -n {{ argo_ns }} --wait --log
+
 # ── Dakota BST builds ────────────────────────────────────────────────────────
 
 # Show the MergeRaptor-owned lab Check Run for a PR head commit.
@@ -315,6 +317,11 @@ run-dakota-container-qa image-tag="testing" variant="dakota":
       -p variant={{ variant }} \
       -n {{ argo_ns }} --watch
 
+# Publish dakota:testing and dakota-nvidia:testing from Zot to GHCR.
+run-dakota-publish:
+    argo submit --from workflowtemplate/dakota-publish-pipeline \
+      -n {{ argo_ns }} --watch
+
 # Validate canonical Dakota build/publish history records.
 validate-dakota-history:
     python3 scripts/publish_dakota_run.py validate-history
@@ -340,34 +347,6 @@ run-bluefin-server-build ref="main" repo="https://github.com/projectbluefin/serv
     argo submit --from workflowtemplate/bluefin-server-build-pipeline \
       -p ref={{ ref }} \
       -p repo={{ repo }} \
-      -n {{ argo_ns }} --watch
-
-# Run the isolated operator-only RECC baseline.
-# Usage: just run-recc-baseline mode=cache-only cache-policy=both recc-provider=components/buildbox.bst
-run-recc-baseline *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    MODE="buildstream-only"
-    RUN_ID=""
-    CACHE_POLICY="cold"
-    RECC_PROVIDER="freedesktop-sdk.bst:components/buildbox.bst"
-    for arg in {{ args }}; do
-      case "${arg}" in
-        mode=*) MODE="${arg#mode=}" ;;
-        run-id=*) RUN_ID="${arg#run-id=}" ;;
-        cache-policy=*) CACHE_POLICY="${arg#cache-policy=}" ;;
-        recc-provider=*) RECC_PROVIDER="${arg#recc-provider=}" ;;
-        *)
-          echo "Unsupported run-recc-baseline argument: ${arg}" >&2
-          exit 2
-          ;;
-      esac
-    done
-    exec argo submit --from workflowtemplate/recc-baseline-pipeline \
-      -p mode="${MODE}" \
-      -p run-id="${RUN_ID}" \
-      -p cache-policy="${CACHE_POLICY}" \
-      -p recc-provider="${RECC_PROVIDER}" \
       -n {{ argo_ns }} --watch
 
 # ── Validation ───────────────────────────────────────────────────────────────

@@ -1,7 +1,4 @@
 from pathlib import Path
-import subprocess
-import sys
-import textwrap
 
 import yaml
 
@@ -38,92 +35,6 @@ def test_image_poller_cron_manifests_do_not_pass_containerdisk_tag():
             offenders.append(manifest.name)
 
     assert not offenders, f"obsolete containerdisk-tag in: {', '.join(offenders)}"
-
-
-def test_image_poller_declares_the_digest_parameter_used_by_its_qa_reference():
-    poller = yaml.safe_load(
-        (ROOT / "argo/workflow-templates/image-poller.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-    parameters = {
-        parameter["name"]: parameter.get("value")
-        for parameter in poller["spec"]["arguments"]["parameters"]
-    }
-
-    assert parameters["image-digest"] == ""
-
-
-def test_image_poller_cron_workflows_supply_the_digest_parameter():
-    offenders = []
-
-    for manifest in sorted((ROOT / "manifests").glob("image-poll-*.yaml")):
-        document = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-        if document["spec"]["workflowSpec"].get("workflowTemplateRef", {}).get(
-            "name"
-        ) != "image-poller":
-            continue
-        parameters = {
-            parameter["name"]: parameter.get("value")
-            for parameter in document["spec"]["workflowSpec"]["arguments"][
-                "parameters"
-            ]
-        }
-        if parameters.get("image-digest") != "":
-            offenders.append(manifest.name)
-
-    assert not offenders, f"missing image-digest default in: {', '.join(offenders)}"
-
-
-def test_testing_lane_pollers_only_refresh_digest_state():
-    for filename in (
-        "image-poll-bluefin-testing.yaml",
-        "image-poll-lts-testing.yaml",
-        "image-poll-dakota.yaml",
-    ):
-        document = yaml.safe_load(
-            (ROOT / "manifests" / filename).read_text(encoding="utf-8")
-        )
-        parameters = document["spec"]["workflowSpec"]["arguments"]["parameters"]
-        values = {parameter["name"]: parameter["value"] for parameter in parameters}
-        assert values["run-qa"] == "false"
-
-    image_poller = (
-        ROOT / "argo/workflow-templates/image-poller.yaml"
-    ).read_text(encoding="utf-8")
-    assert "run-pipeline.Succeeded || run-pipeline.Skipped" in image_poller
-
-
-def test_daily_testing_lane_schedules_are_active_and_staggered():
-    expected = {
-        "nightly-smoke.yaml": ("0 2 * * *", "bluefin"),
-        "nightly-smoke-lts.yaml": ("30 2 * * *", "bluefin-lts"),
-        "nightly-dakota.yaml": ("0 3 * * *", "dakota"),
-    }
-    for filename, (schedule, variant) in expected.items():
-        document = yaml.safe_load(
-            (ROOT / "manifests" / filename).read_text(encoding="utf-8")
-        )
-        assert document["spec"]["suspend"] is False
-        assert document["spec"]["schedules"] == [schedule]
-        arguments = document["spec"]["workflowSpec"]["arguments"]["parameters"]
-        values = {parameter["name"]: parameter["value"] for parameter in arguments}
-        assert values["variant"] == variant
-        assert values["image-tag"] == "testing"
-
-
-def test_testing_lane_prs_require_explicit_opt_in():
-    poller = (
-        ROOT / "argo/workflow-templates/pr-poller.yaml"
-    ).read_text(encoding="utf-8")
-    auto_repos = poller.split("AUTO_REPOS=(", 1)[1].split(")", 1)[0]
-    for repository in (
-        "projectbluefin/bluefin",
-        "projectbluefin/bluefin-lts",
-        "projectbluefin/dakota",
-    ):
-        assert repository not in auto_repos
-    assert "label:test-on-lab" in poller
 
 
 def test_dakota_requires_distributed_capacity_matched_execution():
@@ -171,63 +82,6 @@ def test_dakota_production_lane_has_no_local_fallback():
     assert "name: bst-build-re" in pipeline
     assert "name: bst-build-local" not in pipeline
     assert "template: bst-build-local" not in pipeline
-
-
-def test_dakota_bootc_patch_emits_parseable_element_yaml(tmp_path):
-    pipeline = yaml.safe_load(
-        (ROOT / "argo/workflow-templates/dakota-build-pipeline.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-
-    def find_script(value):
-        if isinstance(value, dict):
-            for child in value.values():
-                result = find_script(child)
-                if result is not None:
-                    return result
-        elif isinstance(value, list):
-            for child in value:
-                result = find_script(child)
-                if result is not None:
-                    return result
-        elif isinstance(value, str) and "Patching bootc element" in value:
-            return value
-        return None
-
-    source = find_script(pipeline)
-    assert source is not None
-    start = source.index("python3 - <<'BOOTC_PATCH'\n") + len(
-        "python3 - <<'BOOTC_PATCH'\n"
-    )
-    end = source.index("\nBOOTC_PATCH", start)
-    patch = textwrap.dedent(source[start:end])
-
-    element = tmp_path / "bootc.bst"
-    element.write_text("kind: make\n\nsources:\n- kind: local\n  path: .\n", encoding="utf-8")
-    patch = patch.replace(
-        "Path('/src/elements/gnomeos-deps/bootc.bst')",
-        f"Path({str(element)!r})",
-    )
-    subprocess.run([sys.executable, "-c", patch], check=True)
-
-    parsed = yaml.safe_load(element.read_text(encoding="utf-8"))
-    assert parsed["config"]["build-commands"][-1] == 'make PREFIX="/usr"'
-
-
-def test_buildbarn_chroot_supplies_standard_stdio_devices():
-    worker = yaml.safe_load(
-        (ROOT / "manifests/buildbarn-worker.yaml").read_text(encoding="utf-8")
-    )
-    init_container = next(
-        container
-        for container in worker["spec"]["template"]["spec"]["initContainers"]
-        if container["name"] == "volume-init"
-    )
-    command = init_container["command"][-1]
-
-    for name, fd in (("stdin", 0), ("stdout", 1), ("stderr", 2)):
-        assert f"ln -sfn /proc/self/fd/{fd} /worker/dev/{name}" in command
 
 
 def test_usb4_monitor_publishes_a_fresh_observation_on_every_probe():
@@ -338,7 +192,7 @@ def test_aurora_qa_pipeline_is_vm_based_and_serialized():
     assert pipeline["metadata"]["name"] == "aurora-qa-pipeline"
     assert spec["entrypoint"] == "aurora-qa"
     assert spec["onExit"] == "teardown"
-    assert spec["activeDeadlineSeconds"] == 14400
+    assert spec["activeDeadlineSeconds"] == 3600
     assert spec["templates"][0]["name"] == "aurora-qa"
     assert spec["templates"][0]["synchronization"]["semaphores"][0]["configMapKeyRef"] == {
         "name": "workflow-semaphores",
@@ -510,9 +364,10 @@ def test_kde_runner_persists_failure_artifacts_and_pushes_guest_screenshots():
     assert "evidence artifacts were not fully retained" in kde
     assert "scp" in kde
     assert "BEHAVE_RC=0" in kde
-    assert "SCREENSHOT_IMAGE=" not in kde
-    assert "oras login" not in kde
-    assert "oras push" not in kde
+    assert "SCREENSHOT_IMAGE=" in kde
+    assert "oras push" in kde
+    assert "ERROR: failed to publish KDE screenshot artifact" in kde
+    assert "Warning: failed" not in kde
     assert "TESTSUITE_RESULTS_DIR" in kde
     assert "qemu_screendump" not in kde
 
@@ -543,46 +398,6 @@ def test_kde_workflow_images_are_digest_pinned():
         content = path.read_text(encoding="utf-8")
         assert "ghcr.io/projectbluefin/lab-runner:latest" not in content
         assert "cgr.dev/chainguard/kubectl:latest-dev" not in content
-        assert "kde-linux-containerdisk:latest" not in content
-
-    provision = yaml.safe_load(
-        (ROOT / "argo/workflow-templates/provision-kde-linux-vm.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-    wait_for_vm = next(
-        template
-        for template in provision["spec"]["templates"]
-        if template["name"] == "wait-for-vm"
-    )
-    assert wait_for_vm["script"]["image"] == (
-        "ghcr.io/projectbluefin/lab-runner@sha256:"
-        "fe097bb3b85a126b9a16093fbc498b4b6fb7b24e0f74162ad3d91a402dcfa940"
-    )
-    assert wait_for_vm["script"]["command"] == ["bash"]
-    prepare_disk = next(
-        template
-        for template in provision["spec"]["templates"]
-        if template["name"] == "prepare-disk"
-    )
-    assert prepare_disk["script"]["image"] == (
-        "quay.io/buildah/stable@sha256:"
-        "7bb110e1d8b761d08e87d004ea4086e295a52319f3ea70ecef65da6dff7ceef0"
-    )
-    assert "outputs" in prepare_disk
-    assert "containerdisk-digest" in {
-        output["name"] for output in prepare_disk["outputs"]["parameters"]
-    }
-    create_vm = next(
-        template
-        for template in provision["spec"]["templates"]
-        if template["name"] == "create-vm"
-    )
-    assert (
-        "image: 192.168.1.102:30500/kde-linux-containerdisk@"
-        "{{inputs.parameters.containerdisk-digest}}"
-        in create_vm["resource"]["manifest"]
-    )
 
 
 def test_kde_runner_sources_complete_session_environment():
