@@ -251,6 +251,24 @@ BuildStream success. This follows BuildStream's documented writable
 `%{build-root}`/`%{install-root}` sandbox paths and user-configured `logdir`
 (`source: /apache/buildstream`).
 
+### RECC pilot evidence handoff
+
+The operator-only `recc-baseline-pipeline` must use BuildStream's configured
+`logdir` as the sandbox-to-workflow evidence path. The fixture writes its
+StatsD output under `%{build-root}`, prints each record with a
+`[RECC_METRICS]` marker into the element build log, and removes the file before
+installing the deterministic artifact. The workflow points `logdir` at its
+`/work` volume and extracts only RECC-marked lines; do not put metrics in
+`%{install-root}`, a checked-out artifact, or a host mount.
+
+This preserves artifact determinism while making action-cache hits/misses,
+local fallbacks, and compiler timing available to the collector. A cache-only
+or upload-local-build pilot must fail closed when the BuildStream logdir has no
+RECC evidence rather than report zeros or infer a warm hit from outer
+BuildStream success. This follows BuildStream's documented writable
+`%{build-root}`/`%{install-root}` sandbox paths and user-configured `logdir`
+(`source: /apache/buildstream`).
+
 ### 1. Shared Buildbarn frontend
 - **Endpoint**: `grpc://frontend.buildbarn.svc.cluster.local:8980`
 - **Role**: CAS/AC artifact writes and reads; execute-forwarding for BuildStream actions that use the in-cluster execution grid
