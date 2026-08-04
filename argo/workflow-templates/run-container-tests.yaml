@@ -149,7 +149,8 @@ spec:
           TARGET_IMAGE="${IMAGE}"
         fi
 
-        # Local Zot and other insecure registries need explicit TLS verification off.
+        # Local Zot is an HTTP registry, so configure containers/image to use
+        # its insecure transport before any digest resolution or image pull.
         SKOPEO_TLS_ARGS=()
         PODMAN_PULL_TLS_ARGS=()
         case "${IMAGE%%/*}" in
@@ -174,6 +175,18 @@ spec:
           esac
         }
         ZOT_IMAGE_REPO=$(zot_image "${IMAGE_REPO}")
+        case "${ZOT_IMAGE_REPO}" in
+          192.168.1.102:*|localhost:*|127.0.0.1:*)
+            mkdir -p /etc/containers/registries.conf.d
+            cat >/etc/containers/registries.conf.d/bluefin-local-zot.conf <<'EOF'
+        [[registry]]
+        location = "192.168.1.102:30501"
+        insecure = true
+        EOF
+            SKOPEO_TLS_ARGS=(--tls-verify=false)
+            PODMAN_PULL_TLS_ARGS=(--tls-verify=false)
+            ;;
+        esac
         if [[ -z "${IMAGE_DIGEST:-}" ]]; then
           if ! command -v skopeo >/dev/null 2>&1; then
             echo "skopeo not found; installing for digest resolution..." >&2
