@@ -37,6 +37,8 @@ def test_container_runner_preserves_digest_pinning_and_has_no_extra_closer():
     source = (ROOT / "argo/workflow-templates/run-container-tests.yaml").read_text()
     assert 'TARGET_IMAGE="${IMAGE_REPO}@${IMAGE_DIGEST}"' in source
     assert 'podman pull "${PODMAN_PULL_TLS_ARGS[@]}" "${TARGET_IMAGE}"' in source
+    assert 'location = "192.168.1.102:30501"' in source
+    assert "insecure = true" in source
     assert source.count("        fi\n        podman run") == 1
 
 
