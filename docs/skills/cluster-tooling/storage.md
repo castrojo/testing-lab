@@ -6,6 +6,18 @@ description: >
 
 # Node Storage Maintenance
 
+> [!CAUTION]
+> The host-level diagnostics, filesystem changes, migration steps, and cache
+> relocation procedures in this file are **private maintainer/operator
+> procedures**, not normal public guidance. They can destroy data or strand
+> Kubernetes storage. Never run them from a workstation or use workstation SSH
+> to `ghost` or `exo-0`. Routine operations must use `just`, `argo`, `kubectl`,
+> GitOps, or an approved API-driven recovery workflow. Retain this detail only
+> for a maintainer who has explicitly approved the maintenance window and
+> backup plan.
+
+## Private maintainer procedure — host-level NVMe maintenance
+
 ## NVMe and PCIe Power Management Quirks on Strix Halo (e.g., exo-0)
 
 On Strix Halo platforms, DRAM-less NVMe controllers (like the Innogrit IG5220 / RainierQX) can experience active I/O timeouts (`QID 32 timeout`) and uninterruptible sleep state (`D` state) due to aggressive PCIe ASPM and APST power state transitions.
@@ -57,7 +69,7 @@ cat /sys/module/nvme_core/parameters/default_ps_max_latency_us
 # Expected output: 0 (APST disabled)
 ```
 
-### 3. Optimal Formatting and Mounting (Btrfs to XFS Migration)
+### Operator-only: formatting and mounting (Btrfs to XFS migration)
 
 The 4TB local data NVMe drives are mounted at `/var/mnt/ghost-data` on `ghost` and
 `/var/mnt/exo0-data` on `exo-0` (node-specific names — do not reuse `ghost-data` as the
@@ -92,7 +104,7 @@ Options=defaults,noatime,nodiratime,logbufs=8,logbsize=256k,allocsize=64m
 
 ---
 
-## 4TB SSD Migration Procedures (Btrfs to XFS)
+## Operator-only: 4TB SSD migration procedures (Btrfs to XFS)
 
 ### 1. Migrating `exo-0` (Ephemeral Cache Storage)
 `exo-0`'s 4TB drive is `/dev/nvme1n1`, mounted at `/var/mnt/exo0-data`; it holds
@@ -200,9 +212,12 @@ non-root local-path PVC data. **`/dev/nvme0n1` on `exo-0` is the live system dis
     but don't leave it indefinitely — it silently eats into the same 4TB drive that
     `bst-cache` and `local-path` PVCs need.
 
-### 3. Offloading Host User Caches and AI Datasets (ramalama, local buildstream, containers, and Flatpaks)
+### Operator-only: offloading host user caches and AI datasets
 
-To prevent the `ghost` system root disk from filling up and strictly enforce the "4TB NVMe SSD for all workloads, no exceptions" mandate, heavy host-level user directories under `/var/home/jorge/` are relocated to `/var/mnt/ghost-data/` and replaced with symbolic links. Additionally, all host-level Flatpaks must be completely uninstalled to preserve precious system root disk space.
+This is a maintainer-approved migration record, not a recommendation to
+relocate user data or uninstall software on a host. If a maintainer approves
+the migration, heavy host-level user directories under `/var/home/jorge/` may
+be relocated to `/var/mnt/ghost-data/` and replaced with symbolic links.
 
 #### Host-Level Flatpak Removal:
 All host-level Flatpaks (both system and user-level) must be completely uninstalled to prevent the root partition (under `/var/lib/flatpak` and `~/.local/share/flatpak`) from saturating. Run these commands to purge all Flatpaks from the host:
@@ -259,4 +274,3 @@ All folders are stored under `/var/mnt/ghost-data/` with exact ownership of `jor
    ```bash
    rm -rf /var/home/jorge/.local/share/ramalama.bak /var/home/jorge/.cache/buildstream.bak /var/home/jorge/.local/share/containers.bak /var/home/jorge/.lmstudio.bak /var/home/jorge/.cache/Homebrew.bak /var/home/jorge/.cache/uv.bak
    ```
-

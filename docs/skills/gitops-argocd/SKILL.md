@@ -33,8 +33,8 @@ metadata:
 
 | Application | Git path | Namespace | What it manages |
 |---|---|---|---|
-| `lab` | `argo/workflow-templates/` | argo | WorkflowTemplates |
-| `lab-infra` | `manifests/` | argo + others | CronWorkflows, RBAC, NodePorts, ConfigMaps |
+| `testing-lab` | `argo/workflow-templates/` | argo | WorkflowTemplates |
+| `testing-lab-infra` | `manifests/` | argo + others | CronWorkflows, RBAC, NodePorts, ConfigMaps |
 | `kubestellar-applications` | selected files in `argocd/` | argocd | KubeStellar PostgreSQL, core, and Console Applications |
 | `arc-systems` | `argocd/arc-controller-app.yaml` | arc-systems | ARC controller |
 | `arc-runners` | `argocd/arc-runners-app.yaml` | arc-runners | Org `ghost-runners` scale set |
@@ -46,15 +46,15 @@ App-of-apps sync waves require Application health evaluation. The `argocd-cm`
 patch in `manifests/argocd-tuning.yaml` marks child Applications Progressing
 until they are both Synced and Healthy, so later waves do not race ahead of
 PostgreSQL or KubeStellar core.
-The root `lab` and `lab-infra` Applications are applied manually once because
-ArgoCD cannot create its own initial definitions. `lab-infra` then creates the
+The root `testing-lab` and `testing-lab-infra` Applications are applied manually once because
+ArgoCD cannot create its own initial definitions. `testing-lab-infra` then creates the
 `kubestellar-applications` parent, which owns only the three KubeStellar child
 Application manifests selected from `argocd/`.
 
 **`prune: true`** — resources removed from git are deleted from the cluster.
 **`selfHeal: true`** — manual cluster changes are reverted within ~3 minutes.
 
-`lab-infra` excludes `manifests/flatcar-update-*.yaml`; those resources are owned by the
+`testing-lab-infra` excludes `manifests/flatcar-update-*.yaml`; those resources are owned by the
 separate `flatcar-update` Application. Keep that split to avoid duplicate ownership and
 persistent `OutOfSync` drift from overlapping Namespace/ConfigMap management.
 
@@ -153,19 +153,42 @@ resources silently never appear.
 # Check status
 just argocd-status
 # or
-argocd app get lab
-argocd app get lab-infra
+argocd app get testing-lab
+argocd app get testing-lab-infra
 
 # Force sync
 just argocd-sync
 # or
-argocd app sync lab lab-infra --timeout 120
+argocd app sync testing-lab testing-lab-infra --timeout 120
 ```
 
 If a template change is in git but not yet live:
-1. Check `argocd app get lab` — is it Synced?
+1. Check `argocd app get testing-lab` — is it Synced?
 2. If OutOfSync, run `just argocd-sync`
 3. If sync fails, check ArgoCD logs: `kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller`
+
+#### Diagnosing a repo-specific reconciliation stall (not a full ArgoCD outage)
+
+A merged PR can sit unsynced for 10+ minutes even though ArgoCD itself is
+healthy. Don't assume the whole controller is down — check whether the stall
+is scoped to one repo:
+
+```
+kubernetes-mcp-resources_list apiVersion=argoproj.io/v1alpha1 kind=Application namespace=argocd
+```
+
+Compare the `REVISION` column across all Applications. If Applications
+tracking a *different* repo (e.g. `flatcar-update`) pick up new revisions
+during the same window while every Application tracking `projectbluefin/lab`
+(`testing-lab`, `testing-lab-infra`, `kubestellar-applications`) stays pinned
+to the same old commit SHA across two or more subsequent merges to `main`,
+that's a **repo-specific** reconciliation stall, not a generic ArgoCD
+failure — and not something a hard-refresh from an individual contributor
+should paper over, since it likely has a shared root cause other in-flight
+work also depends on. Confirm via `git log --format='%H %ci %s' origin/main`
+that the stuck revision is genuinely behind, then treat the fix as merged and
+correct, but flag live-verification as blocked pending reconciliation, rather
+than forcing a resync that may mask the underlying problem.
 
 #### The WorkflowTemplate Snapshot Gotcha (CRITICAL):
 - **Snapshot at Submit Time**: In Argo Workflows, a WorkflowTemplate is snapshotted inside the cluster at the *exact moment a workflow is submitted*.
@@ -189,9 +212,9 @@ curl -sf http://127.0.0.1:18080/healthz
 When the forward is healthy, refresh the Application state before resubmitting a workflow:
 
 ```bash
-argocd app get lab --refresh --hard-refresh
+argocd app get testing-lab --refresh --hard-refresh
 # or, if the CLI is unavailable, trigger the same refresh via kubectl:
-kubectl -n argocd patch application lab \
+kubectl -n argocd patch application testing-lab \
   --type=merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
 ```
 

@@ -1,6 +1,8 @@
 from pathlib import Path
+import shutil
 import subprocess
 
+import pytest
 import yaml
 
 
@@ -156,7 +158,10 @@ def test_metadata_outputs_preserve_remote_cache_and_unavailable_fields():
     assert "logdir: ${BST_LOGDIR}" in text
     assert "BST_LOGDIR=/work/buildstream-logs" in text
     assert "collect_recc_buildstream_logs" in text
-    assert "RECC metrics/log evidence missing from BuildStream logdir" in text
+    assert "RECC_STATSD_PATTERN=" in text
+    assert "RECC StatsD metric evidence missing from BuildStream logdir" in text
+    assert 'grep -Eiq "${RECC_STATSD_PATTERN}" "${phase_log}"' in text
+    assert 'grep -Ei "${RECC_LOG_PATTERN}" "${phase_log}" > "${phase_raw_recc}"' in text
     assert "--prometheus-before" in text
     assert "--prometheus-after" in text
     assert "/work/recc.log" in text
@@ -175,6 +180,9 @@ def test_justfile_exposes_all_operator_parameters():
 
 
 def test_justfile_named_recc_arguments_are_preserved_for_parsing():
+    if not shutil.which("just"):
+        pytest.skip("just is not installed in this test environment")
+
     result = subprocess.run(
         [
             "just",

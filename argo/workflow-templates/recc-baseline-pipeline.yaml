@@ -389,6 +389,7 @@ spec:
           BST_CONF=/work/buildstream.conf
           echo "=== BuildStream configuration ready ==="
           RECC_LOG_PATTERN='(^|[^[:alnum:]_])RECC(_VERBOSE|_METRICS)?([^[:alnum:]_-]|$)'
+          RECC_STATSD_PATTERN='\[RECC_METRICS\][[:space:]]+recc\.[[:alnum:]_]+:-?([0-9]+([.][0-9]*)?|[.][0-9]+)\|[[:alpha:]]+'
 
           collect_recc_buildstream_logs() {
             local destination="$1"
@@ -440,8 +441,8 @@ spec:
               build "${ELEMENT}" >> "${phase_log}" 2>&1 || rc=$?
             collect_recc_buildstream_logs "${phase_log}"
             if [[ "${MODE}" != "buildstream-only" ]] && \
-              ! grep -Eiq "${RECC_LOG_PATTERN}" "${phase_log}"; then
-              echo "RECC metrics/log evidence missing from BuildStream logdir" >> "${phase_log}"
+              ! grep -Eiq "${RECC_STATSD_PATTERN}" "${phase_log}"; then
+              echo "RECC StatsD metric evidence missing from BuildStream logdir" >> "${phase_log}"
               EVIDENCE_FAILED=1
             fi
             if [[ "${rc}" -eq 0 ]]; then
@@ -485,8 +486,7 @@ spec:
               printf '%s phase: failed (exit %s)\n' "${phase}" "${rc}" >> "${phase_log}"
               printf -v "${status_var}" '%s' failed
             fi
-            grep -Eio '(^|[[:space:]\[\(])RECC(_VERBOSE|_METRICS)?([[:space:]:\]\)]|$).*' \
-              "${phase_log}" > "${phase_raw_recc}" || true
+            grep -Ei "${RECC_LOG_PATTERN}" "${phase_log}" > "${phase_raw_recc}" || true
             {
               printf '=== BEGIN RECC_VERBOSE LOG ===\n'
               cat "${phase_raw_recc}"

@@ -7,12 +7,13 @@ invocation. No bash, no `kubectl apply`, no SSH.
 Conventions:
 
 - All templates live in `argo/workflow-templates/*.yaml` and are reconciled
-  to namespace `argo` by the ArgoCD `testing-lab` Application.
+  to namespace `argo` by the ArgoCD `lab` Application.
 - Workflow-level parameters listed below are passed via `-p name=value`.
-- Wall-clock targets are warm-cache numbers; cold-cache figures (BIB build
-  on a missing golden disk) add ~5–10 min.
+- Wall-clock targets are warm-cache numbers; cold-cache figures for explicit
+  VM/containerDisk lanes add several minutes. Container-only Bluefin/Dakota
+  runs do not build a disk or boot a VM.
 - The agent contract: prefer the **top-level** templates (`bluefin-qa-pipeline`,
-  `bluefin-titan-smoke`). The supporting templates (provision, run, teardown)
+  `dakota-qa-pipeline`). The supporting templates (provision, run, teardown)
   are called as `templateRef` and rarely submitted directly.
 
 ---
@@ -21,23 +22,53 @@ Conventions:
 
 ### `bluefin-qa-pipeline`
 
-Full pipeline: ensure golden disk → reflink + boot a fresh KubeVirt VM →
-run test suites → teardown VM on exit.
+Container-only pipeline: validate the requested suites, fan out
+`run-container-tests` inside the published OCI image, publish selected results,
+and return a summary. This path does not build a containerDisk, boot a VM, or
+SSH into a guest.
 
 | Parameter | Default | Notes |
 |---|---|---|
 | `image` | `ghcr.io/ublue-os/bluefin` | Source image. Tag is appended from `image-tag` for some callers; pass with tag if invoking directly. |
 | `image-tag` | `latest` | `latest`, `lts`, etc. Also used as the golden-disk dir name. |
+| `image-digest` | empty | Optional exact OCI digest. Digest-triggered callers pass it so QA runs the observed image, not a moving tag. |
 | `namespace` | `bluefin-test` | KubeVirt VM namespace. Use `bluefin-lts-test` for LTS. |
 | `suites` | `smoke,developer` | Comma list; valid: `smoke`, `developer`, `software`. |
 | `variant` | `bluefin` | Selects test fixtures (e.g. `dakota` for Ghostty). |
 | `ssh-key-secret` | `bluefin-test-ssh-key` | Secret in `argo` ns with `id_ed25519`. |
 
-Wall-clock: ~5 min (warm), ~10–14 min (cold BIB rebuild).
+Wall-clock: depends on the selected suite set and container-qa semaphore.
 
 ```
 argo submit --from workflowtemplate/bluefin-qa-pipeline \
-  -p image-tag=latest -p suites=smoke --wait
+  -p image-tag=testing -p suites=smoke --wait
+```
+
+### `dakota-qa-pipeline`
+
+Container-only Dakota pipeline: validate the requested suites, fan out
+`run-container-tests` inside the published Dakota OCI image, and return a
+summary. It does not build a containerDisk, boot a VM, or use the legacy
+`dakota-container-qa-pipeline` image-smoke path.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `image` | `ghcr.io/projectbluefin/dakota` | Published OCI image repository. |
+| `image-tag` | `testing` | Image tag to test. |
+| `image-digest` | empty | Optional digest pin for exact-image QA. |
+| `suites` | `smoke,common,developer,software,system` | Comma list of supported suites. |
+| `variant` | `dakota` | Selects Dakota test fixtures. |
+| `branch` | `main` | Lab branch passed to workflow metadata. |
+| `testsuite-branch` | `main` | `projectbluefin/testsuite` branch to clone. |
+
+The active `image-poll-dakota` CronWorkflow requests only `smoke` against
+`ghcr.io/projectbluefin/dakota:testing`. Full-suite manual runs use
+`just run-dakota-qa`; the Dakota BuildStream pipeline publishes its build
+artifacts to local Zot separately.
+
+```
+argo submit --from workflowtemplate/dakota-qa-pipeline \
+  -p image-tag=testing -p suites=smoke --wait
 ```
 
 ### `knuckle-qa-pipeline`
@@ -53,7 +84,7 @@ smoke tests against the installed system.
 | `namespace` | `knuckle-test` | KubeVirt namespace for the ephemeral installer VM. |
 | `suite` | `smoke` | Single GNOME test suite to run after install. |
 | `ssh-key-secret` | `bluefin-test-ssh-key` | Secret in `argo` ns used for installer access and installed-system SSH. |
-| `tests-branch` | `main` | `testing-lab` branch cloned by `run-gnome-tests`. |
+| `tests-branch` | `main` | Lab branch cloned by `run-gnome-tests`. |
 
 Wall-clock: ~12–20 min depending on ISO build cache and Flatcar download time.
 
@@ -85,43 +116,6 @@ argo submit --from workflowtemplate/iso-e2e-pipeline \
   -p iso-sha256=<sha256> -p iso-ref=<immutable-iso-sha> --wait
 ```
 
-### `bluefin-titan-smoke`
-
-Runs smoke tests against the **persistent** titan VMs (`titan-bluefin`,
-`titan-lts`). Skips BIB and VM provisioning entirely. Use when iterating on
-tests or when BIB is slow/broken.
-
-Prerequisites: both titan VMs running. Fetch IPs:
-
-```
-kubectl get vmi titan-bluefin -n bluefin-test -o jsonpath='{.status.interfaces[0].ipAddress}'
-kubectl get vmi titan-lts    -n bluefin-lts-test -o jsonpath='{.status.interfaces[0].ipAddress}'
-```
-
-| Parameter | Default | Notes |
-|---|---|---|
-| `vm-ip-latest` | *(required)* | titan-bluefin IP |
-| `vm-ip-lts` | *(required)* | titan-lts IP |
-| `suite` | `smoke` | Single suite name. |
-| `ssh-key-secret` | `bluefin-test-ssh-key` | |
-| `issue-title` | `titan smoke run` | Free-text label, appears in pod annotation. |
-
-Wall-clock: ~3 min (test-only, no provisioning).
-
-```
-argo submit --from workflowtemplate/bluefin-titan-smoke \
-  -p vm-ip-latest=10.42.x.y -p vm-ip-lts=10.42.x.z --wait
-```
-
-### `patch-golden-disk`
-
-One-shot maintenance: re-runs the disk configuration step (SSH key,
-selinux=0, sudoers) on an existing golden disk without rebuilding it.
-
-| Parameter | Default | Notes |
-|---|---|---|
-| `image-tag` | `latest` | Disk dir under `/var/tmp/bluefin-golden/`. |
-
 ### `service-catalog-pipeline`
 
 K8s-native service-catalog validation pipeline. Deploys a lane's workload
@@ -133,7 +127,7 @@ directly against k8s-hosted workloads.
 |---|---|---|
 | `lane` | `media` | Lane name — must match a directory under `tests/service_catalog/<lane>/` and `tests/service_catalog/<lane>/manifests.yaml` |
 | `image-tag` | `latest` | Passed to lane manifests (available for future per-lane image selection) |
-| `branch` | `main` | testing-lab branch to clone for manifests and tests |
+| `branch` | `main` | Lab branch to clone for manifests and tests |
 
 Wall-clock: ~3–5 min (depends on image pull and test count).
 
@@ -176,7 +170,7 @@ submit them directly only for diagnosis.
 
 ### `run-service-tests` (template: `run-pytest`)
 
-Non-GNOME test runner for service-catalog lanes. Clones testing-lab,
+Non-GNOME test runner for service-catalog lanes. Clones this lab repository,
 discovers the test suite under `tests/service_catalog/<lane>/`, and runs
 pytest with JUnit XML output. Emits a summary line (`N/M pytest checks
 passed`) to stdout for Argo/Loki consumption.
@@ -186,28 +180,27 @@ Env vars passed to the test container: `TEST_NAMESPACE`, `TEST_LANE`,
 `tests/service_catalog/shared/` (deploy, persistence, reachability,
 redeploy, teardown).
 
-### `bib-build-and-push` (template: `ensure-disk`)
+### `build-bluefin-migration-containerdisk` (template: `build-containerdisk`)
 
-Builds the golden raw disk via `bootc-image-builder` if missing or stale.
-Stale detection compares the upstream image digest (via skopeo) against the
-`source-digest` marker written next to the disk on hostPath.
+Builds the containerDisk used only by the explicit Bluefin migration workflow.
+It is not part of `bluefin-qa-pipeline` or `dakota-qa-pipeline`, which run
+directly in OCI images.
 
-Outputs: no `outputs.parameters`; side effect is
-`/var/tmp/bluefin-golden/<image-tag>/disk.raw` and `source-digest` on ghost.
+### `provision-containerdisk-vm` (template: `provision-vm`)
 
-### `provision-bluefin-vm` (template: `provision-vm`)
-
-btrfs `cp --reflink=auto` from the golden disk, applies SVirt label, creates
-a KubeVirt VM, waits for SSH/IP, emits `vm-ip` as an output parameter.
+Provisions an explicit KubeVirt VM from a containerDisk and emits `vm-ip`.
+This is a VM-backed support path, not part of the container-only Bluefin/Dakota
+QA pipelines.
 
 ### `provision-flatcar-vm` (template: `provision-vm`)
 
-Same shape for Flatcar — accepts an `ssh-pubkey` parameter directly instead
-of relying on the bluefin-test secret for cloud-init injection.
+Same shape for Flatcar — `flatcar-smoke-test` leaves `ssh-pubkey` empty by
+default. After cloud-init, `bluefin-test-ssh-key` supplies `id_ed25519.pub`
+through the QEMU guest agent before the readiness step returns the VM IP.
 
 ### `run-gnome-tests` (template: `run-gnome-tests`)
 
-`git-sync` initContainer clones testing-lab → main container SSHes to the VM
+`git-sync` initContainer clones this lab repository → main container SSHes to the VM
 IP → installs deps (skipped if present) → runs qecore-headless + behave →
 captures `results.json` to pod stdout (Loki + `argo logs`).
 
@@ -222,12 +215,16 @@ starts the VM's `selenium-webdriver-at-spi-run` service, waits for its
 `/status` endpoint, and runs `tests/kde-smoke/features` with Behave. Results
 and in-guest PNG screenshots are copied back even when Behave fails, then
 persisted under the standard ghost test-results host path. `faillog_*`
-directories are retained alongside `.tar.gz` bundles, and the first screenshot
-is pushed as the stable `desktop-screenshot` OCI artifact. The GitHub
-credential, ORAS tool, screenshot, artifact persistence, and result publication
-are required and fail the runner when unavailable. QEMU-level screendumps are
-not used because
-KubeVirt's `virt-launcher` does not expose a QEMU monitor.
+directories are retained alongside `.tar.gz` bundles. The first screenshot is
+required as evidence but its GHCR/`oras push` publication is disabled
+repo-wide (see
+`docs/superpowers/specs/2026-07-30-block-ghcr-pushes-design.md`); it is
+retained only in the hostPath results bundle, and the runner reports "GHCR
+screenshot publication disabled" instead of silently claiming success. The
+GitHub credential, screenshot presence, artifact persistence, and result
+publication are required and fail the runner when unavailable. QEMU-level
+screendumps are not used because KubeVirt's `virt-launcher` does not expose a
+QEMU monitor.
 
 The runner accepts `failure-class: test|infra` and `failure-issue-url`
 parameters. A failed run classified as infrastructure must include the URL of
@@ -285,10 +282,17 @@ triggers, and retains failed workflows for seven days.
 Each live run must publish the structured result and screenshot through
 `run-kde-tests`, and persist the result/artifact bundle before teardown. A
 qualified 30-run window is evidence only: retain the Argo workflow URL, the
-published `docs/results/aurora-testing-smoke.json` history, screenshot URL,
-and any filed issue URL for every classified infrastructure flake. Live-run
-evidence is required after ArgoCD reconciles the Git change; local lint cannot
-substitute for that evidence.
+published `docs/results/aurora-testing-kde-smoke.json` history, screenshot
+URL, and any filed issue URL for every classified infrastructure flake.
+Live-run evidence is required after ArgoCD reconciles the Git change; local
+lint cannot substitute for that evidence.
+
+`aurora-testing-kde-smoke.json` (suite `kde-smoke`, the name `nightly-kde` and
+`aurora-qa-pipeline` pass to `run-kde-tests`) is a distinct file from the
+pre-existing `aurora-testing-smoke.json`, which belongs to the unrelated
+generic `bluefin-qa-pipeline` smoke/developer/software suites triggered by
+`image-poll-aurora-testing`. Do not conflate the two: `just evaluate-kde-soak`
+and the soak gate only ever read the `kde-smoke` file.
 
 ### `aurora-kde-sabotage`
 
@@ -308,10 +312,10 @@ just run-aurora-kde-sabotage
 Same shape for Flatcar; uses `core` as the SSH user and runs pytest+dogtail
 fixtures from `tests/flatcar/`.
 
-### `teardown-bluefin-vm` / `teardown-flatcar-vm`
+### `teardown-vm`
 
-Delete the VM, wait for the VMI object to drain, then `rm` the per-run
-hostDisk clone. Invoked as `onExit` from the pipeline templates.
+Deletes a named KubeVirt VM in its namespace. Invoked as `onExit` by the
+explicit VM-backed pipeline templates.
 
 ---
 
@@ -380,9 +384,9 @@ required:
 | Repo | QA path |
 |---|---|
 | `projectbluefin/common` | smoke suite against bluefin `:testing` |
-| `projectbluefin/bluefin` | smoke suite against current `:testing` image |
-| `projectbluefin/bluefin-lts` | smoke suite against current `:testing` image |
-| `projectbluefin/dakota` | SHA-pinned BuildStream build + container QA |
+| `projectbluefin/bluefin` | daily scheduled QA; PR QA only with `test-on-lab` |
+| `projectbluefin/bluefin-lts` | daily scheduled QA; PR QA only with `test-on-lab` |
+| `projectbluefin/dakota` | daily scheduled QA; PR QA only with `test-on-lab` |
 | `projectbluefin/knuckle` | `knuckle-qa-pipeline` |
 | `projectbluefin/testsuite` | smoke + common suites against bluefin `:testing` |
 
@@ -490,12 +494,22 @@ Installed apps are tracked in `docs/data/catalog/installed.json`.
 
 ## CronWorkflows
 
-Lives in `manifests/`, applied via the `testing-lab-infra` ArgoCD app:
+Lives in `manifests/`, applied via the `lab-infra` ArgoCD app:
 
 | Schedule | Cron | Template called | Purpose |
 |---|---|---|---|
-| `nightly-smoke` | 02:00 UTC | `bluefin-qa-pipeline` (latest) | Catch upstream regressions |
-| `nightly-smoke-lts` | 02:30 UTC | `bluefin-qa-pipeline` (lts)    | Same, for LTS branch; first fire builds the missing golden disk |
+| `nightly-smoke` | 02:00 UTC | `bluefin-qa-pipeline` (`testing`) | Catch upstream regressions |
+| `nightly-smoke-stable` | 03:00 UTC | `bluefin-qa-pipeline` (`stable`, `smoke`) | Stable image regression coverage |
+| `nightly-smoke-lts` | 02:30 UTC | `bluefin-qa-pipeline` (`testing`) | LTS regression coverage |
+| `nightly-smoke-lts-stable` | 03:30 UTC | `bluefin-qa-pipeline` (`stable`, `smoke`) | Stable LTS regression coverage |
+| `image-poll-bluefin-testing` | Every 10 min at :00 | `image-poller` (`run-qa=false`) | Refresh Bluefin testing digest state; daily QA is nightly |
+| `image-poll-lts-testing` | Every 10 min at :02 | `image-poller` (`run-qa=false`) | Refresh Bluefin-LTS testing digest state; daily QA is nightly |
+| `image-poll-bluefin-stable` | Every 10 min at :04 | `bluefin-qa-pipeline` (`stable`, full suite) | Active Bluefin stable digest-triggered QA |
+| `image-poll-lts-stable` | Every 10 min at :06 | `bluefin-qa-pipeline` (`stable`, full suite) | Active Bluefin-LTS stable digest-triggered QA |
+| `image-poll-dakota` | Every 10 min at :08 | `image-poller` (`run-qa=false`) | Refresh Dakota testing digest state; daily QA is nightly |
+| `image-poll-bluefin-main` | Every 3h at :12 | `bluefin-qa-pipeline` (`latest`, full suite) | Active upstream Bluefin digest-triggered QA |
+| `image-poll-snosi-latest` | Every 3h at :30 | `bluefin-qa-pipeline` (`latest`, `smoke,developer,system`) | Active Snosi digest-triggered QA |
+| `nightly-dakota` | 03:00 UTC | `dakota-qa-pipeline` (`testing`) | Daily Dakota testing-lane regression coverage |
 | `orphan-vm-cleanup` | every 2h | inline | GC stale per-run hostDisks in bluefin, flatcar, and knuckle namespaces |
 
 ---
@@ -503,7 +517,7 @@ Lives in `manifests/`, applied via the `testing-lab-infra` ArgoCD app:
 ## KubeStellar workflows
 
 Reusable WorkflowTemplates in `argo/workflow-templates/`, reconciled by the
-`testing-lab` ArgoCD Application. KubeStellar installation and upgrades are
+`lab` ArgoCD Application. KubeStellar installation and upgrades are
 owned by the `kubestellar-applications` ArgoCD parent Application.
 
 ### `register-wec`

@@ -77,6 +77,7 @@ data:
             replacement: /api/v1/nodes/${1}/proxy/metrics
 
       - job_name: 'kubernetes-cadvisor'
+        sample_limit: 50000
         scheme: https
         tls_config:
           ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
@@ -104,6 +105,7 @@ data:
       # annotation-based pod discovery — every buildbarn pod carries
       # prometheus.io/scrape: "true" and prometheus.io/port: "9980".
       - job_name: 'buildbarn'
+        sample_limit: 5000
         kubernetes_sd_configs:
           - role: pod
             namespaces:
@@ -123,6 +125,7 @@ data:
             target_label: node
 
       - job_name: 'argo-workflow-controller'
+        sample_limit: 2000
         scheme: https
         tls_config:
           insecure_skip_verify: true
@@ -145,6 +148,7 @@ data:
             target_label: node
 
       - job_name: 'zot'
+        sample_limit: 2000
         metrics_path: /metrics
         kubernetes_sd_configs:
           - role: endpoints
@@ -158,6 +162,32 @@ data:
             target_label: namespace
           - source_labels: [__meta_kubernetes_service_name]
             target_label: service
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node
+
+      # Optional hook for a GitHub API exporter. The lab does not deploy an
+      # exporter or collect tokens here; an explicitly annotated pod may
+      # expose bounded request/throttle counters for traffic_report.py.
+      - job_name: 'github-traffic-hooks'
+        sample_limit: 500
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: ['argo']
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: 'true'
+          - source_labels: [__meta_kubernetes_pod_annotation_lab_projectbluefin_io_metrics]
+            action: keep
+            regex: 'github-api'
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: '([^:]+)(?::\d+)?;(\d+)'
+            replacement: '${1}:${2}'
+            target_label: __address__
           - source_labels: [__meta_kubernetes_pod_name]
             target_label: pod
           - source_labels: [__meta_kubernetes_pod_node_name]
@@ -317,7 +347,7 @@ spec:
       labels:
         app: prometheus-lightweight
       annotations:
-        lab.projectbluefin.io/config-version: persistent-build-metrics-v1
+        lab.projectbluefin.io/config-version: traffic-instrumentation-v2
     spec:
       serviceAccountName: prometheus-lightweight
       securityContext:

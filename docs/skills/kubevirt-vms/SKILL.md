@@ -87,6 +87,11 @@ with no pinning.
 - `fsetxattr(security.selinux): Operation not supported` during LTS build — wrapper loaded but returning ENOTSUP; change wrapper to return 0 (noop) instead so ostree version mismatch doesn't matter.
 - SSH `Permission denied (publickey)` after configure-disk — **do not debug disk injection further**; switch to KubeVirt accessCredentials with qemuGuestAgent (section 2b).
 - Using disk injection for SSH keys when accessCredentials is available — disk injection is fragile; accessCredentials is the canonical KubeVirt pattern.
+- Enabling `qemu-guest-agent.service` in a generated containerDisk without first
+  ensuring the guest contains `qemu-guest-agent`. KubeVirt's
+  `qemuGuestAgent` access-credential propagation requires the installed guest
+  agent; make the shared builder install, enable, and verify its unit before
+  creating the service symlink.
 - `pip install --user` failing with EACCES inside VM — home directory owned by root; always chown after `install -d .ssh` (section 2c).
 - LTS VM goes `Stopped` immediately after creation — `bluefin-test-ssh-pubkey` secret missing from `bluefin-lts-test` namespace. The manifest must create the secret in **both** `bluefin-test` and `bluefin-lts-test`. Check with `kubectl get secret -n bluefin-lts-test bluefin-test-ssh-pubkey`.
 - VM goes `Stopped` with `FailedCreate` and `metadata.labels: must be no more than 63 characters` — VM name exceeds Kubernetes label-value limit. `bluefin-lts-testing-developer-<36-char-uuid>` = 67 chars, fails. `smoke` (5 chars) just passes; `developer` (9 chars) overflows. Fix: use `{{workflow.name}}-{{item}}` instead of `{{workflow.parameters.variant}}-{{item}}-{{workflow.uid}}` — workflow names are short and unique. Fixed in `bluefin-qa-pipeline` commit `7fca070`.

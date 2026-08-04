@@ -14,18 +14,23 @@ metadata:
     app.kubernetes.io/part-of: bluefin-test-suite
 spec:
   serviceAccountName: argo
+  workflowMetadata:
+    labels:
+      bluefin.io/evidence-contract: qa-run-v1
   parallelism: 2
   # Generous ceiling because the run-container-tests template now queues behind a
   # cross-workflow semaphore; the workflow-level deadline must outlive queue wait
   # plus the 1h per-suite test pod deadline.
   activeDeadlineSeconds: 14400
-  entrypoint: pipeline
+  entrypoint: dispatch-pipeline
   arguments:
     parameters:
     - name: image
       value: "ghcr.io/projectbluefin/bluefin"
     - name: image-tag
       value: "testing"
+    - name: image-digest
+      value: ""
     - name: suites
       value: "smoke,common,developer,software,system"
     - name: variant
@@ -43,30 +48,21 @@ spec:
     - name: testsuite-repo
       value: "https://github.com/projectbluefin/testsuite"
   templates:
-  - name: pipeline
+  - name: dispatch-pipeline
     dag:
       tasks:
-      - name: validate-suites
-        template: validate-suites
-        arguments:
-          parameters:
-          - name: suites
-            value: "{{workflow.parameters.suites}}"
-      - name: test-lane
-        depends: "validate-suites.Succeeded"
-        withItems: [smoke, common, developer, software, system]
-        when: "'{{workflow.parameters.suites}}' =~ '{{item}}'"
-        templateRef:
-          name: run-container-tests
-          template: run-container-tests
+      - name: pipeline
+        template: pipeline
         arguments:
           parameters:
           - name: image
             value: "{{workflow.parameters.image}}"
           - name: image-tag
             value: "{{workflow.parameters.image-tag}}"
-          - name: suite
-            value: "{{item}}"
+          - name: image-digest
+            value: "{{workflow.parameters.image-digest}}"
+          - name: suites
+            value: "{{workflow.parameters.suites}}"
           - name: variant
             value: "{{workflow.parameters.variant}}"
           - name: branch
@@ -75,6 +71,50 @@ spec:
             value: "{{workflow.parameters.testsuite-branch}}"
           - name: testsuite-repo
             value: "{{workflow.parameters.testsuite-repo}}"
+  - name: pipeline
+    inputs:
+      parameters:
+      - name: image
+      - name: image-tag
+      - name: image-digest
+      - name: suites
+      - name: variant
+      - name: branch
+      - name: testsuite-branch
+      - name: testsuite-repo
+    dag:
+      tasks:
+      - name: validate-suites
+        template: validate-suites
+        arguments:
+          parameters:
+          - name: suites
+            value: "{{inputs.parameters.suites}}"
+      - name: test-lane
+        depends: "validate-suites.Succeeded"
+        withItems: [smoke, common, developer, software, system]
+        when: "'{{inputs.parameters.suites}}' =~ '{{item}}'"
+        templateRef:
+          name: run-container-tests
+          template: run-container-tests
+        arguments:
+          parameters:
+          - name: image
+            value: "{{inputs.parameters.image}}"
+          - name: image-tag
+            value: "{{inputs.parameters.image-tag}}"
+          - name: image-digest
+            value: "{{inputs.parameters.image-digest}}"
+          - name: suite
+            value: "{{item}}"
+          - name: variant
+            value: "{{inputs.parameters.variant}}"
+          - name: branch
+            value: "{{inputs.parameters.branch}}"
+          - name: testsuite-branch
+            value: "{{inputs.parameters.testsuite-branch}}"
+          - name: testsuite-repo
+            value: "{{inputs.parameters.testsuite-repo}}"
           - name: behave-tags
             value: ""
   - name: validate-suites

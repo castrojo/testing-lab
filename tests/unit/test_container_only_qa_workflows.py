@@ -51,6 +51,28 @@ def test_bluefin_test_lane_depends_on_suite_validation():
     assert content.index("- name: validate-suites") < content.index("- name: test-lane")
 
 
+def test_bluefin_pipeline_accepts_explicit_template_ref_arguments():
+    import yaml
+
+    pipeline = yaml.safe_load(PIPELINE.read_text(encoding="utf-8"))
+    templates = {template["name"]: template for template in pipeline["spec"]["templates"]}
+    parameters = {
+        parameter["name"]
+        for parameter in templates["pipeline"]["inputs"]["parameters"]
+    }
+
+    assert parameters == {
+        "image",
+        "image-tag",
+        "image-digest",
+        "suites",
+        "variant",
+        "branch",
+        "testsuite-branch",
+        "testsuite-repo",
+    }
+
+
 def test_run_container_tests_explicitly_allows_system_suite():
     content = (ROOT / "argo/workflow-templates/run-container-tests.yaml").read_text(
         encoding="utf-8"
@@ -116,6 +138,31 @@ def test_container_runner_skips_remote_digest_resolution_when_digest_provided():
     block = content.split("# Resolve the digest remotely", 1)[1]
     assert 'if [[ -z "${IMAGE_DIGEST:-}" ]]; then' in block
     assert "skopeo inspect" in block
+
+
+def test_container_runner_pull_retry_budget_survives_slow_contended_pulls():
+    # Live incident bluefin-qa-pipeline-42jhj: under real concurrent
+    # ghost-container-qa demand (up to 6 simultaneous podman pulls sharing one
+    # node's egress), podman's local blob cache carries completed blobs
+    # forward across attempts (each retry starts faster than the last), so
+    # attempt 3/3 reached the final blob of the image and missed the 480s
+    # deadline by only ~47s. PULL_ATTEMPTS=3 was calibrated for the original
+    # instant "unexpected EOF" hang, not for this slow-but-progressing
+    # pattern. Bumping to 4 attempts (worst case 2010s) gives one more full
+    # bounded window -- comfortably more than the ~47s that was missing --
+    # while every attempt remains individually timeout-bounded (no unbounded
+    # retries) and activeDeadlineSeconds (3600s) is untouched.
+    content = (ROOT / "argo/workflow-templates/run-container-tests.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "PULL_ATTEMPTS=4" in content
+    assert "PULL_TIMEOUT_SECONDS=480" in content
+    assert (
+        'timeout "${PULL_TIMEOUT_SECONDS}" podman pull "${PODMAN_PULL_TLS_ARGS[@]}" "${TARGET_IMAGE}"'
+        in content
+    )
+    assert "activeDeadlineSeconds: 3600" in content
 
 
 def test_container_runner_readiness_probe_is_informative():
@@ -361,6 +408,34 @@ def test_dakota_qa_pipeline_exposes_and_forwards_image_digest():
     assert "- name: image-digest" in dakota
     assert 'value: "{{workflow.parameters.image-digest}}"' in dakota
     assert "name: run-container-tests" in dakota
+
+
+def test_dakota_digest_poller_forwards_remote_digest_to_pipeline_parameter():
+    import yaml
+
+    poller = yaml.safe_load(
+        (ROOT / "manifests/image-poll-dakota.yaml").read_text(encoding="utf-8")
+    )
+    pipeline = yaml.safe_load(
+        (ROOT / "argo/workflow-templates/dakota-qa-pipeline.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    pipeline_parameters = {
+        parameter["name"]
+        for parameter in pipeline["spec"]["arguments"]["parameters"]
+    }
+    tasks = poller["spec"]["workflowSpec"]["templates"][0]["dag"]["tasks"]
+    run_pipeline = next(task for task in tasks if task["name"] == "run-pipeline")
+    arguments = {
+        parameter["name"]: parameter["value"]
+        for parameter in run_pipeline["arguments"]["parameters"]
+    }
+
+    assert "image-digest" in pipeline_parameters
+    assert arguments["image-digest"] == (
+        "{{tasks.check-digest.outputs.parameters.remote-digest}}"
+    )
 
 
 def test_pr_poller_carries_image_digest_into_dakota_qa_workflow():

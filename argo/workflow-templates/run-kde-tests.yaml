@@ -41,7 +41,19 @@ spec:
         value: ""
       - name: behave-retries
         value: "2"
+    outputs:
+      parameters:
+      - name: result
+        valueFrom:
+          path: /tmp/results/result-summary.txt
+      - name: failed-scenarios
+        valueFrom:
+          path: /tmp/results/failed-scenarios.json
+          default: "[]"
     activeDeadlineSeconds: 3600
+    # The durable result store is local to ghost.
+    nodeSelector:
+      kubernetes.io/hostname: ghost
     initContainers:
     - name: git-sync
       image: ghcr.io/projectbluefin/lab-runner@sha256:fe097bb3b85a126b9a16093fbc498b4b6fb7b24e0f74162ad3d91a402dcfa940
@@ -157,14 +169,14 @@ spec:
       args:
       - |
         set -euo pipefail
-        for tool in bash curl find git python3 scp ssh timeout; do
+        for tool in bash curl git python3 scp ssh timeout; do
           command -v "${tool}" >/dev/null ||
             { echo "Required tool is missing: ${tool}" >&2; exit 2; }
         done
         [[ -n "${GITHUB_TOKEN:-}" ]] ||
           { echo "Required credential is missing: GITHUB_TOKEN" >&2; exit 2; }
         mkdir -p /tmp/results
-        VIRTCTL=/usr/local/bin/virtctl
+        VIRTCTL=/tmp/virtctl
         if [[ ! -x "${VIRTCTL}" ]]; then
           curl --fail --location --retry 3 --output "${VIRTCTL}" \
             https://github.com/kubevirt/kubevirt/releases/download/v1.8.2/virtctl-v1.8.2-linux-amd64
@@ -174,9 +186,7 @@ spec:
         PF_PID=$!
         trap 'kill "${PF_PID}" 2>/dev/null || true' EXIT
         timeout 600 bash -c '
-          until ssh -i "${SSH_KEY}" -p 2222 -o StrictHostKeyChecking=no
-              -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10
-              "${VM_USER}@127.0.0.1" true 2>/dev/null; do sleep 5; done'
+          until ssh -i "${SSH_KEY}" -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 "${VM_USER}@127.0.0.1" true 2>/dev/null; do sleep 5; done'
         ssh -i "${SSH_KEY}" -p 2222 -o StrictHostKeyChecking=no \
           -o UserKnownHostsFile=/dev/null "${VM_USER}@127.0.0.1" \
           '
@@ -187,8 +197,12 @@ spec:
           if [ -z "${SESSION_BUS}" ] && [ -S "${XDG_RUNTIME_DIR}/bus" ]; then
             SESSION_BUS="unix:path=${XDG_RUNTIME_DIR}/bus"
           fi
-          WAYLAND_DISPLAY=$(find "${XDG_RUNTIME_DIR}" -maxdepth 1 \
-            -name "wayland-*" -printf "%f\n" 2>/dev/null | head -1)
+          shopt -s nullglob
+          wayland_sockets=("${XDG_RUNTIME_DIR}"/wayland-*)
+          WAYLAND_DISPLAY=""
+          if ((${#wayland_sockets[@]})); then
+            WAYLAND_DISPLAY="${wayland_sockets[0]##*/}"
+          fi
           AT_SPI_BUS_ADDRESS="${SESSION_BUS}"
           KDE_WEBDRIVER_URL=http://127.0.0.1:4723
           printf "%s\n" \
@@ -256,7 +270,9 @@ spec:
         # Keep both the directory and a portable tarball for each kde_faillog
         # bundle produced by the testsuite failure hook. lab-runner does not
         # provide tar, so use the guaranteed Python standard library tool.
-        while IFS= read -r -d '' bundle; do
+        shopt -s nullglob globstar
+        for bundle in /tmp/results/**/faillog_*; do
+          [[ -d "${bundle}" ]] || continue
           if ! (
             cd "$(dirname "${bundle}")" &&
             python3 -m tarfile -c "${bundle}.tar.gz" "$(basename "${bundle}")"
@@ -264,7 +280,7 @@ spec:
             echo "ERROR: failed to archive KDE failure bundle ${bundle}" >&2
             ARTIFACT_RC=1
           fi
-        done < <(find /tmp/results -type d -name 'faillog_*' -print0)
+        done
 
         RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}/${SUITE}"
         mkdir -p "${RESULT_DIR}"
@@ -277,6 +293,38 @@ spec:
             echo "ERROR: failed to persist results.json to ${RESULT_DIR}" >&2
             ARTIFACT_RC=1
           fi
+          python3 - <<'PY'
+        import json
+        import re
+
+        with open("/results/results.json", encoding="utf-8") as result_file:
+            data = json.load(result_file)
+        failed = sum(
+            1
+            for feature in data
+            for scenario in feature.get("elements", [])
+            if scenario.get("status") == "failed"
+        )
+        total = sum(len(feature.get("elements", [])) for feature in data)
+        with open("/tmp/results/result-summary.txt", "w", encoding="utf-8") as summary_file:
+            summary_file.write(f"{total - failed}/{total} scenarios passed\n")
+        safe_name = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,:;()/_+-]{0,159}$")
+        failed_scenarios = []
+        for feature in data:
+            for scenario in feature.get("elements", []):
+                name = scenario.get("name")
+                if (
+                    scenario.get("status") == "failed"
+                    and isinstance(name, str)
+                    and safe_name.fullmatch(name)
+                    and not any(word in name.lower() for word in
+                                ("token", "password", "secret", "authorization"))
+                    and name not in failed_scenarios
+                ):
+                    failed_scenarios.append(name)
+        with open("/tmp/results/failed-scenarios.json", "w", encoding="utf-8") as artifact_file:
+            json.dump(failed_scenarios[:20], artifact_file, separators=(",", ":"))
+        PY
         else
           echo "ERROR: Behave did not produce /results/results.json" >&2
           ARTIFACT_RC=1
@@ -288,8 +336,17 @@ spec:
           IMG_SLUG="aurora-${{inputs.parameters.containerdisk-tag}}"
         fi
 
-        # Screenshot discovery; GHCR upload is disabled, retained locally only.
-        SHOT=$(find /tmp/results -type f -name '*.png' -print -quit)
+        # Screenshot discovery. Screenshots are captured in-guest by the
+        # selenium-webdriver-at-spi/KPipeWire session. KubeVirt's
+        # virt-launcher does not expose a QEMU monitor, so a monitor-based
+        # screendump helper (the approach testsuite's disabled fallback
+        # script relies on) is impossible here and is intentionally never
+        # invoked by this template. GHCR OCI artifact publication of the
+        # screenshot is disabled repo-wide — see
+        # docs/superpowers/specs/2026-07-30-block-ghcr-pushes-design.md —
+        # so the screenshot is retained only in the hostPath results bundle.
+        screenshots=(/tmp/results/**/*.png)
+        SHOT="${screenshots[0]:-}"
         if [[ -z "${SHOT}" || ! -f "${SHOT}" ]]; then
           echo "ERROR: KDE test did not produce a screenshot artifact" >&2
           ARTIFACT_RC=1

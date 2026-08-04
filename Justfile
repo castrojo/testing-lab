@@ -5,8 +5,9 @@
 #   - Workflow submission and monitoring: use these just targets (argo/kubectl CLI).
 #   - These recipes are the canonical interface for all routine lifecycle operations.
 #   - Agents use these recipes or call argo/kubectl directly. No MCP required.
-#   - ssh jorge@ghost is permitted for OS-level tasks only (k3s restart, systemd, brew).
-#   - No recipe SSHes to ghost; do NOT add workstation SSH hops.
+#   - No workstation SSH to ghost or exo-0; use just/argo/kubectl/API-driven operations.
+#   - Routine/public-agent SSH is only from workflow/probe pods to explicit test VMs.
+#   - Retained host-maintenance SSH is operator-only via an approved private channel.
 #   - Cluster bootstrap (setup-ssh-secret, setup-argocd) runs once from workstation.
 
 image     := env_var_or_default("BLUEFIN_IMAGE", "ghcr.io/projectbluefin/bluefin:testing")
@@ -118,13 +119,6 @@ run-migration-test tag=image_tag:
         -n {{ argo_ns }} \
         --watch
 
-# One-time: write SSH banner on ghost.
-setup-ghost-ssh-banner:
-    argo submit --from workflowtemplate/setup-ghost-ssh-banner \
-        -n {{ argo_ns }} \
-        --wait --log
-
-
 # —— [REMOVED] titan VM recipes ——
 # run-titan-smoke, run-titan-system, run-titan-developer, run-titan-software,
 # setup-titan-fixtures, run-titan-disk-cleanup
@@ -151,9 +145,18 @@ run-aurora-kde-sabotage:
 # Evaluate the rolling KDE soak window. A qualified result still needs human
 # approval before the suite is promoted to CI gating.
 evaluate-kde-soak:
-    python3 scripts/evaluate_kde_soak.py docs/results/aurora-testing-smoke.json
+    python3 scripts/evaluate_kde_soak.py docs/results/aurora-testing-kde-smoke.json
 
 # ── Observation ─────────────────────────────────────────────────────────────
+
+# Report rolling external traffic on the physical node uplinks and rank Zot
+# repository pulls. Start Prometheus locally first:
+#   kubectl -n kube-system port-forward svc/prometheus 9090:9090
+traffic-report prometheus="http://127.0.0.1:9090" window="24h" interface="enp191s0":
+    python3 scripts/traffic_report.py \
+      --prometheus-url "{{ prometheus }}" \
+      --window "{{ window }}" \
+      --interface "{{ interface }}"
 
 # List all test workflows
 list-workflows:
@@ -246,11 +249,6 @@ run-otel-patch:
 # Clear stale podman containers-storage lock files on ghost (run when no BIB workflows active)
 run-ghost-cleanup:
     argo submit --from workflowtemplate/ghost-cleanup \
-      -n {{ argo_ns }} --wait --log
-
-# Set Strix Halo performance kernel args on ghost via rpm-ostree (reboot required after)
-run-kernel-args:
-    argo submit --from workflowtemplate/ghost-kernel-args \
       -n {{ argo_ns }} --wait --log
 
 # ── Dakota BST builds ────────────────────────────────────────────────────────

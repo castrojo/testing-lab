@@ -53,7 +53,7 @@ metadata:
 
 ## Install (GitOps, ADR-0003)
 
-The `testing-lab-infra` Application reconciles
+The `lab-infra` Application reconciles
 `manifests/kubestellar-applications.yaml`, which owns exactly three child
 Applications in order: PostgreSQL, KubeStellar core, then Console. Installation
 and upgrades happen through Git; do not apply the child Applications manually.

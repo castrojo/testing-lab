@@ -84,13 +84,18 @@ remain explicit `unavailable_fields` entries and are never represented as zero
 or a successful warm hit. The workflow emits compact `metadata` and `evidence`
 output parameters.
 
+RECC StatsD counters are interpreted conservatively: cache hit/miss counters
+are the action count, local execution counters report fallbacks, and execution
+timings are used only when their StatsD unit is milliseconds. Counter samples
+are never treated as compiler durations.
+
 RECC's metrics file is written under BuildStream's ephemeral `%{build-root}`,
 then printed into the element build log and removed before artifact creation.
 The workflow sets BuildStream's supported `logdir` to `/work/buildstream-logs`
-and extracts RECC-marked lines from those per-element logs into the workflow
-evidence. This keeps the StatsD/log handoff outside the deterministic artifact;
+and extracts complete RECC-marked lines from those per-element logs into the
+workflow evidence. This keeps the StatsD/log handoff outside the deterministic artifact;
 cache-only and upload-local-build phases fail closed when that handoff produces
-no RECC evidence.
+no valid RECC StatsD metric evidence.
 
 The acceptance comparison is mode-specific: `cache-only` and
 `upload-local-build` must prove stable action keys and a warm action-cache hit.

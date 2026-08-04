@@ -158,6 +158,21 @@ def test_recc_statsd_metrics_provide_action_cache_evidence():
     assert result["state"] == "available"
 
 
+def test_recc_statsd_counters_are_not_mistaken_for_compile_timings():
+    result = collector.parse_recc_verbose(
+        """
+        === BEGIN RECC_VERBOSE LOG ===
+        [RECC_METRICS] recc.action_cache_miss:2|c
+        [RECC_METRICS] recc.execute_local_no_action_result:2|c
+        === END RECC_VERBOSE LOG ===
+        """
+    )
+
+    assert result["action_count"] == 2
+    assert result["local_fallbacks"] == 2
+    assert result["compile_seconds"] is None
+
+
 def test_collected_run_preserves_recc_statsd_evidence_from_element_log():
     result = collector.collect_run(
         {"run_id": "cache-regression", "mode": "cache-only"},

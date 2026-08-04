@@ -5,11 +5,11 @@ this repo. Read this before adding a scenario, a step, or a new suite. Pair it w
 [`/AGENTS.md`](/AGENTS.md), [`/docs/ops/RUNBOOK.md`](/docs/ops/RUNBOOK.md), and the example suites under
 [`tests/`](/tests/).
 
-> **TL;DR for agents:** Tests run inside a real GNOME Wayland session on a KubeVirt VM. The
-> Argo runner SSHs in, sets up `qecore-headless`, and executes `behave` (+ optional `pytest`)
-> over the AT-SPI bus using `dogtail`. You write feature files + step defs locally, push to
-> `main` (or a PR branch), and submit a `just` target. Never SSH to ghost or `kubectl apply`
-> workflows.
+> **TL;DR for agents:** Bluefin and Dakota QA run inside a nested GNOME Wayland session in
+> the published OCI image via `run-container-tests`; explicit VM-backed lanes use the
+> `run-gnome-tests` runner. You write feature files + step defs locally, push to `main`
+> (or a PR branch), and submit a `just` target. Never SSH to a cluster node or
+> `kubectl apply` workflows.
 
 ## Upstream sources of truth
 
@@ -29,8 +29,8 @@ This repo follows the upstream conventions; when in doubt, the upstream docs win
 > legacy-maintained at `dogtail-1.x`). Upstream qecore tracks its own `X.Y` series. Any
 > historical "dogtail 4.16" mentions in repo comments refer to the qecore release pinned at
 > the time and predate the dogtail 2.x rename — treat them as qecore-version markers, not
-> dogtail versions. The runner installs the latest releases of both from PyPI on every fresh
-> VM and skips on persistent titans (see §3).
+> dogtail versions. The runner installs the latest releases of both from PyPI in each
+> fresh test environment (see §3).
 
 ---
 
@@ -38,11 +38,11 @@ This repo follows the upstream conventions; when in doubt, the upstream docs win
 
 | Layer                     | Role                                                                        |
 |---------------------------|-----------------------------------------------------------------------------|
-| **KubeVirt VM**           | Real Bluefin (`latest`/`lts`) boot on ghost. Wayland + GNOME Shell 50.      |
+| **KubeVirt VM**           | Explicit VM-backed lanes only; container-only Bluefin/Dakota QA does not boot a VM. |
 | **gnome-ponytail-daemon** | Bridges AT-SPI coordinates → Wayland surface coordinates (input injection). |
 | **qecore-headless**       | Boots Wayland/GNOME session, sets `DBUS_SESSION_BUS_ADDRESS`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, activates ponytail-daemon. |
 | **qecore.TestSandbox**    | Per-test bookkeeping: app handles, journal scoping, screenshots, retries.   |
-| **dogtail 4.16**          | AT-SPI tree traversal (`tree.root.application(...)`, `findChild(ren)`).     |
+| **dogtail 2.x**           | AT-SPI tree traversal (`tree.root.application(...)`, `findChild(ren)`).     |
 | **behave**                | BDD runner. Feature files in Gherkin; step defs in Python.                  |
 | **pytest**                | Adjacent suite for command/file/journal assertions (no GUI needed).         |
 | **Shell.Eval (gdbus)**    | Escape hatch for GNOME 50 gaps in AT-SPI / `uinput`.                        |
@@ -89,21 +89,16 @@ tests/
 ## 3. How a Test Run Executes (mental model)
 
 1. **You push** to `main` or a PR branch.
-2. **You submit** a workflow (e.g. `just run-titan-smoke` or `just run-tests`).
-3. **Argo** starts the `run-gnome-tests` pod on ghost.
-4. The pod's `git-sync` initContainer clones `lab @ <branch>` into a shared volume.
-5. The runner container waits for SSH on the target VM, then over SSH:
-   - Verifies/installs `qecore`, `behave`, `dogtail`, `pytest`, `python-uinput`,
-     `gnome-ponytail-daemon` (+ `python3-gnome-ponytail-daemon`).
-   - Ensures `/dev/uinput` is `chmod 0666` and SELinux-labelled.
-6. **rsyncs** `tests/<suite>/` and `tests/shared/wait_for_shell.py` to `/tmp/bluefin-tests/` on the VM.
-7. Runs:
-   ```
-   qecore-headless --session-type wayland --session-desktop gnome \
-     "bash -lc 'python3 .../wait_for_shell.py && exec behave .../features/ --format json.pretty --outfile /tmp/results/results.json'"
-   ```
-8. Repeats for `pytest` if `test_*.py` exist.
-9. SCPs `/tmp/results/` back, prints summary, exits non-zero on any failure.
+2. **You submit** `bluefin-qa-pipeline` or `dakota-qa-pipeline` (for example,
+   `just run-tests` or `just run-dakota-qa`).
+3. **Argo** starts `run-container-tests` on ghost's control-plane graphical seat,
+   where the published OCI image provides the nested systemd/Wayland session.
+4. The runner clones `projectbluefin/testsuite`, installs or verifies qecore,
+   behave, dogtail, pytest, and the Wayland input dependencies, then runs the
+   selected suite and writes structured results.
+5. Explicit VM-backed lanes use `run-gnome-tests` instead: the runner waits for
+   the ephemeral VM, uses SSH inside the cluster, and captures the same test
+   artifacts before teardown.
 
 **Important:** the readiness probe (`wait_for_shell.py`) runs inside the same
 `qecore-headless` session as `behave`, so `unsafe_mode` and AT-SPI state are guaranteed.
@@ -112,48 +107,37 @@ tests/
 
 ## 4. Submitting a Test Run
 
-### Fast path — persistent titan VMs (preferred for iterating on tests)
-
-| Command                    | What it runs                                | Approx. duration |
-|----------------------------|---------------------------------------------|------------------|
-| `just run-titan-smoke`     | `smoke` suite against `titan-bluefin` + `titan-lts` | ~5 min   |
-| `just run-titan-developer` | `developer` suite against both titans        | ~7 min          |
-| `just run-titan-software`  | `software` suite against both titans         | ~7 min          |
-
-Titans skip provisioning entirely. Dependency install is idempotent and skipped on
-re-runs.
-
-### Full pipeline (fresh VM, provisioning)
+### Container-only QA path (default for Bluefin and Dakota)
 
 | Command                          | Notes                                                         |
 |----------------------------------|---------------------------------------------------------------|
-| `just run-tests`                 | Smoke against `latest`.                                       |
-| `just run-tests-tag lts`         | Smoke against a specific tag.                                 |
-| `just run-tests-matrix`          | `latest` + `lts` in parallel.                                 |
-| `just run-developer-tests [tag]` | Smoke + developer on a fresh VM.                              |
-| `just run-software-tests [tag]`  | Smoke + developer + software on a fresh VM.                   |
+| `just run-tests`                 | Smoke against Bluefin `testing` in a container-only lane.     |
+| `just run-tests-tag lts-testing` | Smoke against Bluefin-LTS `testing`.                         |
+| `just run-tests-matrix`          | Bluefin `testing` and Bluefin-LTS `testing` in parallel.      |
+| `just run-dakota-qa`             | Dakota container-only suite fan-out against the published image. |
 
 ### Testing a PR branch without merging
 
-Set `BLUEFIN_TEST_BRANCH` so the runner's `git-sync` initContainer clones your branch:
+Set the `testsuite-branch` parameter so the runner's `git-sync` initContainer
+clones your testsuite branch:
 
 ```bash
-BLUEFIN_TEST_BRANCH=fix/clock-toggle-flake just run-titan-smoke
+argo submit --from workflowtemplate/bluefin-qa-pipeline \
+  -p testsuite-branch=fix/clock-toggle-flake -p suites=smoke -n argo --watch
 ```
 
 Or override per-submit:
 
 ```bash
-argo submit --from workflowtemplate/bluefin-titan-smoke \
-  -p vm-ip-latest=... -p vm-ip-lts=... -p branch=fix/clock-toggle-flake \
-  -p suite=smoke -n argo --watch
+argo submit --from workflowtemplate/bluefin-qa-pipeline \
+  -p testsuite-branch=fix/clock-toggle-flake -p suites=smoke -n argo --watch
 ```
 
 ### Filtering by behave tag
 
 ```bash
-argo submit --from workflowtemplate/bluefin-titan-smoke \
-  -p vm-ip-latest=... -p vm-ip-lts=... \
+argo submit --from workflowtemplate/run-container-tests \
+  --entrypoint run-container-tests -p suite=smoke \
   -p behave-tags="--tags @regression" -n argo --watch
 ```
 
@@ -389,8 +373,8 @@ The `a11y_app_name` is the AT-SPI registration. Confirmed names in this repo:
 | Podman Desktop | `Podman Desktop` (Flatpak)            |
 
 When in doubt, run a scenario that calls `Dump gnome-shell AT-SPI tree to results` — the
-output is written to `/tmp/results/atspi_tree.txt`, retrieved by SCP, and printed to the
-pod's stderr.
+output is written to `/tmp/results/atspi_tree.txt` and printed to the runner pod's stderr
+for collection from Argo logs.
 
 ### 6.7 Flatpak / Podman Desktop
 
@@ -506,16 +490,16 @@ than no test — it costs cluster time and trains agents to ignore red builds.
 6. **Regressions cite an issue.** Every `@regression` scenario carries a `@<repo>_<issue#>`
    tag and a comment referencing the upstream bug. This is how the project tracks coverage
    regressions over time and prevents test drift after a fix lands.
-7. **Tests must boot from a cold image.** Don't depend on state left by a previous scenario,
-   a previous run, or manual VM tweaks. Titan VMs are persistent for *speed*, not for
-   carrying state — the same scenario must pass on a fresh fully-provisioned VM
-   (`just run-tests`).
+7. **Tests must start from a clean image.** Don't depend on state left by a previous
+   scenario, a previous run, or manual environment tweaks. The same scenario must pass
+   in a fresh container-only QA run (`just run-tests`) and, when applicable, an
+   ephemeral VM-backed run.
 8. **Prove the negative.** When testing that an error dialog *doesn't* appear, write the
    detection with the same predicate you'd use to find it — don't just sleep and hope.
    Example: `assert not app.findChildren(lambda n: n.roleName == "dialog" and "error" in n.name.lower())`.
-9. **Verify on titan first, matrix second.** Iterating on a scenario? Use
-   `just run-titan-<suite>` (5 min). Only once green, re-run on a fresh VM with
-   `just run-tests` / `just run-tests-matrix` to catch first-boot races.
+9. **Verify container QA first, then VM lanes when applicable.** Iterate with the
+   container-only `bluefin-qa-pipeline` or `dakota-qa-pipeline`, then run the
+   relevant explicit KubeVirt lane to catch boot and first-session races.
 10. **Use `STABILITY=N`** (upstream qecore env var, §7.6) to prove a new scenario passes 10×
     in a row before merging anything tagged `@regression`. Flaky regressions erode trust
     immediately.
@@ -547,17 +531,13 @@ These are recognised by `TestSandbox.__init__` and `qecore-headless`. Pass them 
 | `QECORE_NO_CACHE=yes`          | Delete qecore cache on run start (forces fresh app registration).         |
 | `PRODUCTION=no`                | Disable HTML report embeds — useful when iterating locally.               |
 
-`STABILITY=10` is the de-facto pre-merge check for any new `@regression`. Submit via:
+Submit a targeted regression check with the supported `behave-tags` input:
 
 ```bash
-argo submit --from workflowtemplate/bluefin-titan-smoke \
-  -p vm-ip-latest=... -p vm-ip-lts=... \
-  -p behave-tags="--tags @my_new_regression" \
-  -p extra-env="STABILITY=10" -n argo --watch
+argo submit --from workflowtemplate/run-container-tests \
+  --entrypoint run-container-tests -p suite=smoke \
+  -p behave-tags="--tags @my_new_regression" -n argo --watch
 ```
-
-(If the workflow template doesn't expose the env var you need, add a passthrough rather
-than editing the runner ad-hoc — keep the GitOps contract.)
 
 ### 7.7 Useful `qecore-headless` flags
 
@@ -627,32 +607,14 @@ shape for new suites.
 2. **Look for `STEP_ERROR`** — `after_step` prints a full traceback for any errored step.
 3. **Inspect `/tmp/results/atspi_tree.txt`** — first smoke scenario writes it. Tells you
    which nodes exist and what their `roleName` / `name` actually are on this build.
-4. **Re-run with one scenario** via `behave-tags`:
+4. **Re-run with one scenario** via the container runner's `behave-tags` parameter:
    ```bash
-   argo submit --from workflowtemplate/bluefin-titan-smoke \
-     -p vm-ip-latest=... -p vm-ip-lts=... \
+   argo submit --from workflowtemplate/run-container-tests \
+     --entrypoint run-container-tests -p suite=smoke \
      -p behave-tags="--tags @bluefin_4612" -n argo --watch
    ```
-5. **In-cluster sanity** on a one-shot AT-SPI predicate (no workstation SSH — use a probe pod):
-   ```bash
-   # 1. Spin up a probe pod with the SSH key and wait for it to be Ready
-   kubectl run probe -n argo --image=quay.io/fedora/fedora:latest \
-     --overrides='{"spec":{"nodeSelector":{"kubernetes.io/hostname":"ghost"},"volumes":[{"name":"k","secret":{"secretName":"bluefin-test-ssh-key","defaultMode":384}}],"containers":[{"name":"probe","image":"quay.io/fedora/fedora:latest","command":["sleep","600"],"volumeMounts":[{"name":"k","mountPath":"/root/.ssh","readOnly":true}]}]}}'
-   kubectl wait -n argo pod/probe --for=condition=Ready --timeout=60s
-
-   # 2. Run the AT-SPI check from inside the probe pod
-   VM_IP=$(kubectl get vmi titan-bluefin -n bluefin-test -o jsonpath='{.status.interfaces[0].ipAddress}')
-   kubectl exec -n argo probe -- bash -c "
-     dnf install -y --quiet openssh-clients python3-pip 2>&1 | tail -2
-     pip install dogtail -q
-     ssh -o StrictHostKeyChecking=no -i /root/.ssh/id_ed25519 bluefin-test@${VM_IP} \
-       'qecore-headless --session-type wayland --session-desktop gnome \
-        \"python3 -c \\\"from dogtail.tree import root; shell=root.application(\\\\\\\"gnome-shell\\\\\\\"); print([(c.roleName,c.name) for c in shell.children[:20]])\\\"\"'
-   "
-
-   # 3. Clean up
-   kubectl delete pod -n argo probe
-   ```
+5. **For VM-backed lanes**, inspect the ephemeral VMI and the `run-gnome-tests`
+   pod logs from the same Argo workflow. Do not assume a persistent test VM exists.
 6. **Common root causes**, in order: stale dogtail kwarg, GNOME 50 INT_MIN toggle,
    missing `unsafe_mode`, app a11y name drift, qecore version variable rename
    (`command_stdout` vs `last_command_output`).
@@ -667,11 +629,11 @@ shape for new suites.
 3. Add a top-of-feature tag (`@<suite>_suite`) and per-area tags.
 4. Submit via:
    ```bash
-   argo submit --from workflowtemplate/bluefin-titan-smoke \
-     -p vm-ip-latest=... -p vm-ip-lts=... -p suite=<suite> -n argo --watch
+   argo submit --from workflowtemplate/run-container-tests \
+     --entrypoint run-container-tests -p suite=<suite> -n argo --watch
    ```
-5. Once green on titans, add a `just run-titan-<suite>` recipe and/or include the suite in
-   `bluefin-qa-pipeline` via the `suites=` param.
+5. Once green in the container runner, include the suite in `bluefin-qa-pipeline`
+   via the `suites=` parameter or in `dakota-qa-pipeline` as appropriate.
 6. If the suite needs an extra RPM/Flatpak in the VM, update the `verify_test_dependencies`
    block in `argo/workflow-templates/run-gnome-tests.yaml` so the install is idempotent.
 
@@ -686,7 +648,7 @@ shape for new suites.
       details (child indices, CSS classes).
 - [ ] `@regression` scenarios cite a real issue with `@<repo>_<issue#>`.
 - [ ] Scenario passes from a cold image, not just on a re-run.
-- [ ] New `@regression` proven stable via `STABILITY=10` (§7.6).
+- [ ] New `@regression` validated with the targeted `behave-tags` check (§7.6).
 
 **Mechanics:**
 - [ ] Every GUI scenario starts with `* GNOME Shell is accessible via AT-SPI`.
@@ -701,8 +663,8 @@ shape for new suites.
 
 **Validation:**
 - [ ] `just lint` passes.
-- [ ] Validated on titan VMs (`just run-titan-<suite>`).
-- [ ] Validated on a fresh VM (`just run-tests` or matrix) before requesting review.
+- [ ] Validated in a fresh container-only run (`just run-tests` or `just run-dakota-qa`).
+- [ ] Validated on an explicit fresh VM lane when the scenario depends on VM boot behavior.
 
 ---
 
@@ -774,11 +736,11 @@ Mitigations applied:
 2. In any step that traverses the AT-SPI tree (especially overview search), catch
    `"does not exist"` / `"atspi_error"` exceptions and retry (up to ~6×, 2 s delay).
 
-**Headless sessions have no monitor output — test extension *state*, not visual actors.**
-`qecore-headless` sessions run without a physical or virtual display. Extensions that depend on
-a monitor to create visual actors (Dash to Dock dock actors, App Indicators panel statusArea
-actors) will never create those actors. Assertions that check dock actor count or panel children
-will always fail.
+**Headless sessions do not guarantee monitor-backed actors — test extension *state* first.**
+The container runner uses ghost's control-plane graphical seat, while `qecore-headless`
+manages the nested session. Extensions that depend on monitor output to create visual actors
+(Dash to Dock dock actors, App Indicators panel statusArea actors) may still omit those actors.
+Assertions that check dock actor count or panel children must therefore be conditional.
 
 Correct assertion pattern for headless extension coverage:
 ```python
@@ -804,12 +766,12 @@ kubectl annotate application lab -n argocd argocd.argoproj.io/refresh=normal --o
 Then verify `kubectl get application lab -n argocd -o jsonpath='{.status.sync.revision}'`
 matches your commit SHA before submitting a workflow.
 
-**Fresh titan disks have no default browser configured.**
+**Fresh VM disks have no default browser configured.**
 `xdg-settings get default-web-browser`, `xdg-mime query default x-scheme-handler/http`, and
-GIO all return empty on a titan VM that has never had a user-interactive browser session.
+GIO all return empty on a VM that has never had a user-interactive browser session.
 Flatpak Firefox is not pre-deployed to `/var/lib/flatpak/exports/share/applications/` on the
-base disk. Do not write scenarios that depend on a configured default browser unless the titan
-disk setup explicitly configures one.
+base disk. Do not write scenarios that depend on a configured default browser unless the
+VM image setup explicitly configures one.
 
 ---
 

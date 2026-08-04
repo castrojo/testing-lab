@@ -7,6 +7,7 @@ metadata:
     - /helm/helm
     - /k3s-io/k3s
     - /project-zot/zot
+    - /websites/prometheus_io
     - /external-secrets/external-secrets
     - /k8sgpt-ai/k8sgpt
     - /apache/buildstream
@@ -28,7 +29,9 @@ metadata:
 ## Core Process
 
 1. Resolve tool/library docs in Context7 first (kubectl/k3s/K8sGPT/BuildStream as needed).
-2. Prefer `just` recipes, then `kubectl`/`argo`, then host SSH only when k8s API cannot do it.
+2. Prefer `just` recipes, then `kubectl`/`argo` and other API-driven operations.
+   Host-level work is private maintainer maintenance; never use workstation SSH
+   to `ghost` or `exo-0` from the public agent path.
 3. For BST lanes, configure local and upstream cache fallback in workflow configs:
    - never configure external cache credentials/keys in cluster workflows
    - set `override-project-caches: false` to allow the project's own upstream caches (for example Freedesktop SDK and GNOME OS) to be used as read-only fallbacks, preventing extremely slow, full OS recompilations of basic bootstrap toolchains.
@@ -65,6 +68,36 @@ to zero.
 `manifests/prometheus-lightweight.yaml` is the lab's backend-only metrics
 service. Keep it as a single `ClusterIP` deployment: do not add an ingress,
 Grafana, Prometheus Operator, or another cluster dashboard.
+
+### External traffic report
+
+For a rolling boundary-traffic view, port-forward Prometheus and run:
+
+```bash
+kubectl -n kube-system port-forward svc/prometheus 9090:9090
+just traffic-report
+```
+
+The report uses cAdvisor's node-root counters on the physical `enp191s0`
+uplink. It intentionally excludes pod interfaces, `cni0`, USB4, and Tailscale
+traffic. Zot pull counters are included as a ranked image-repository activity
+signal, but Zot does not expose per-repository byte totals; do not present
+those counts as bandwidth.
+
+`traffic_report.py` also ranks workload counters when cAdvisor exposes
+Kubernetes namespace/pod/container labels. These are still interface totals,
+not network-flow records: the current cAdvisor stack has no remote
+address/port or destination-service labels. Do not infer destination traffic
+from them. Safe destination reporting requires a separately bounded eBPF or
+flow exporter and an explicit allowlisted scrape job.
+
+GitHub request and throttle sections are optional hooks. An exporter may be
+scraped only by annotating its pod with `prometheus.io/scrape: "true"`,
+`prometheus.io/port`, and
+`lab.projectbluefin.io/metrics: github-api`; it must expose bounded
+`github_api_requests_total` and `github_api_throttled_total` counters without
+tokens, URLs containing credentials, request payloads, or unbounded workflow
+labels. The lab does not deploy that exporter or collect GitHub secrets.
 
 - Storage is a `local-path` RWO PVC. The Deployment uses zero-surge rolling
   updates (`maxSurge: 0`, `maxUnavailable: 1`) so two pods never contend for
@@ -171,7 +204,7 @@ Do not guess flags, chart schema, or MCP method names. The K8sGPT MCP server exp
 ## Verification
 
 - [ ] `just lint` passes after any WorkflowTemplate change.
-- [ ] ArgoCD reports `Synced` for `testing-lab` after the push.
+- [ ] ArgoCD reports `Synced` for `lab` after the push.
 - [ ] The submitted build pod is scheduler-admitted without a node selector:
       `kubectl get pod -n argo <pod> -o jsonpath='{.spec.nodeName}'` returns
       a Ready node with adequate allocatable resources.

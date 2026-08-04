@@ -11,7 +11,11 @@
 > - [`/AGENTS.md`](/AGENTS.md) — hard policy and tenets
 
 > [!NOTE]
-> **CLI-first.** Tool hierarchy: `just` (lifecycle recipes) → `argo`/`kubectl` (cluster ops) → `ssh core@<control-plane>` (OS-level only).
+> **CLI/API-first.** Tool hierarchy: `just` (lifecycle recipes) → `argo`/`kubectl`
+> (cluster ops). Routine/public-agent SSH is limited to workflow/probe pods
+> connecting to explicit test VMs. Retained host-maintenance SSH is
+> operator-only through an approved private channel; never use workstation SSH
+> to administer `ghost` or `exo-0`.
 > MCP tools are optional — never block on them. One bash call beats a tool search + MCP roundtrip every time.
 
 ## 1. Command selector — what should I run?
@@ -148,10 +152,10 @@ Per-template ceilings live in [`/AGENTS.md`](/AGENTS.md) under **Resource Limits
 
 **Trigger an ArgoCD sync:**
 ```bash
-KUBECONFIG=~/.kube/bluespeed.yaml kubectl -n argocd annotate application lab \
+KUBECONFIG=~/.kube/bluespeed.yaml kubectl -n argocd annotate application testing-lab \
   argocd.argoproj.io/refresh=normal --overwrite
 # or via argocd CLI:
-argocd app sync lab
+argocd app sync testing-lab
 ```
 
 **If the local ArgoCD port-forward drops**, restart it and verify the health endpoint
@@ -163,14 +167,14 @@ curl -sf http://127.0.0.1:18080/healthz
 
 **Read ArgoCD Application state:**
 ```bash
-KUBECONFIG=~/.kube/bluespeed.yaml kubectl get application lab-infra -n argocd \
+KUBECONFIG=~/.kube/bluespeed.yaml kubectl get application testing-lab-infra -n argocd \
   -o jsonpath='{.status.sync.status} {.status.health.status}'
 ```
 Key fields: `.status.operationState.phase`, `.status.sync.status`, `.status.operationState.message`, `.status.operationState.operation.sync.revision`
 
 **Cancel a stuck operation** (PreSync hook looping):
 ```bash
-KUBECONFIG=~/.kube/bluespeed.yaml kubectl patch application lab -n argocd \
+KUBECONFIG=~/.kube/bluespeed.yaml kubectl patch application testing-lab -n argocd \
   --type=json -p='[{"op":"remove","path":"/operation"}]'
 ```
 
@@ -180,11 +184,11 @@ KUBECONFIG=~/.kube/bluespeed.yaml kubectl patch application lab -n argocd \
    -> if not: push first.
 
 2. just argocd-status
-   -> expected: `lab` is synced to a revision that matches or post-dates your commit.
+   -> expected: `testing-lab` is synced to a revision that matches or post-dates your commit.
    -> if older: just argocd-sync
 
 3. just argocd-status
-   -> expected: `lab` is Healthy.
+   -> expected: `testing-lab` is Healthy.
    -> if not Healthy: inspect the reported condition, fix the rejected field in git, push again, then repeat step 2.
 
 4. argo template get -n argo <name>
@@ -364,7 +368,7 @@ Expected steady state:
 
 ## 13. llm-d local inference node
 
-`llm-d` is managed by the `lab-infra` ArgoCD Application (`manifests/llm-d.yaml`) and is **enabled by default** with one replica.
+`llm-d` is managed by the `testing-lab-infra` ArgoCD Application (`manifests/llm-d.yaml`) and is **enabled by default** with one replica.
 The vLLM container requests one `amd.com/gpu` device so the ROCm device plugin exposes the GPU into the pod.
 
 **Model choice:** the deployment serves `unsloth/Llama-3.2-3B-Instruct` through vLLM on the OpenAI-compatible endpoint at `http://<ghost-ip>:30800/v1`.
@@ -392,13 +396,20 @@ kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=1
 2. Memory fits: ghost has ~62.5Gi allocatable; the manifest requests 16Gi/24Gi and 1 GPU. Check for other large pods consuming RAM if you see `Insufficient memory`.
 
 **If k3s is down** (kubectl returns "connection refused"):
-k3s can stop after host sleep/resume. Recovery:
+k3s can stop after host sleep/resume. Do not recover it with workstation SSH.
+Host-service recovery is a private maintainer procedure; escalate through the
+approved operator channel. Once the API returns, delete the
+`amdgpu-device-plugin` pod through Kubernetes so it re-registers with the
+current kubelet socket:
 ```bash
-ssh core@<control-plane> "sudo systemctl start k3s"
+kubectl delete pod -n kube-system -l app.kubernetes.io/name=amdgpu-device-plugin
 ```
-After restart, delete the `amdgpu-device-plugin` pod so it re-registers with the new kubelet socket.
 
-**kubelet device-plugin socket path:** `/var/lib/kubelet/device-plugins/kubelet.sock` (standard path — NOT the rancher/k3s path). Verify with: `ssh core@<control-plane> "sudo ss -lx | grep kubelet"`.
+Verify device-plugin health through the API:
+```bash
+kubectl get daemonset amdgpu-device-plugin -n kube-system
+kubectl get node exo-0 -o jsonpath='{.status.allocatable.amd\.com/gpu}{"\n"}'
+```
 
 **If pod is CrashLoopBackOff:** Check the container logs first:
 ```bash
@@ -416,15 +427,21 @@ The model will be cached in the pod's `emptyDir` at `/root/.cache/huggingface` u
 
 ## 14. Node onboarding — adding a worker to the cluster
 
+> [!CAUTION]
+> Node onboarding is a private maintainer/operator procedure, not a routine
+> agent recipe. Never retrieve a join token with workstation SSH to `ghost` or
+> `exo-0`; a maintainer must provision the token through an approved secure
+> channel. The commands below run on the new node or through the Kubernetes API.
+
 All nodes in this cluster run image-based, atomic operating systems (Bluefin, Dakota, Bazzite — ostree-based).
 `/usr/local/bin` is a symlink to `/var/usrlocal/bin` (the writable overlay). The k3s install
 script must be told to use this path or it fails on a fresh system.
 
-### Get the join token (run from ghost or this workstation)
+### Provision the join token
 
-```bash
-ssh core@<control-plane-ip> "sudo cat /var/lib/rancher/k3s/server/node-token"
-```
+The k3s join token is a host secret. A maintainer provisions it through the
+approved private enrollment process; do not copy it from a cluster node with
+workstation SSH.
 
 ### Bootstrap a new worker node (run ON the new node, with sudo)
 

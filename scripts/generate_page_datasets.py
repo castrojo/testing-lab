@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 REPO_SLUG = 'projectbluefin/lab'
@@ -26,6 +29,12 @@ SUITE_ROLES = {
 
 TEST_RUNS_HISTORY_PATH = Path('docs/data/history/test-runs.ndjson')
 TEST_RUNS_HISTORY_DAYS = 180
+QA_RUNS_HISTORY_PATH = Path('docs/data/history/qa-runs.ndjson')
+# A completed QA result older than this is retained as history, but cannot
+# describe the current state of its (variant, branch, suite) cell.
+QA_RUN_FRESHNESS_HOURS = 24
+MAX_FAILED_SCENARIOS = 20
+SAFE_SCENARIO_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9 .,:;()/_+-]{0,159}$')
 
 ENROLLMENT_ISSUES_PATH = Path('docs/data/enrollment-issues.json')
 
@@ -48,13 +57,291 @@ def pages_url(relative_path: str) -> str:
 
 
 def normalize_result_source_url(relative_path: str, result: dict) -> str:
-    return result.get('source_url') or repo_blob_url(f'docs/{relative_path}')
+    return (
+        public_evidence_url(result.get('source_url'))
+        or repo_blob_url(f'docs/{relative_path}')
+    )
 
 
 def row_state(last_run: str | None) -> tuple[str, str | None]:
     if last_run:
         return 'available', None
     return 'unavailable', 'Result file exists, but no completed run is published for this matrix cell yet.'
+
+
+def parse_utc_timestamp(value: object) -> datetime | None:
+    """Parse a public RFC3339 timestamp without guessing a timezone."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def public_evidence_url(value: object) -> str | None:
+    """Accept only static public URLs; Argo endpoints are never Pages evidence."""
+    if not isinstance(value, str):
+        return None
+    parsed = urlparse(value)
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme != 'https'
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or port not in (None, 443)
+    ):
+        return None
+    hostname = parsed.hostname.lower()
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        address = None
+    if address is not None:
+        # Keep this explicit even though the allowlist below also rejects IP
+        # literals: it covers loopback, private, link-local, and other
+        # non-global address forms without relying on spelling.
+        if not address.is_global:
+            return None
+        return None
+    if hostname not in {
+        'github.com',
+        'raw.githubusercontent.com',
+        'factory.projectbluefin.io',
+        'projectbluefin.github.io',
+    }:
+        return None
+    return value
+
+
+def load_qa_run_records(root: Path) -> list[dict]:
+    """Load immutable QA workflow snapshots, ignoring malformed history lines."""
+    path = root / QA_RUNS_HISTORY_PATH
+    if not path.exists():
+        return []
+    records = []
+    for line in path.read_text(encoding='utf-8').splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(record, dict)
+            and record.get('schema_version') == '1.0'
+            and record.get('plane') == 'lab'
+            and record.get('record_type') == 'qa-run'
+        ):
+            records.append(record)
+    return records
+
+
+def qa_run_key(record: dict) -> tuple[str, str, str] | None:
+    """Return an exact, branch-safe matrix key for a single-suite QA snapshot."""
+    lane = record.get('lane')
+    if not isinstance(lane, dict) or lane.get('state') != 'available':
+        return None
+    variant, branch, suite = lane.get('variant'), lane.get('branch'), lane.get('suite')
+    if not all(isinstance(value, str) and value for value in (variant, branch, suite)):
+        return None
+    # A Workflow that executes "smoke,system" is useful workflow evidence, but
+    # it cannot honestly be allocated to either suite without per-suite output.
+    if ',' in suite:
+        return None
+    return variant, branch, suite
+
+
+def qa_run_event_time(record: dict) -> datetime | None:
+    lifecycle = record.get('lifecycle')
+    if not isinstance(lifecycle, dict):
+        return None
+    if lifecycle.get('state') == 'terminal':
+        return parse_utc_timestamp(lifecycle.get('finished_at'))
+    return parse_utc_timestamp(record.get('observed_at'))
+
+
+def qa_run_snapshot_priority(record: dict) -> tuple[int, datetime]:
+    lifecycle = record.get('lifecycle') if isinstance(record.get('lifecycle'), dict) else {}
+    return (
+        1 if lifecycle.get('state') == 'terminal' else 0,
+        qa_run_event_time(record) or datetime.min.replace(tzinfo=timezone.utc),
+    )
+
+
+def terminal_status(record: dict) -> str | None:
+    lifecycle = record.get('lifecycle')
+    if not isinstance(lifecycle, dict) or lifecycle.get('state') != 'terminal':
+        return None
+    return 'passed' if lifecycle.get('phase') == 'Succeeded' else 'failed'
+
+
+def failed_scenarios(record: dict) -> list[str] | None:
+    """Read only bounded scenario names explicitly published in result evidence."""
+    artifacts = record.get('artifacts')
+    results = artifacts.get('results') if isinstance(artifacts, dict) else None
+    if not isinstance(results, dict) or results.get('state') != 'available':
+        return None
+    values = results.get('failed_scenarios') if isinstance(results, dict) else None
+    if (
+        not isinstance(values, list)
+        or len(values) > MAX_FAILED_SCENARIOS
+        or len(values) != len(set(values))
+        or not all(
+            isinstance(value, str)
+            and SAFE_SCENARIO_NAME.fullmatch(value)
+            and not any(
+                secret in value.lower()
+                for secret in ('token', 'password', 'secret', 'authorization')
+            )
+            for value in values
+        )
+    ):
+        return None
+    return values
+
+
+def derive_qa_run_cells(records: list[dict], collected_at: str) -> dict[tuple[str, str, str], dict]:
+    """Derive current and historical suite evidence from immutable snapshots."""
+    collected = parse_utc_timestamp(collected_at)
+    if not collected:
+        raise ValueError('collected_at must be a timezone-qualified ISO8601 timestamp')
+    by_key: dict[tuple[str, str, str], dict[str, dict]] = {}
+    for record in records:
+        key = qa_run_key(record)
+        workflow_uid = record.get('workflow_uid')
+        lifecycle = record.get('lifecycle')
+        if (
+            not key
+            or not isinstance(workflow_uid, str)
+            or not isinstance(record.get('workflow_name'), str)
+            or not isinstance(lifecycle, dict)
+            or not qa_run_event_time(record)
+        ):
+            continue
+        by_key.setdefault(key, {})
+        prior = by_key[key].get(workflow_uid)
+        if prior is None or qa_run_snapshot_priority(record) > qa_run_snapshot_priority(prior):
+            by_key[key][workflow_uid] = record
+
+    derived = {}
+    for key, runs_by_uid in by_key.items():
+        runs = sorted(runs_by_uid.values(), key=qa_run_event_time)
+        current = runs[-1]
+        lifecycle = current['lifecycle']
+        event_time = qa_run_event_time(current)
+        current_terminal_status = terminal_status(current)
+        age_hours = (collected - event_time).total_seconds() / 3600
+        if lifecycle.get('state') != 'terminal':
+            evidence_state = 'running' if age_hours <= QA_RUN_FRESHNESS_HOURS else 'stale'
+            state_reason = (
+                'Workflow is still running; terminal result evidence is not published.'
+                if evidence_state == 'running' else
+                f'Workflow is still non-terminal and was last observed more than {QA_RUN_FRESHNESS_HOURS} hours ago.'
+            )
+        elif age_hours > QA_RUN_FRESHNESS_HOURS:
+            evidence_state = 'stale'
+            state_reason = (
+                f'Latest terminal QA evidence is older than the {QA_RUN_FRESHNESS_HOURS}-hour freshness threshold.'
+            )
+        else:
+            evidence_state = current_terminal_status
+            state_reason = None
+
+        terminal_runs = [run for run in runs if terminal_status(run)]
+        failure_streak = 0
+        for run in reversed(terminal_runs):
+            if terminal_status(run) != 'failed':
+                break
+            failure_streak += 1
+        scenario_runs = [failed_scenarios(run) for run in terminal_runs]
+        scenario_evidence_available = any(values is not None for values in scenario_runs)
+        repeated = {}
+        if scenario_evidence_available:
+            for scenarios in scenario_runs:
+                for scenario in scenarios or []:
+                    repeated[scenario] = repeated.get(scenario, 0) + 1
+
+        artifacts = current.get('artifacts') if isinstance(current.get('artifacts'), dict) else {}
+        image = current.get('image') if isinstance(current.get('image'), dict) else {}
+        provenance = current.get('provenance') if isinstance(current.get('provenance'), dict) else {}
+        results_artifact = artifacts.get('results')
+        screenshot_artifact = artifacts.get('screenshot')
+        source_url = public_evidence_url(provenance.get('source_url'))
+        if not source_url:
+            # Invalid evidence is not promoted into the page contract.
+            evidence_state = 'unavailable'
+            state_reason = 'QA snapshot has no static public evidence URL.'
+        history = []
+        for run in runs:
+            run_lifecycle = run['lifecycle']
+            run_image = run.get('image') if isinstance(run.get('image'), dict) else {}
+            history.append(
+                {
+                    'workflow_uid': run['workflow_uid'],
+                    'workflow_name': run['workflow_name'],
+                    'state': terminal_status(run) or 'running',
+                    'phase': run_lifecycle.get('phase'),
+                    'started_at': run_lifecycle.get('started_at'),
+                    'finished_at': run_lifecycle.get('finished_at'),
+                    'observed_at': run.get('observed_at'),
+                    'image_ref': run_image.get('reference'),
+                    'digest': run_image.get('digest'),
+                    'source_url': public_evidence_url(
+                        (run.get('provenance') or {}).get('source_url')
+                    ),
+                }
+            )
+        derived[key] = {
+            'evidence_state': evidence_state,
+            'state_reason': state_reason,
+            'terminal_status': current_terminal_status,
+            'workflow_name': current.get('workflow_name'),
+            'workflow_uid': current.get('workflow_uid'),
+            'started_at': lifecycle.get('started_at'),
+            'finished_at': lifecycle.get('finished_at'),
+            'observed_at': current.get('observed_at'),
+            'image_ref': image.get('reference'),
+            'digest': image.get('digest'),
+            'image_state': image.get('state', 'unavailable'),
+            'results_evidence': (
+                {
+                    key: results_artifact.get(key)
+                    for key in ('state', 'state_reason')
+                }
+                if isinstance(results_artifact, dict) else None
+            ),
+            'screenshot_evidence': (
+                {
+                    key: screenshot_artifact.get(key)
+                    for key in ('state', 'state_reason')
+                }
+                if isinstance(screenshot_artifact, dict) else None
+            ),
+            'source_url': source_url,
+            'history': history,
+            'runs_recorded': len(runs),
+            'terminal_failure_streak': failure_streak,
+            'repeated_failed_scenarios': [
+                {'scenario': scenario, 'failed_runs': count}
+                for scenario, count in sorted(repeated.items())
+                if count >= 2
+            ],
+            'repeated_failed_scenarios_state': (
+                'available' if scenario_evidence_available else 'unavailable'
+            ),
+            'repeated_failed_scenarios_reason': (
+                None if scenario_evidence_available else
+                'Canonical QA snapshots do not publish scenario-level failure names for these runs.'
+            ),
+            'evidence_source': 'qa-run-v1',
+        }
+    return derived
 
 
 # testsuite renamed its "system" contract-check directory to "lifecycle"; the Argo
@@ -454,6 +741,7 @@ def build_tests_matrix(root: Path, collected_at: str) -> dict:
     results_by_path = load_results_by_relative_path(root)
     enrollment = load_enrollment_issues(root)
     surface_cells = list(iter_surface_cells(root))
+    qa_cells = derive_qa_run_cells(load_qa_run_records(root), collected_at)
     rows = []
     variants = set()
     branches = set()
@@ -469,50 +757,154 @@ def build_tests_matrix(root: Path, collected_at: str) -> dict:
             continue
         relative_results_path = cell['results_path']
         result = results_by_path.get(relative_results_path, {})
-        last_run = result.get('last_run')
-        state, state_reason = row_state(last_run)
-        scenarios_total = result.get('scenarios', 0)
-        scenarios_failed = result.get('failed', 0)
-        pass_rate = None
-        if scenarios_total:
-            pass_rate = round(((scenarios_total - scenarios_failed) / scenarios_total) * 100, 2)
-        screenshot_path = cell.get('screenshot_path')
-        screenshot_url = result.get('screenshot_url')
-        if not screenshot_url and screenshot_path:
-            screenshot_url = pages_url(screenshot_path)
-        flake_flips, runs_recorded = _row_flake_signal(result)
-
-        rows.append(
-            {
-                'id': f'{variant}-{branch}-{suite}',
-                'variant': variant,
-                'branch': branch,
-                'suite': suite,
-                'role': SUITE_ROLES.get(suite, 'info'),
-                'result_status': result.get('status', 'missing'),
-                'last_run': last_run,
-                'workflow_name': result.get('workflow_name'),
-                'digest': result.get('digest'),
-                'scenarios_total': scenarios_total,
-                'scenarios_failed': scenarios_failed,
-                'pass_rate': pass_rate,
-                'history_points': len(result.get('history', [])),
-                'results_path': relative_results_path,
-                'screenshot_path': screenshot_path,
-                'screenshot_url': screenshot_url,
-                'state': state,
-                'state_reason': state_reason,
-                'enrollment_issue_url': None,
-                'flake_flips': flake_flips,
-                'runs_recorded': runs_recorded,
-                'source_url': normalize_result_source_url(relative_results_path, result),
-                'collected_at': collected_at,
-                'derivation': (
-                    f'Join docs/data/test-surface.json row with docs/{relative_results_path}; '
-                    'compute pass_rate when scenarios_total > 0; attach suite role and flake metrics.'
-                ),
-            }
-        )
+        qa_cell = qa_cells.get((variant, branch, suite))
+        if qa_cell:
+            terminal_history = [
+                entry['state'] for entry in qa_cell['history']
+                if entry['state'] in ('passed', 'failed')
+            ]
+            flake_flips = sum(
+                1 for index in range(1, len(terminal_history))
+                if terminal_history[index - 1] != terminal_history[index]
+            )
+            compatibility_state = (
+                'available'
+                if qa_cell['evidence_state'] in ('passed', 'failed', 'stale')
+                else 'unavailable'
+            )
+            compatibility_reason = (
+                None if compatibility_state == 'available' else qa_cell['state_reason']
+            )
+            rows.append(
+                {
+                    'id': f'{variant}-{branch}-{suite}',
+                    'variant': variant,
+                    'branch': branch,
+                    'suite': suite,
+                    'role': SUITE_ROLES.get(suite, 'info'),
+                    # These five fields are a compatibility projection for
+                    # existing static page consumers. New consumers must use
+                    # evidence_state, timestamps, and run_history below.
+                    'state': compatibility_state,
+                    'state_reason': compatibility_reason,
+                    'result_status': qa_cell['terminal_status'] or 'pending',
+                    'last_run': qa_cell['finished_at'],
+                    'workflow_name': qa_cell['workflow_name'],
+                    'scenarios_total': None,
+                    'scenarios_failed': None,
+                    'pass_rate': None,
+                    'history_points': len(qa_cell['history']),
+                    'results_path': None,
+                    'screenshot_path': None,
+                    'screenshot_url': None,
+                    'enrollment_issue_url': None,
+                    'flake_flips': flake_flips,
+                    'runs_recorded': qa_cell['runs_recorded'],
+                    'evidence_state': qa_cell['evidence_state'],
+                    'evidence_state_reason': qa_cell['state_reason'],
+                    'started_at': qa_cell['started_at'],
+                    'finished_at': qa_cell['finished_at'],
+                    'observed_at': qa_cell['observed_at'],
+                    'workflow_uid': qa_cell['workflow_uid'],
+                    'image_ref': qa_cell['image_ref'],
+                    'digest': qa_cell['digest'],
+                    'image_state': qa_cell['image_state'],
+                    'results_evidence': qa_cell['results_evidence'],
+                    'screenshot_evidence': qa_cell['screenshot_evidence'],
+                    'terminal_failure_streak': qa_cell['terminal_failure_streak'],
+                    'repeated_failed_scenarios': qa_cell['repeated_failed_scenarios'],
+                    'repeated_failed_scenarios_state': qa_cell['repeated_failed_scenarios_state'],
+                    'repeated_failed_scenarios_reason': qa_cell['repeated_failed_scenarios_reason'],
+                    'run_history': qa_cell['history'],
+                    'evidence_source': qa_cell['evidence_source'],
+                    'compatibility': {
+                        'contract': 'tests-matrix-v2',
+                        'reason': 'Legacy page consumers read state/result_status/last_run; canonical state is evidence_state.',
+                        'legacy_results_path': relative_results_path,
+                    },
+                    'source_url': qa_cell['source_url'],
+                    'collected_at': collected_at,
+                    'derivation': (
+                        'Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), '
+                        'collapse lifecycle snapshots by workflow_uid, then derive current state from '
+                        f'the latest run and the {QA_RUN_FRESHNESS_HOURS}-hour freshness threshold.'
+                    ),
+                }
+            )
+        else:
+            # Legacy result files remain only as a documented projection while
+            # QA workflows are enrolled in qa-run-v1. They cannot supply exact
+            # start/finish time, immutable run identity, or public artifact metadata.
+            last_run = result.get('last_run')
+            state, state_reason = row_state(last_run)
+            scenarios_total = result.get('scenarios', 0)
+            scenarios_failed = result.get('failed', 0)
+            pass_rate = None
+            if scenarios_total:
+                pass_rate = round(((scenarios_total - scenarios_failed) / scenarios_total) * 100, 2)
+            screenshot_path = cell.get('screenshot_path')
+            screenshot_url = public_evidence_url(result.get('screenshot_url'))
+            flake_flips, runs_recorded = _row_flake_signal(result)
+            rows.append(
+                {
+                    'id': f'{variant}-{branch}-{suite}',
+                    'variant': variant,
+                    'branch': branch,
+                    'suite': suite,
+                    'role': SUITE_ROLES.get(suite, 'info'),
+                    'result_status': result.get('status', 'missing'),
+                    'last_run': last_run,
+                    'workflow_name': result.get('workflow_name'),
+                    'digest': result.get('digest'),
+                    'scenarios_total': scenarios_total,
+                    'scenarios_failed': scenarios_failed,
+                    'pass_rate': pass_rate,
+                    'history_points': len(result.get('history', [])),
+                    'results_path': relative_results_path,
+                    'screenshot_path': screenshot_path,
+                    'screenshot_url': screenshot_url,
+                    'state': state,
+                    'state_reason': state_reason,
+                    'enrollment_issue_url': None,
+                    'flake_flips': flake_flips,
+                    'runs_recorded': runs_recorded,
+                    'evidence_state': 'unavailable',
+                    'evidence_state_reason': (
+                        'No exact single-suite immutable qa-run-v1 evidence is published for this cell; '
+                        'legacy result projection is retained for existing dashboard consumers.'
+                    ),
+                    'started_at': None,
+                    'finished_at': None,
+                    'observed_at': None,
+                    'workflow_uid': None,
+                    'image_ref': None,
+                    'image_state': 'unavailable',
+                    'results_evidence': None,
+                    'screenshot_evidence': {
+                        'state': 'available' if screenshot_url else 'unavailable',
+                        'state_reason': None if screenshot_url else 'No static public screenshot evidence URL is published.',
+                    },
+                    'terminal_failure_streak': None,
+                    'repeated_failed_scenarios': [],
+                    'repeated_failed_scenarios_state': 'unavailable',
+                    'repeated_failed_scenarios_reason': (
+                        'Legacy result projections are not immutable QA-run records.'
+                    ),
+                    'run_history': [],
+                    'evidence_source': 'legacy-results-v1',
+                    'compatibility': {
+                        'contract': 'tests-matrix-v2',
+                        'reason': 'Legacy result projection until exact qa-run-v1 evidence is published.',
+                        'legacy_results_path': relative_results_path,
+                    },
+                    'source_url': normalize_result_source_url(relative_results_path, result),
+                    'collected_at': collected_at,
+                    'derivation': (
+                        f'Compatibility projection from docs/{relative_results_path}; it is not immutable '
+                        'qa-run-v1 evidence and therefore does not populate exact lifecycle fields.'
+                    ),
+                }
+            )
         variants.add(variant)
         branches.add(branch)
         suites.add(suite)
@@ -523,7 +915,7 @@ def build_tests_matrix(root: Path, collected_at: str) -> dict:
     # Uniformly emit unavailable rows for every unenrolled variant x suite.
     enrollment_reason = 'Not enrolled in the QA pipeline yet; tracking issue open.'
     for variant, details in sorted(enrollment.items()):
-        issue_url = details.get('issue_url')
+        issue_url = public_evidence_url(details.get('issue_url'))
         for suite in sorted(suites):
             rows.append(
                 {
@@ -548,6 +940,30 @@ def build_tests_matrix(root: Path, collected_at: str) -> dict:
                     'enrollment_issue_url': issue_url,
                     'flake_flips': 0,
                     'runs_recorded': 0,
+                    'evidence_state': 'unavailable',
+                    'evidence_state_reason': enrollment_reason,
+                    'started_at': None,
+                    'finished_at': None,
+                    'observed_at': None,
+                    'workflow_uid': None,
+                    'image_ref': None,
+                    'image_state': 'unavailable',
+                    'results_evidence': None,
+                    'screenshot_evidence': {
+                        'state': 'unavailable',
+                        'state_reason': enrollment_reason,
+                    },
+                    'terminal_failure_streak': None,
+                    'repeated_failed_scenarios': [],
+                    'repeated_failed_scenarios_state': 'unavailable',
+                    'repeated_failed_scenarios_reason': enrollment_reason,
+                    'run_history': [],
+                    'evidence_source': 'none',
+                    'compatibility': {
+                        'contract': 'tests-matrix-v2',
+                        'reason': 'No legacy or canonical result exists because this variant is not enrolled.',
+                        'legacy_results_path': None,
+                    },
                     'source_url': issue_url or repo_blob_url('docs/data/enrollment-issues.json'),
                     'collected_at': collected_at,
                     'derivation': (
@@ -559,21 +975,29 @@ def build_tests_matrix(root: Path, collected_at: str) -> dict:
             variants.add(variant)
             branches.add('testing')
 
-    # Seed/append the rolling test-runs history from every result file we joined.
-    appended_history = append_test_runs_history(root, results_by_path, surface_cells, collected_at)
-
-    completed_rows = [row for row in rows if row['state'] == 'available']
+    completed_rows = [
+        row for row in rows
+        if (
+            row['evidence_source'] == 'qa-run-v1'
+            and row['evidence_state'] in ('passed', 'failed')
+        ) or (
+            row['evidence_source'] == 'legacy-results-v1'
+            and row.get('last_run')
+            and row.get('result_status') in ('passed', 'failed')
+        )
+    ]
     unavailable_rows = [row for row in rows if row['state'] == 'unavailable']
     flaky_rows = [row for row in rows if row.get('flake_flips', 0) >= 2]
+    qa_run_rows = [row for row in rows if row['evidence_source'] == 'qa-run-v1']
 
     return {
-        'schema_version': 'v2',
+        'schema_version': 'v3',
         '_meta': {
             'page': 'tests',
             'description': (
                 'Collector-derived contract for the multipage tests matrix view. '
-                'Schema v2 adds suite_roles, unenrolled variant rows, flake metrics, '
-                'and git-tracked test-runs.ndjson history.'
+                'Schema v3 derives branch-safe current and historical lifecycle evidence from immutable '
+                'qa-run-v1 snapshots, with a deliberate legacy result compatibility projection.'
             ),
             'generated_at': collected_at,
             'starter_artifact': False,
@@ -600,7 +1024,7 @@ def build_tests_matrix(root: Path, collected_at: str) -> dict:
                 'state_reason': None,
                 'source_url': repo_blob_url('docs/results'),
                 'collected_at': collected_at,
-                'derivation': 'Count matrix rows whose joined docs/results/*.json file has last_run set.',
+                'derivation': 'Count fresh terminal qa-run-v1 rows and legacy rows with a completed passed/failed result; exclude running and stale evidence.',
             },
             {
                 'id': 'rows_waiting_for_results',
@@ -623,6 +1047,17 @@ def build_tests_matrix(root: Path, collected_at: str) -> dict:
                 'source_url': repo_blob_url('docs/data/history/test-runs.ndjson'),
                 'collected_at': collected_at,
                 'derivation': 'Count matrix rows with at least two pass/fail status flips in their recorded run history.',
+            },
+            {
+                'id': 'qa_run_evidence_rows',
+                'label': 'Rows with canonical QA-run evidence',
+                'value': len(qa_run_rows),
+                'unit': 'count',
+                'state': 'available',
+                'state_reason': None,
+                'source_url': repo_blob_url('docs/reference/qa-run-evidence-contract.md'),
+                'collected_at': collected_at,
+                'derivation': 'Count rows derived from exact single-suite immutable qa-run-v1 snapshots.',
             },
         ],
         'suite_roles': SUITE_ROLES,

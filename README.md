@@ -22,8 +22,8 @@ explicitly need KubeVirt (Flatcar, Knuckle, migration, and similar lanes).
 Everything is declared in git, reconciled by ArgoCD, and orchestrated by Argo
 Workflows. GitOps.
 
-This instance runs as the CI infrastructure for Project Bluefin — every image
-publication triggers a fully automated test run with zero human intervention:
+This instance runs as the CI infrastructure for Project Bluefin — selected image
+poll lanes trigger fully automated test runs with zero human intervention:
 image-poller checks the digest, compares it with stored state, fans out
 `run-container-tests`, publishes per-suite results back into this repo, and only
 then records the new digest. This is Bluefin Server's first usecase.
@@ -43,19 +43,25 @@ The lab continuously validates the core operating system family across multiple 
 
 | Image | Tag | Schedule / Trigger | Purpose / Suite |
 |---|---|---|---|
-| `ghcr.io/projectbluefin/bluefin` | `testing`, `stable` | Nightly 02:00 UTC + on every OCI digest change | Primary standard GNOME image (full suite) |
-| `ghcr.io/projectbluefin/bluefin-lts` | `testing`, `stable` | Nightly 02:30 UTC + on every OCI digest change | Long-term support GNOME enterprise target |
-| `ghcr.io/ublue-os/aurora` | `testing`, `stable` | Hourly OCI digest poll on upstream change | KDE variant validation (system suite) |
+| `ghcr.io/projectbluefin/bluefin` | `testing` | Nightly 02:00 UTC; digest poll every 10 minutes at :00 | Container-only: digest `smoke`; nightly `smoke,developer,system` |
+| `ghcr.io/projectbluefin/bluefin` | `stable` | Nightly 03:00 UTC; digest poll every 10 minutes at :04 | Container-only: digest `smoke,common,developer,software,system`; nightly `smoke` |
+| `ghcr.io/projectbluefin/bluefin-lts` | `testing` | Nightly 02:30 UTC; digest poll every 10 minutes at :02 | Container-only: digest `smoke`; nightly `smoke,developer,system` |
+| `ghcr.io/projectbluefin/bluefin-lts` | `stable` | Nightly 03:30 UTC; digest poll every 10 minutes at :06 | Container-only: digest `smoke,common,developer,software,system`; nightly `smoke` |
+| `ghcr.io/ublue-os/aurora` | `testing`, `stable` | Every 3 hours + OCI digest polling | KDE variant validation (system suite) |
 | `ghcr.io/frostyard/snow` | `latest` | Every 3 hours + on every OCI digest change | Snosi GNOME desktop profile (smoke/developer/system suites) |
-| `ghcr.io/projectbluefin/dakota` | `latest` | Nightly 03:00 UTC + on every BST build trigger | BuildStream (BST) flatcar-substrate variant; USB4-gated BuildBarn remote execution is mandatory |
+| `ghcr.io/projectbluefin/dakota` | `testing` | Digest poll every 10 minutes at :08; nightly 03:00 UTC trigger suspended | BuildStream (BST) variant; container-only QA against the published image |
 
-**Image-poll trigger:** hourly CronWorkflows check the OCI registry digest against
-`image-polling-digests`. When the digest changes, `image-poller` fans out
-`run-container-tests` and only persists the new digest after QA succeeds.
+**Image-poll trigger:** image-poll CronWorkflows check OCI registry digests against
+`image-polling-digests` (the Bluefin/LTS lanes are staggered at :00/:02/:04/:06,
+and Dakota at :08). A changed Bluefin/LTS digest goes through the standard
+`image-poller` → `bluefin-qa-pipeline` path; Dakota's active manifest routes it to
+`dakota-qa-pipeline`. The standard poller persists its new digest only after QA
+succeeds.
 
 **Result publication:** each selected `run-container-tests` lane writes
-`results.json`, then runs `scripts/publish_test_results.py` to push structured
-per-suite results back into this repo for dashboard consumers.
+`results.json` and attempts `scripts/publish_test_results.py` when
+`GITHUB_TOKEN` is available. Publication failures are warnings; the suite exit
+status remains the QA result.
 
 See [/docs/reference/bluefin-integration.md](/docs/reference/bluefin-integration.md) for full details.
 
@@ -96,11 +102,13 @@ image-poller CronWorkflow
         │
         ├─ unchanged ───────────────► exit cleanly
         │
-        └─ changed ─────────────────► `run-container-tests` fan-out
+        └─ changed ─────────────────► matching Bluefin/Dakota QA pipeline
                                       │
-                                      ├─ qecore + behave inside the bootc OCI image
-                                      ├─ publish per-suite results back to this repo
-                                      └─ update stored digest only after QA succeeds
+                                      └─ `run-container-tests` fan-out
+                                         │
+                                         ├─ qecore + behave inside the bootc OCI image
+                                         ├─ attempt per-suite result publication
+                                         └─ standard poller updates stored digest after QA
 ```
 
 **GitOps loop:**
@@ -143,7 +151,7 @@ lab/
 │   │   ├── run-gnome-tests.yaml          VM-backed behave + qecore + Dogtail tests
 │   │   ├── run-incluster-tests.yaml      in-cluster (kubectl-based) tests
 │   │   ├── run-flatcar-tests.yaml        Flatcar OS test runner
-│   │   ├── provision-flatcar-vm.yaml     provision Flatcar test VM (hostDisk)
+│   │   ├── provision-flatcar-vm.yaml     provision Flatcar test VM (containerDisk)
 │   │   ├── provision-gnomeos-vm.yaml     provision GNOME OS test VM
 │   │   ├── teardown-vm.yaml          delete explicit VM-backed test guests
 │   │   ├── collect-vm-logs.yaml          gather VM journal logs post-test
@@ -151,13 +159,12 @@ lab/
 │   │   ├── bst-commit-poller.yaml       Shared Dakota/Cosmic commit polling and BST admission
 │   │   ├── dakota-qa-pipeline.yaml      container-only Dakota suite fan-out
 │   │   ├── knuckle-qa-pipeline.yaml     Knuckle installer QA pipeline
-│   │   ├── image-poller.yaml            Digest poller: compare → run-container-tests → publish → persist
+│   │   ├── image-poller.yaml            Digest poller: compare → QA pipeline → publish → persist
 │   │   ├── pr-poller.yaml               PR label poller for CI gate
 │   │   ├── register-wec.yaml             register a cluster with KubeStellar
 │   │   ├── kubestellar-smoke-test.yaml   verify downsync + status upsync
 │   │   ├── kubestellar-platform-verify.yaml  ordered platform acceptance gate
 │   │   ├── ghost-cleanup.yaml           Clear stale podman lock files on ghost
-│   │   └── ghost-kernel-args.yaml       Set Strix Halo performance kernel args
 │   │
 │   ├── bootstrap/                    # ← NOT ArgoCD managed — run once to set up cluster
 │   │   ├── README.md                     bootstrap guide
@@ -175,8 +182,8 @@ lab/
 │   └── one-shot-delete-golden-disks.yaml  emergency: delete all golden disks to reclaim space
 │
 ├── manifests/                        # ← ArgoCD (lab-infra App) auto-syncs these
-│   ├── nightly-smoke.yaml                CronWorkflow: nightly latest @ 02:00 UTC
-│   ├── nightly-smoke-lts.yaml            CronWorkflow: nightly lts @ 02:30 UTC
+│   ├── nightly-smoke.yaml                CronWorkflow: nightly bluefin:testing @ 02:00 UTC
+│   ├── nightly-smoke-lts.yaml            CronWorkflow: nightly bluefin-lts:testing @ 02:30 UTC
 │   ├── nightly-dakota.yaml               CronWorkflow: nightly dakota @ 03:00 UTC
 │   ├── nightly-knuckle.yaml              CronWorkflow: nightly knuckle @ 03:30 UTC
 │   ├── orphan-vm-cleanup.yaml            CronWorkflow: clean orphaned VMs every 2h
@@ -185,10 +192,11 @@ lab/
 │   ├── pr-image-gc.yaml                  CronWorkflow: GC PR container images
 │   ├── image-poll-bluefin-testing.yaml   CronWorkflow: poll bluefin:testing digest
 │   ├── image-poll-bluefin-stable.yaml    CronWorkflow: poll bluefin:stable digest
+│   ├── image-poll-bluefin-main.yaml      CronWorkflow: poll ublue-os/bluefin:latest digest
 │   ├── image-poll-lts-testing.yaml       CronWorkflow: poll bluefin-lts:testing digest
 │   ├── image-poll-lts-stable.yaml        CronWorkflow: poll bluefin-lts:stable digest
+│   ├── image-poll-dakota.yaml             CronWorkflow: poll dakota:testing digest
 │   ├── image-poll-snosi-latest.yaml      CronWorkflow: poll snosi snow:latest digest
-│   ├── image-poll-common.yaml            CronWorkflow: poll common image digest
 │   ├── pr-label-poller.yaml              CronWorkflow: poll PR labels for CI gate
 │   ├── workflow-controller-configmap.yaml TTL patch (7d success, 30d failure)
 │   ├── argo-default-sa-rbac.yaml         Argo executor RBAC
@@ -238,10 +246,10 @@ lab/
 
 | Phase | Suite | Trigger |
 |---|---|---|
-| 1 — Smoke | `smoke` | Every PR, nightly |
-| 2 — Developer tooling | `developer` | Nightly, targeted |
-| 3 — Software management | `software` | Targeted |
-| 4 — Atomic OS contract | `system` | Nightly, every image build |
+| 1 — Smoke | `smoke` | Every PR, digest poll, nightly |
+| 2 — Developer tooling | `developer` | Testing-lane nightlies, targeted |
+| 3 — Software management | `software` | Stable/latest digest polls, targeted |
+| 4 — Atomic OS contract | `system` | Testing-lane nightlies, selected digest polls |
 | 5 — Flatcar substrate | `flatcar` | Dedicated workflow |
 | — Migration validation | `migration` | On rechunk → chunkah switches |
 | — Dakota BST | `dakota` | Every Dakota PR; see [Dakota PR review](docs/skills/dakota-pr-review/SKILL.md) for exact-SHA build, E2E, repair, and direct-merge policy |
@@ -296,7 +304,7 @@ just run-tests
 | Host | Role | Specs |
 |---|---|---|
 | ghost | k3s control-plane + KubeVirt compute | Ryzen AI MAX+ 395, 16c/32t, 64GB RAM |
-| exo-1 | k3s worker (workflow pods only) | — |
+| exo-0 | k3s worker | Framework Desktop |
 
 **Namespaces:**
 
@@ -304,8 +312,8 @@ just run-tests
 |---|---|
 | `argo` | Argo Workflows + ArgoCD (control plane) |
 | `argocd` | ArgoCD controller |
-| `bluefin-test` | `latest` test VMs |
-| `bluefin-lts-test` | `lts` test VMs |
+| `bluefin-test` | Explicit VM-backed Bluefin/migration test VMs |
+| `bluefin-lts-test` | Explicit VM-backed Bluefin-LTS test VMs |
 | `flatcar-test` | Flatcar test VMs |
 | `gnomeos-test` | GNOME OS test VMs |
 | `llm-d` | Local inference namespace (vLLM on ROCm; managed by ArgoCD with 1 GPU-backed replica) |
@@ -373,7 +381,7 @@ See [`projectbluefin/testsuite`](https://github.com/projectbluefin/testsuite) fo
 
 ## Related Projects
 
-- [Project Bluefin](https://projectbluefin.io) — primary subject under test; this lab validates every image publish
+- [Project Bluefin](https://projectbluefin.io) — primary subject under test; selected image-poll lanes validate new digests
 - [ublue-os/bluefin](https://github.com/ublue-os/bluefin) — upstream Bluefin image builds
 - [Project Dakota](https://github.com/projectbluefin/dakota) — BST-built Bluefin variant; Dakota PRs use the lab-authoritative [Dakota PR review process](docs/skills/dakota-pr-review/SKILL.md) and `dakota-qa-pipeline`
 - [projectbluefin/testsuite](https://github.com/projectbluefin/testsuite) — shared behave suites and container QA inputs

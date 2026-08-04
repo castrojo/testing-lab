@@ -154,7 +154,7 @@ The install WorkflowTemplate takes a `mode` parameter:
   inside a leaf template's input defaults never resolves (three live
   failures before the fix; see argo-workflows skill red flags).
 - Deployed bundles land in `manifests/catalog-apps/<app>/`, which requires
-  `directory.recurse: true` on the `testing-lab-infra` Application and a
+  `directory.recurse: true` on the `lab-infra` Application and a
   `Namespace` object in the bundle (`CreateNamespace=false`).
 
 Verified end-to-end 2026-07-25: jellyfin gitops install — workflow

@@ -96,6 +96,7 @@ spec:
           exit 1
         }
         curl --fail --location --retry 3 --retry-all-errors \
+          --connect-timeout 30 --speed-limit 1024 --speed-time 120 --remove-on-error \
           --output "${IMAGE}" "${URL}"
         printf '%s  %s\n' "${SHA}" "${IMAGE}" | sha256sum -c -
 

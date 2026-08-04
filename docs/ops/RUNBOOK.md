@@ -5,42 +5,58 @@
 ## Architecture summary
 
 ```
-Git push / manual submit
+Git push / image digest change / manual submit
         │
         ▼
 Argo Workflow (argo namespace)
         │
-        ├─ ensure-disk (optional) ─► build or verify golden disk on ghost hostPath
-        ├─ provision-vm           ─► reflink golden disk into a per-run KubeVirt VM
-        ├─ run-gnome-tests        ─► runner pod clones repo, SSHes VM, executes qecore + behave
-        └─ teardown (onExit)      ─► delete VM + per-run hostDisk clone
+        ├─ bluefin-qa-pipeline  ─► run-container-tests inside the published OCI image
+        ├─ dakota-qa-pipeline   ─► run-container-tests inside the published OCI image
+        └─ explicit VM lanes    ─► provision, run, and tear down ephemeral KubeVirt VMs
 ```
 
 Two steady-state execution paths exist:
 
 | Path | Purpose | Persistent state |
 |---|---|---|
-| Titan fast path | Test-only iteration against always-on VMs | Titan disk under `/var/home/jorge/VMs/titans/...` |
-| Fresh VM path | Image and golden-disk validation | Golden disk under `/var/tmp/bluefin-golden/<tag>/disk.raw` |
+| Container-only Bluefin/Dakota path | Image and PR QA | No persistent VM or host-disk state |
+| Explicit VM-backed lanes | Flatcar smoke and Knuckle installer QA | Ephemeral KubeVirt resources; no shared Bluefin golden disk |
+
+### Container-only QA contract
+
+`bluefin-qa-pipeline` and `dakota-qa-pipeline` both fan out
+`run-container-tests` inside the published OCI image. The runner clones
+`projectbluefin/testsuite`, starts the nested systemd/Wayland session, and
+attempts to publish `results.json` when `GITHUB_TOKEN` is available. A
+publication warning does not change the suite exit status.
+
+The Bluefin/LTS testing and Dakota digest pollers remain staggered at minutes
+`:00`, `:02`, and `:08` of each ten-minute interval for freshness tracking, but
+their QA trigger is disabled. Daily testing-lane coverage comes from
+`nightly-smoke` at 02:00 UTC, `nightly-smoke-lts` at 02:30 UTC, and
+`nightly-dakota` at 03:00 UTC.
 
 ## Cluster topology
 
 | Host | Role | IP | Notes |
 |---|---|---|---|
 | ghost | k3s control-plane + KubeVirt compute | `<ghost-ip>` | Runs VM workloads and Argo control-plane services |
-| exo-1 | k3s worker | `<exo-1-ip>` | Workflow pods only |
+| exo-0 | k3s worker | `<exo-0-ip>` | Build and workflow pods |
 | Argo UI | external entrypoint | `http://<ghost-ip>:32746` | Host-local service also exposed on port 2746 |
 | Loki | log aggregation | `http://<ghost-ip>:30100` | Captures workflow pod logs |
 | ArgoCD | GitOps controller | `https://<ghost-ip>` | Reconciles this repo into the cluster |
 
-All KubeVirt VMs are pinned to ghost. Workflow pods may land on ghost or exo-1 depending on template constraints.
+Container QA runs on the control-plane graphical seat on ghost. Flatcar VMs float
+across KubeVirt-capable nodes. Knuckle VMs co-schedule on the node holding their
+local-path PVC. Other workflow pods may land on exo-0 according to template
+constraints.
 
 ## GitOps ownership
 
 | Area | Source of truth | Reconciler |
 |---|---|---|
-| WorkflowTemplates | `argo/workflow-templates/*.yaml` | ArgoCD application `testing-lab` |
-| Cluster infra and CronWorkflows | `manifests/*.yaml` | ArgoCD application `testing-lab-infra` |
+| WorkflowTemplates | `argo/workflow-templates/*.yaml` | ArgoCD application `lab` |
+| Cluster infra and CronWorkflows | `manifests/*.yaml` | ArgoCD application `lab-infra` |
 | Operator entrypoints | `Justfile` | Local operator / MCP tooling |
 
 The repo is intentionally GitOps-first: cluster state should converge from git, not from manual template applies or node SSH.
@@ -49,26 +65,29 @@ The repo is intentionally GitOps-first: cluster state should converge from git, 
 
 - Use Kubernetes MCP and Argo MCP for workstation-side cluster reads and mutations.
 - Prefer the `just` entrypoints when they exist; they are the human-facing wrappers around the same API-driven workflow.
-- Do not SSH from a workstation into `ghost` or `exo-1` for inspection, recovery, or file transfer.
-- In-workflow SSH into test VMs and probe-pod-to-titan SSH remain valid because they originate inside the cluster and are part of the test harness, not node administration.
+- Do not SSH from a workstation into `ghost` or `exo-0` for inspection, recovery, or file transfer.
+- In-workflow SSH into explicit test VMs and probe-pod-to-guest SSH remain valid because
+  they originate inside the cluster and are part of the test harness, not node administration.
+- Host storage migration, node bootstrap, and host-service recovery are private
+  maintainer procedures; they are not normal public workstation guidance.
 
 ## Image, disk, and VM model
 
 | Object | Backing location | Used by | Notes |
 |---|---|---|---|
-| Golden disk (`latest`) | `/var/tmp/bluefin-golden/latest/disk.raw` | Fresh-VM pipeline | Built by `bib-build-and-push` |
-| Golden disk (`lts`) | `/var/tmp/bluefin-golden/lts/disk.raw` | Fresh-VM pipeline | Built by `bib-build-and-push` |
-| Titan Bluefin disk | `/var/home/jorge/VMs/titans/titan-bluefin/image/disk.raw` | `titan-bluefin` | Persistent fast-path disk |
-| Titan LTS disk | `/var/home/jorge/VMs/titans/image/disk.raw` | `titan-lts` | Persistent fast-path disk |
-| Per-run hostDisk clone | `/var/tmp/bluefin-golden/*-runs/...` | Provisioned fresh VMs | Removed by teardown or orphan cleanup |
+| Published OCI image | Registry image and digest | Bluefin/Dakota container-only QA | `bluefin-qa-pipeline` and `dakota-qa-pipeline` run `run-container-tests`; no VM or disk is created |
+| Flatcar test VM | Ephemeral KubeVirt VM with generated Flatcar containerDisk | `flatcar-smoke-test` | Provisioned from the current Flatcar image and torn down after the run; no golden disk or hostDisk |
+| Knuckle test VM | Ephemeral KubeVirt VM with per-run local-path PVC and ISO containerDisk | `knuckle-qa-pipeline` | Teardown removes the VM, root-disk PVC, and per-run ISO containerDisk |
 
-The SSH secret lives in the `bluefin-test-ssh-key` Kubernetes secret in namespace `argo`.
-Golden disks can be patched by workflow after key rotation; titan disk key refresh is intentionally human-gated. <!-- TODO: replace with MCP tool when available -->
+The `bluefin-test-ssh-key` Kubernetes secret in namespace `argo` is used only for
+in-cluster access to explicit VM-backed test guests. Container-only Bluefin/Dakota
+QA does not require SSH, golden disks, or hostDisk state.
 
 ## Test execution stack
 
 | Component | Responsibility |
 |---|---|
+| `run-container-tests` | Run Bluefin/Dakota GUI and contract suites inside the target OCI image |
 | `git-sync` initContainer | Clone the requested repo ref into the runner pod |
 | `run-gnome-tests` | Copy suites to the VM and orchestrate execution |
 | `qecore-headless` | Start the Wayland GNOME session inside the VM |
@@ -127,7 +146,7 @@ Argo Workflow (argo namespace)
 
 | Symptom | Root cause | Durable fix |
 |---|---|---|
-| `Permission denied (publickey)` during SSH wait | Golden disk or titan disk contains an old public key | Re-patch or rebuild the golden disk; escalate titan key refresh to a human operator |
+| `Permission denied (publickey)` during SSH wait | Ephemeral VM cloud-init or installer key provisioning did not install the expected authorized key | Verify the `ssh-pubkey`/`ssh-key-secret` inputs and cloud-init or installer completion. For the `bluefin-migration-test`/`provision-containerdisk-vm` path, confirm `bluefin-test-ssh-pubkey` is wired through `accessCredentials.sshPublicKey` with `qemuGuestAgent`, then wait for VMI `AccessCredentialsSynchronized=True` before retrying SSH; inspect VMI and runner logs |
 | Workflow hangs before GUI steps start | VM boot or SSH readiness never completed | Inspect VMI readiness and runner logs, then re-run the appropriate recovery path |
 | `TypeError` involving `requireResult` | Stale dogtail step pattern | Replace with `findChildren(...)` or `findChild(..., retry=False)` |
 | Clock / quick-settings scenarios miss their targets | GNOME Shell AT-SPI geometry gap | Drive the interaction via `Shell.Eval` |
@@ -140,7 +159,7 @@ Argo Workflow (argo namespace)
 | Service-catalog deploy step fails with "No manifests found" | Lane directory missing `manifests.yaml` | Create `tests/service_catalog/<lane>/manifests.yaml` per the contract |
 | Service-catalog test step fails with "No test suite" | Lane directory missing under `tests/service_catalog/` | Create the lane test directory with at least one `test_*.py` file |
 | Service-catalog namespace stuck terminating | Finalizer or PVC not released | Check for stuck PVCs or pods with `kubectl get all -n <ns>`, delete manually if needed |
-| `testing-lab-infra` sync wedged "waiting for healthy state of DaemonSet/..." | A DaemonSet pod is unhealthy on some node (e.g. hostPath missing on that host), blocking every subsequent manifests/ change | Fix or scope the DaemonSet (capability-label nodeSelector), then terminate the stuck operation so ArgoCD retries: `kubectl patch application testing-lab-infra -n argocd --type=merge -p '{"status":{"operationState":{"phase":"Terminating"}}}'` |
+| `lab-infra` sync wedged "waiting for healthy state of DaemonSet/..." | A DaemonSet pod is unhealthy on some node (e.g. hostPath missing on that host), blocking every subsequent manifests/ change | Fix or scope the DaemonSet (capability-label nodeSelector), then terminate the stuck operation so ArgoCD retries: `kubectl patch application lab-infra -n argocd --type=merge -p '{"status":{"operationState":{"phase":"Terminating"}}}'` |
 | KubeStellar app sync stuck at kubeflex-controller-manager | Postgres hook deadlock under ArgoCD | Keep `installPostgreSQL: false` + separate `kubestellar-postgres` app; see `docs/skills/kubestellar/SKILL.md` |
 | Workflow pod rejected `failed quota: argo-quota` | Template missing resources requests/limits | Add explicit cpu+memory requests and limits to every container/script |
 | Lab QA ran but no `testing-lab / <repo>` Check Run appears on the factory PR | Half-enrolled repo — the poller dispatched `lab-check` but the target repo has no `.github/workflows/lab-check.yml` receiver, so the dispatch is silently dropped | Confirm the poll succeeded: `kubectl get workflows -n argo -l workflows.argoproj.io/cron-workflow=pr-label-poller`. Confirm the per-PR QA workflow exists and completed. Then confirm the receiver exists: `gh api repos/projectbluefin/<repo>/contents/.github/workflows/lab-check.yml` — a `404` means the repo is only sender-enrolled (in `AUTO_REPOS`) and needs the receiver added on the target repo's default branch. See [`docs/skills/argo-workflows/patterns.md`](../skills/argo-workflows/patterns.md) §20aa. |
