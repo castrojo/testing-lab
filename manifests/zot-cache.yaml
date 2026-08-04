@@ -9,8 +9,8 @@
 #   public.ecr.aws             → /ecr    (pull via http://192.168.1.102:30501/ecr/...)
 #   lscr.io                    → /lscr   (pull via http://192.168.1.102:30501/lscr/...)
 #
-# Sync content filters are intentionally omitted so Zot mirrors whatever the
-# nodes request; the earlier prefix filtering was preventing on-demand pulls.
+# Sync content filters are limited to repository scopes observed in the lab so
+# unsupported pulls fail without probing every upstream repository.
 # containerd on each node routes pulls through this via
 # manifests/registry-mirror-config.yaml (hosts.toml DaemonSet, no k3s restart needed)
 #
@@ -55,65 +55,83 @@ data:
               "urls": ["https://ghcr.io"],
               "onDemand": true,
               "tlsVerify": true,
-              "maxRetries": 3,
+              "maxRetries": 1,
               "retryDelay": "2m",
-              "content": [{ "prefix": "**", "destination": "/ghcr" }]
+              "content": [
+                { "prefix": "ghcr/projectbluefin/*", "destination": "/ghcr" },
+                { "prefix": "ghcr/ublue-os/*", "destination": "/ghcr" },
+                { "prefix": "ghcr/frostyard/*", "destination": "/ghcr" },
+                { "prefix": "ghcr/flatcar/*", "destination": "/ghcr" },
+                { "prefix": "ghcr/ggml-org/*", "destination": "/ghcr" },
+                { "prefix": "ghcr/arc-runner", "destination": "/ghcr" }
+              ]
             },
             {
               "urls": ["https://registry-1.docker.io"],
               "onDemand": true,
               "tlsVerify": true,
-              "maxRetries": 3,
+              "maxRetries": 1,
               "retryDelay": "2m",
-              "content": [{ "prefix": "**", "destination": "/docker" }]
+              "content": [
+                { "prefix": "docker/library/*", "destination": "/docker" },
+                { "prefix": "docker/rocm/*", "destination": "/docker" },
+                { "prefix": "docker/vllm/*", "destination": "/docker" }
+              ]
             },
             {
               "urls": ["https://quay.io"],
               "onDemand": true,
               "tlsVerify": true,
-              "maxRetries": 3,
+              "maxRetries": 1,
               "retryDelay": "2m",
-              "content": [{ "prefix": "**", "destination": "/quay" }]
+              "content": [
+                { "prefix": "quay/argoproj/*", "destination": "/quay" },
+                { "prefix": "quay/buildah/*", "destination": "/quay" },
+                { "prefix": "quay/fedora/*", "destination": "/quay" },
+                { "prefix": "quay/kubevirt/*", "destination": "/quay" },
+                { "prefix": "quay/podman/*", "destination": "/quay" },
+                { "prefix": "quay/prometheus/*", "destination": "/quay" }
+              ]
             },
             {
               "urls": ["https://registry.fedoraproject.org"],
               "onDemand": true,
               "tlsVerify": true,
-              "maxRetries": 3,
+              "maxRetries": 1,
               "retryDelay": "2m",
-              "content": [{ "prefix": "**", "destination": "/fedora" }]
+              "content": []
             },
             {
               "urls": ["https://registry.k8s.io"],
               "onDemand": true,
               "tlsVerify": true,
-              "maxRetries": 3,
+              "maxRetries": 1,
               "retryDelay": "2m",
-              "content": [{ "prefix": "**", "destination": "/k8s" }]
+              "content": []
             },
             {
               "urls": ["https://cgr.dev"],
               "onDemand": true,
               "tlsVerify": true,
-              "maxRetries": 3,
+              "maxRetries": 1,
               "retryDelay": "2m",
-              "content": [{ "prefix": "**", "destination": "/cgr" }]
+              "content": [{ "prefix": "cgr/chainguard/*", "destination": "/cgr" }]
             },
             {
               "urls": ["https://public.ecr.aws"],
               "onDemand": true,
               "tlsVerify": true,
-              "maxRetries": 3,
+              "maxRetries": 1,
               "retryDelay": "2m",
-              "content": [{ "prefix": "**", "destination": "/ecr" }]
+              "content": []
             },
             {
               "urls": ["https://lscr.io"],
               "onDemand": true,
               "tlsVerify": true,
-              "maxRetries": 3,
+              "maxRetries": 1,
               "retryDelay": "2m",
-              "content": [{ "prefix": "**", "destination": "/lscr" }]
+              "content": []
             }
           ]
         }
@@ -138,7 +156,7 @@ spec:
         app: zot-cache
         app.kubernetes.io/part-of: lab
       annotations:
-        lab.projectbluefin.io/config-version: metrics-v1
+        lab.projectbluefin.io/config-version: sync-policy-v2
     spec:
       automountServiceAccountToken: false
       priorityClassName: system-cluster-critical

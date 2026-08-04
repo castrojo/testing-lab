@@ -14,6 +14,12 @@ spec:
     labels:
       bluefin.io/evidence-contract: qa-run-v1
   activeDeadlineSeconds: 14400
+  # Serialize polls for the same state key across CronWorkflow instances.
+  # This makes the compare/QA/update sequence single-flight: a queued poll
+  # rechecks the ConfigMap after the first poll persists the digest.
+  synchronization:
+    mutexes:
+      - name: "image-poll-{{workflow.parameters.state-key}}"
   entrypoint: check-and-trigger
   arguments:
     parameters:
