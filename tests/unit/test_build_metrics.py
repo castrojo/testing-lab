@@ -55,12 +55,16 @@ def test_prometheus_scrapes_required_build_and_node_targets():
     assert jobs["argo-workflow-controller"]["kubernetes_sd_configs"][0][
         "namespaces"
     ]["names"] == ["argo"]
+    assert jobs["kubernetes-cadvisor"]["sample_limit"] == 50000
+    assert jobs["zot"]["sample_limit"] == 2000
+    assert jobs["github-traffic-hooks"]["sample_limit"] == 500
+    assert jobs["github-traffic-hooks"]["relabel_configs"][1]["regex"] == "github-api"
 
 
 def test_zot_metrics_are_enabled_on_both_registries():
-    for path, workload_kind in (
-        ("manifests/zot-cache.yaml", "DaemonSet"),
-        ("manifests/zot-writable.yaml", "Deployment"),
+    for path, workload_kind, config_version in (
+        ("manifests/zot-cache.yaml", "DaemonSet", "sync-policy-v2"),
+        ("manifests/zot-writable.yaml", "Deployment", "metrics-v1"),
     ):
         documents = load_documents(path)
         config_map = next(doc for doc in documents if doc["kind"] == "ConfigMap")
@@ -73,7 +77,7 @@ def test_zot_metrics_are_enabled_on_both_registries():
         }
         assert workload["spec"]["template"]["metadata"]["annotations"][
             "lab.projectbluefin.io/config-version"
-        ] == "metrics-v1"
+        ] == config_version
 
 
 def test_safe_build_workflows_emit_only_low_cardinality_metrics():

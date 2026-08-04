@@ -7,11 +7,15 @@
 > - [`/docs/ops/lab-operations.md`](/docs/ops/lab-operations.md) — long-form procedures
 > - [`/docs/reference/WORKFLOWS.md`](/docs/reference/WORKFLOWS.md) — WorkflowTemplate parameter contracts
 > - [`/docs/ops/RUNBOOK.md`](/docs/ops/RUNBOOK.md) — architecture + failure-mode index
-> - [`/docs/skills/test-authoring/dogtail-patterns.md`](/docs/skills/test-authoring/dogtail-patterns.md) — writing GUI tests
-> - [`/agents.md`](/agents.md) — hard policy and tenets
+> - [`projectbluefin/testsuite`](https://github.com/projectbluefin/testsuite) — writing GUI tests
+> - [`/AGENTS.md`](/AGENTS.md) — hard policy and tenets
 
 > [!NOTE]
-> **CLI-first.** Tool hierarchy: `just` (lifecycle recipes) → `argo`/`kubectl` (cluster ops) → `ssh core@<control-plane>` (OS-level only).
+> **CLI/API-first.** Tool hierarchy: `just` (lifecycle recipes) → `argo`/`kubectl`
+> (cluster ops). Routine/public-agent SSH is limited to workflow/probe pods
+> connecting to explicit test VMs. Retained host-maintenance SSH is
+> operator-only through an approved private channel; never use workstation SSH
+> to administer `ghost` or `exo-0`.
 > MCP tools are optional — never block on them. One bash call beats a tool search + MCP roundtrip every time.
 
 ## 1. Command selector — what should I run?
@@ -30,7 +34,6 @@
 | Check exo-0 kernel canary status (7.1 target) | `kubectl get node exo-0 -o jsonpath='{.status.nodeInfo.kernelVersion}{"\n"}'` |
 | Submit Dakota BST build pipeline (default variant only) | `just run-bst-build [ref=testing]` |
 | Run Dakota containerized smoke QA (no VM, works for composefs-oci) | `just run-dakota-container-qa [image-tag=testing] [variant=dakota]` |
-| Publish both Dakota testing lanes from Zot to GHCR | `just run-dakota-publish` |
 | Trigger the Dakota PR batch workflow | `argo submit -n argo --from workflowtemplate/dakota-pr-batch-pipeline -p pr-numbers=<number> --wait` |
 | Tail the most recent workflow's logs | `just logs` |
 | List workflows / VMs | `just list-workflows` · `just list-vms` |
@@ -47,6 +50,32 @@ cache-backed, Ethernet-backed, automatic-fallback, and remote-cache-only paths
 are prohibited. Confirm the generated BuildStream configuration, both Ready
 BuildBarn workers, and live worker action activity before calling a run
 distributed.
+
+## AMD ROCm GPU readiness — quick checks
+
+If the AMD GPU exists on the host but Kubernetes still refuses to schedule `amd.com/gpu` workloads, confirm the ROCm device plugin is installed and the node is labeled for it:
+
+```bash
+kubectl label node exo-0 lab.projectbluefin.io/amd-gpu=true --overwrite
+kubectl apply -f manifests/amdgpu-device-plugin.yaml
+kubectl rollout status daemonset/amdgpu-device-plugin -n kube-system --timeout=300s
+kubectl get node exo-0 -o jsonpath='{.status.allocatable.amd\.com/gpu}{"\n"}'
+```
+
+Expected outcome: the node advertises `1` or more `amd.com/gpu` allocatable units, and the `amdgpu-device-plugin` DaemonSet pod is `Running` on the GPU node.
+
+## Local LLM deployment — quick checks
+
+The lab also has a repo-managed vLLM deployment in `manifests/llm-d.yaml` for `unsloth/Llama-3.2-3B-Instruct`. It is enabled by default, pinned to `exo-0`, and requests one `amd.com/gpu` device so the ROCm device plugin exposes the GPU to vLLM. A preemptive priority class lets it take over the node when needed.
+
+```bash
+kubectl -n llm-d get deploy llm-d-modelserver
+kubectl -n llm-d get pods -w
+kubectl -n llm-d get svc llm-d-modelserver
+kubectl -n llm-d logs -l app.kubernetes.io/name=llm-d-modelserver -c modelserver --tail=100
+```
+
+The endpoint is exposed on NodePort `30800` and can be queried at `http://<exo-0-ip>:30800/v1/models` after the pod reaches `Running`.
 
 ## Flatcar kernel lifecycle — quick checks
 
@@ -67,10 +96,8 @@ Run `just logs` first. Then match a row. **Bluefin and Dakota image-poll QA are 
 | `No GITHUB_TOKEN or missing results.json - skipping publication` | `kubectl get secret -n argo github-token` — secret must exist; then inspect `just logs` for the failing suite before rerunning. |
 | `results.json not found` or summary reports `Execution failed` | `just logs | grep -n "results.json not found\|Execution failed"` → identify the failing `run-container-tests` lane, then rerun after fixing the image or suite issue. |
 | Expected image-poll rerun never starts after a new publish | `kubectl get configmap image-polling-digests -n argo -o yaml` — compare the stored digest with the workflow log; stale state means the previous run already claimed that digest. |
-| Dakota GHCR publish fails before copying | Confirm the operator-managed contract without printing its data: `kubectl get secret ghcr-publish-auth -n argo -o jsonpath='{.type}{"\n"}'` must report `kubernetes.io/dockerconfigjson`; then inspect the lane status with `argo get -n argo @latest`. |
-| Dakota GHCR publish reports a digest mismatch | Compare source and destination with authenticated operator tooling; never print or decode `ghcr-publish-auth`. A lane is successful only when Zot and GHCR report the same digest. |
 | VMI `NotFound` 1 second after VM creation | Same as above — KubeVirt refused to start VM due to missing accessCredentials secret; VM status will be `Stopped` |
-| `TypeError: ... requireResult` | Fix the step per [`/docs/skills/test-authoring/dogtail-patterns.md`](/docs/skills/test-authoring/dogtail-patterns.md) §6.2 (`findChildren(...)` / `retry=False`) |
+| `TypeError: ... requireResult` | Fix the step in the upstream `projectbluefin/testsuite` patterns (`findChildren(...)` / `retry=False`) |
 | `Application "gnome-shell" is running` step fails | Replace it with `* GNOME Shell is accessible via AT-SPI` |
 | All top-bar scenarios fail | Confirm `wait_for_shell.py` is present in the copied suite and that the runner re-asserts `unsafe_mode` |
 | `outputs.result` is `Waiting...` or other debug text | Send debug output to `>&2`; keep stdout for the result only |
@@ -108,7 +135,7 @@ If no row matches:
 | Node has `DiskPressure` | Do not submit builds. Inspect PV node affinity and `kube-system/local-path-config`; every eligible node needs an explicit non-root data path and there must be no default root-disk fallback. |
 | Many `virt-launcher-*` pods with no corresponding live workflow | `argo submit -n argo --from workflowtemplate/orphan-vm-cleanup` |
 
-Per-template ceilings live in [`/agents.md`](/agents.md) under **Resource Limits**.
+Per-template ceilings live in [`/AGENTS.md`](/AGENTS.md) under **Resource Limits**.
 
 ## 4. ArgoCD — my template change did not take effect
 
@@ -125,10 +152,10 @@ Per-template ceilings live in [`/agents.md`](/agents.md) under **Resource Limits
 
 **Trigger an ArgoCD sync:**
 ```bash
-KUBECONFIG=~/.kube/bluespeed.yaml kubectl -n argocd annotate application lab \
+KUBECONFIG=~/.kube/bluespeed.yaml kubectl -n argocd annotate application testing-lab \
   argocd.argoproj.io/refresh=normal --overwrite
 # or via argocd CLI:
-argocd app sync lab
+argocd app sync testing-lab
 ```
 
 **If the local ArgoCD port-forward drops**, restart it and verify the health endpoint
@@ -140,14 +167,14 @@ curl -sf http://127.0.0.1:18080/healthz
 
 **Read ArgoCD Application state:**
 ```bash
-KUBECONFIG=~/.kube/bluespeed.yaml kubectl get application lab-infra -n argocd \
+KUBECONFIG=~/.kube/bluespeed.yaml kubectl get application testing-lab-infra -n argocd \
   -o jsonpath='{.status.sync.status} {.status.health.status}'
 ```
 Key fields: `.status.operationState.phase`, `.status.sync.status`, `.status.operationState.message`, `.status.operationState.operation.sync.revision`
 
 **Cancel a stuck operation** (PreSync hook looping):
 ```bash
-KUBECONFIG=~/.kube/bluespeed.yaml kubectl patch application lab -n argocd \
+KUBECONFIG=~/.kube/bluespeed.yaml kubectl patch application testing-lab -n argocd \
   --type=json -p='[{"op":"remove","path":"/operation"}]'
 ```
 
@@ -157,11 +184,11 @@ KUBECONFIG=~/.kube/bluespeed.yaml kubectl patch application lab -n argocd \
    -> if not: push first.
 
 2. just argocd-status
-   -> expected: `lab` is synced to a revision that matches or post-dates your commit.
+   -> expected: `testing-lab` is synced to a revision that matches or post-dates your commit.
    -> if older: just argocd-sync
 
 3. just argocd-status
-   -> expected: `lab` is Healthy.
+   -> expected: `testing-lab` is Healthy.
    -> if not Healthy: inspect the reported condition, fix the rejected field in git, push again, then repeat step 2.
 
 4. argo template get -n argo <name>
@@ -339,66 +366,82 @@ Expected steady state:
 
 ---
 
-## 13. llm-d hive node — disabled by default
+## 13. llm-d local inference node
 
-`llm-d` is kept **off by default** in GitOps (`manifests/llm-d.yaml` sets `replicas: 0`).
-Namespace remains managed by `lab-infra`; no pod should run unless explicitly enabled.
+`llm-d` is managed by the `testing-lab-infra` ArgoCD Application (`manifests/llm-d.yaml`) and is **enabled by default** with one replica.
+The vLLM container requests one `amd.com/gpu` device so the ROCm device plugin exposes the GPU into the pod.
+
+**Model choice:** the deployment serves `unsloth/Llama-3.2-3B-Instruct` through vLLM on the OpenAI-compatible endpoint at `http://<ghost-ip>:30800/v1`.
+The pod uses a dedicated preemptive `PriorityClass` so it can evict lower-priority work when needed.
 
 **Check status (expected default):**
 ```bash
-kubectl -n llm-d get deploy llm-d-modelserver -o jsonpath='{.spec.replicas}{"\n"}'   # expect 0
-kubectl get pods -n llm-d                                                             # expect none
+kubectl -n llm-d get deploy llm-d-modelserver -o jsonpath='{.spec.replicas}{"\n"}'   # expect 1
+kubectl get pods -n llm-d                                                             # expect one Running pod
+kubectl get node exo-0 -o jsonpath='{.status.allocatable.amd\.com/gpu}{"\n"}'       # expect >= 1
 ```
 
-**Temporarily enable for local use:**
-```bash
-kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=1
-```
-
-**Disable again (restore desired default):**
+**Temporarily disable:**
 ```bash
 kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=0
 ```
 
+**Re-enable (restore desired default):**
+```bash
+kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=1
+```
+
 **If pod is stuck Pending:** Check two things:
 1. AMD ROCm device plugin registered: `kubectl get pods -n kube-system | grep amdgpu` — look for `amdgpu-device-plugin`. After a k3s restart the plugin needs a pod delete/respawn to re-register with kubelet. Verify `amd.com/gpu` appears in `kubectl get node ghost -o jsonpath='{.status.allocatable}'`.
-2. Memory fits: ghost has ~62.5Gi allocatable. Manifest requests 48Gi — check for other large pods consuming RAM if you see `Insufficient memory`.
+2. Memory fits: ghost has ~62.5Gi allocatable; the manifest requests 16Gi/24Gi and 1 GPU. Check for other large pods consuming RAM if you see `Insufficient memory`.
 
 **If k3s is down** (kubectl returns "connection refused"):
-k3s can stop after host sleep/resume. Recovery:
+k3s can stop after host sleep/resume. Do not recover it with workstation SSH.
+Host-service recovery is a private maintainer procedure; escalate through the
+approved operator channel. Once the API returns, delete the
+`amdgpu-device-plugin` pod through Kubernetes so it re-registers with the
+current kubelet socket:
 ```bash
-ssh core@<control-plane> "sudo systemctl start k3s"
+kubectl delete pod -n kube-system -l app.kubernetes.io/name=amdgpu-device-plugin
 ```
-After restart, delete the `amdgpu-device-plugin` pod so it re-registers with the new kubelet socket.
 
-**kubelet device-plugin socket path:** `/var/lib/kubelet/device-plugins/kubelet.sock` (standard path — NOT the rancher/k3s path). Verify with: `ssh core@<control-plane> "sudo ss -lx | grep kubelet"`.
-
-**If pod is CrashLoopBackOff:** Check init container logs first — it downloads the GGUF on first start:
+Verify device-plugin health through the API:
 ```bash
-kubectl logs -n llm-d <pod-name> -c download-gguf
+kubectl get daemonset amdgpu-device-plugin -n kube-system
+kubectl get node exo-0 -o jsonpath='{.status.allocatable.amd\.com/gpu}{"\n"}'
 ```
-The GGUF (`Qwen3.6-35B-A3B-Q4_K_M.gguf`) is cached at `/var/tmp/llm-models/` on ghost.
-If the file is missing, delete the pod and let the init container re-download it (~21GB from HuggingFace).
+
+**If pod is CrashLoopBackOff:** Check the container logs first:
+```bash
+kubectl logs -n llm-d <pod-name> -c modelserver
+```
+The model will be cached in the pod's `emptyDir` at `/root/.cache/huggingface` until the pod is deleted.
 
 **Key constraints:**
-- `ROCBLAS_USE_HIPBLASLT=1` for best matmul throughput on gfx1151 (strixhalo.wiki)
-- `hostNetwork: true` + `hostIPC: true` required for ROCm IPC
-- `HSA_OVERRIDE_GFX_VERSION=11.5.1` required — gfx1151 is RDNA 3.5, not RDNA 4
-- Qwen3 uses chain-of-thought thinking by default; add `/no_think` prefix or increase `max_tokens`
+- The default deployment stays baseline-compliant and uses ordinary pod networking; if you revisit this later for tighter ROCm IPC tuning, you may need to re-test with host-network settings in a dedicated namespace
+- The pod is intentionally not pinned to a specific node, so it can land on whichever node later exposes the GPU resource
+- `unsloth/Llama-3.2-3B-Instruct` is intentionally small enough to be practical on the local lab node while still giving a useful chat experience
+- For long prompts, raise `--max-model-len` or use a larger model later; for short local use, the current defaults are a good fit
 
 ---
 
 ## 14. Node onboarding — adding a worker to the cluster
 
+> [!CAUTION]
+> Node onboarding is a private maintainer/operator procedure, not a routine
+> agent recipe. Never retrieve a join token with workstation SSH to `ghost` or
+> `exo-0`; a maintainer must provision the token through an approved secure
+> channel. The commands below run on the new node or through the Kubernetes API.
+
 All nodes in this cluster run image-based, atomic operating systems (Bluefin, Dakota, Bazzite — ostree-based).
 `/usr/local/bin` is a symlink to `/var/usrlocal/bin` (the writable overlay). The k3s install
 script must be told to use this path or it fails on a fresh system.
 
-### Get the join token (run from ghost or this workstation)
+### Provision the join token
 
-```bash
-ssh core@<control-plane-ip> "sudo cat /var/lib/rancher/k3s/server/node-token"
-```
+The k3s join token is a host secret. A maintainer provisions it through the
+approved private enrollment process; do not copy it from a cluster node with
+workstation SSH.
 
 ### Bootstrap a new worker node (run ON the new node, with sudo)
 

@@ -18,6 +18,8 @@ Tests run in two places:
 - **KubeVirt lab** (`run-gnome-tests` WorkflowTemplate) — clones `testsuite` main (or a branch), runs against a real VM
 
 Do NOT add Bluefin image tests here in `lab`. Add them in `testsuite`.
+See [`docs/reference/desktop-coverage.md`](../../reference/desktop-coverage.md)
+for the desktop epic's slice decomposition and runner ownership boundary.
 
 Tests that belong in `lab/tests/` are lab infrastructure tests only:
 `homelab_access`, `homelab_backup`, `homelab_storage`, `homelab_substrate`,

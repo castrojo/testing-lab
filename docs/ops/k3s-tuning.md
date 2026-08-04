@@ -4,6 +4,13 @@ Canonical reference for tuning the k3s server on ghost.
 Applied once via `/etc/rancher/k3s/config.yaml` and a service restart.
 This is not a GitOps manifest — it lives outside ArgoCD's reconciliation scope.
 
+> [!CAUTION]
+> This is a private maintainer/operator procedure for host-level maintenance,
+> not a public agent recipe. Do not SSH from a workstation to `ghost` or
+> `exo-0`; use the approved private maintenance channel. Routine cluster
+> inspection and workload control remain API-driven through `just`, `argo`, and
+> `kubectl`.
+
 ---
 
 ## Why
@@ -88,7 +95,8 @@ etcd-snapshot-compress: true
 
 ## Apply Procedure
 
-1. SSH to ghost (or use a terminal session directly):
+1. In the approved private host-maintenance session (not workstation SSH), edit
+   the file:
 
    ```
    sudo nano /etc/rancher/k3s/config.yaml

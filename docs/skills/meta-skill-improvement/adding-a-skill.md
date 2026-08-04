@@ -26,12 +26,12 @@ Do not create a skill for one-off tasks.
    `.md` files if the skill needs more detail.
 5. Add the skill to `docs/skills/README.md`.
 6. If the skill is part of the standard agent routing table, add a row to
-   `agents.md` as well.
+   `AGENTS.md` as well.
 
 ## When NOT to add a skill
 
 - A one-off task that will not recur.
-- A generic development practice already covered by `/agents.md` or external docs.
+- A generic development practice already covered by `/AGENTS.md` or external docs.
 - A personal preference that does not reflect a team-wide convention.
 
 ## Common Rationalizations

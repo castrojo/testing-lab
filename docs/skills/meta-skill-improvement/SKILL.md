@@ -65,7 +65,7 @@ Route by area changed:
 | `tests/`, `behave`, `dogtail`, `qecore` | [`test-authoring/SKILL.md`](../test-authoring/SKILL.md) |
 | `.github/workflows/` | [`ci-tooling/SKILL.md`](../ci-tooling/SKILL.md) |
 | `scripts/refresh_factory_stats.py` or `scripts/generate_page_datasets.py` | [`ci-tooling/SKILL.md`](../ci-tooling/SKILL.md) (+ [`astro-dashboard-pages/SKILL.md`](../astro-dashboard-pages/SKILL.md) when page contracts/rendering changed) |
-| Repo-wide agent behavior or session hygiene | [`agents.md`](../../../agents.md) |
+| Repo-wide agent behavior or session hygiene | [`AGENTS.md`](../../../AGENTS.md) |
 | Bootstrap cluster setup, `argo/bootstrap/` | [`docs/ops/bootstrap.md`](../../ops/bootstrap.md) |
 | Cluster topology, namespaces, RBAC | [`docs/ops/architecture.md`](../../ops/architecture.md) |
 | Agent operations, MCP tools | [`docs/reference/agent-cheatsheet.md`](../../reference/agent-cheatsheet.md) |

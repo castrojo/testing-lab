@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://factory.projectbluefin.io/schemas/v2/tests-matrix.schema.json",
+  "title": "Derived tests matrix",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "_meta", "summary_metrics", "suite_roles", "dimensions", "rows"],
+  "properties": {
+    "schema_version": {"const": "v3"},
+    "_meta": {"$ref": "#/$defs/metadata"},
+    "summary_metrics": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/summaryMetric"}
+    },
+    "suite_roles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"enum": ["gate", "info"]}
+    },
+    "dimensions": {"$ref": "#/$defs/dimensions"},
+    "rows": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/row"}
+    }
+  },
+  "$defs": {
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "nullableString": {"type": ["string", "null"]},
+    "nullableTimestamp": {"type": ["string", "null"], "format": "date-time"},
+    "publicUrl": {
+      "type": "string",
+      "format": "uri",
+      "minLength": 1,
+      "pattern": "^https://(?:github\\.com|raw\\.githubusercontent\\.com|factory\\.projectbluefin\\.io|projectbluefin\\.github\\.io)(?::443)?(?:[/#?].*)?$"
+    },
+    "nullablePublicUrl": {
+      "anyOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/publicUrl"}
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "description", "generated_at", "starter_artifact", "status"],
+      "properties": {
+        "page": {"const": "tests"},
+        "description": {"$ref": "#/$defs/nonEmptyString"},
+        "generated_at": {"type": "string", "format": "date-time"},
+        "starter_artifact": {"const": false},
+        "status": {"enum": ["ready", "partial"]}
+      }
+    },
+    "summaryMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "value", "unit", "state", "state_reason", "source_url", "collected_at", "derivation"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "label": {"$ref": "#/$defs/nonEmptyString"},
+        "value": {"type": "number"},
+        "unit": {"$ref": "#/$defs/nonEmptyString"},
+        "state": {"enum": ["available", "unavailable"]},
+        "state_reason": {"$ref": "#/$defs/nullableString"},
+        "source_url": {"$ref": "#/$defs/publicUrl"},
+        "collected_at": {"type": "string", "format": "date-time"},
+        "derivation": {"$ref": "#/$defs/nonEmptyString"}
+      }
+    },
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variants", "branches", "suites"],
+      "properties": {
+        "variants": {"$ref": "#/$defs/nonEmptyStringArray"},
+        "branches": {"$ref": "#/$defs/nonEmptyStringArray"},
+        "suites": {"$ref": "#/$defs/nonEmptyStringArray"}
+      }
+    },
+    "nonEmptyStringArray": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/nonEmptyString"}
+    },
+    "artifactEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "state_reason"],
+      "properties": {
+        "state": {"enum": ["available", "unavailable", "not_applicable"]},
+        "state_reason": {"$ref": "#/$defs/nullableString"},
+        "failed_scenarios": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/nonEmptyString"}
+        }
+      }
+    },
+    "failedScenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenario", "failed_runs"],
+      "properties": {
+        "scenario": {"$ref": "#/$defs/nonEmptyString"},
+        "failed_runs": {"type": "integer", "minimum": 1}
+      }
+    },
+    "runHistoryPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflow_uid", "workflow_name", "state", "phase", "started_at", "finished_at", "observed_at", "image_ref", "digest", "source_url"],
+      "properties": {
+        "workflow_uid": {"$ref": "#/$defs/nullableString"},
+        "workflow_name": {"$ref": "#/$defs/nullableString"},
+        "state": {"enum": ["running", "passed", "failed"]},
+        "phase": {"$ref": "#/$defs/nullableString"},
+        "started_at": {"$ref": "#/$defs/nullableTimestamp"},
+        "finished_at": {"$ref": "#/$defs/nullableTimestamp"},
+        "observed_at": {"$ref": "#/$defs/nullableTimestamp"},
+        "image_ref": {"$ref": "#/$defs/nullableString"},
+        "digest": {"$ref": "#/$defs/nullableString"},
+        "source_url": {"$ref": "#/$defs/nullablePublicUrl"}
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "reason", "legacy_results_path"],
+      "properties": {
+        "contract": {"const": "tests-matrix-v2"},
+        "reason": {"$ref": "#/$defs/nonEmptyString"},
+        "legacy_results_path": {"$ref": "#/$defs/nullableString"}
+      }
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "variant", "branch", "suite", "role", "result_status",
+        "last_run", "workflow_name", "digest", "scenarios_total",
+        "scenarios_failed", "pass_rate", "history_points", "results_path",
+        "screenshot_path", "screenshot_url", "state", "state_reason",
+        "enrollment_issue_url", "flake_flips", "runs_recorded",
+        "evidence_state", "evidence_state_reason", "started_at",
+        "finished_at", "observed_at", "workflow_uid", "image_ref",
+        "image_state", "results_evidence", "screenshot_evidence",
+        "terminal_failure_streak", "repeated_failed_scenarios",
+        "repeated_failed_scenarios_state", "repeated_failed_scenarios_reason",
+        "run_history", "evidence_source", "compatibility", "source_url",
+        "collected_at", "derivation"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "variant": {"$ref": "#/$defs/nonEmptyString"},
+        "branch": {"$ref": "#/$defs/nonEmptyString"},
+        "suite": {"$ref": "#/$defs/nonEmptyString"},
+        "role": {"enum": ["gate", "info"]},
+        "result_status": {"enum": ["passed", "failed", "missing", "pending"]},
+        "last_run": {"$ref": "#/$defs/nullableTimestamp"},
+        "workflow_name": {"$ref": "#/$defs/nullableString"},
+        "digest": {"$ref": "#/$defs/nullableString"},
+        "scenarios_total": {"type": ["integer", "null"], "minimum": 0},
+        "scenarios_failed": {"type": ["integer", "null"], "minimum": 0},
+        "pass_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "history_points": {"type": "integer", "minimum": 0},
+        "results_path": {"$ref": "#/$defs/nullableString"},
+        "screenshot_path": {"$ref": "#/$defs/nullableString"},
+        "screenshot_url": {"$ref": "#/$defs/nullablePublicUrl"},
+        "state": {"enum": ["available", "unavailable"]},
+        "state_reason": {"$ref": "#/$defs/nullableString"},
+        "enrollment_issue_url": {"$ref": "#/$defs/nullablePublicUrl"},
+        "flake_flips": {"type": "integer", "minimum": 0},
+        "runs_recorded": {"type": "integer", "minimum": 0},
+        "evidence_state": {"enum": ["running", "passed", "failed", "stale", "unavailable"]},
+        "evidence_state_reason": {"$ref": "#/$defs/nullableString"},
+        "started_at": {"$ref": "#/$defs/nullableTimestamp"},
+        "finished_at": {"$ref": "#/$defs/nullableTimestamp"},
+        "observed_at": {"$ref": "#/$defs/nullableTimestamp"},
+        "workflow_uid": {"$ref": "#/$defs/nullableString"},
+        "image_ref": {"$ref": "#/$defs/nullableString"},
+        "image_state": {"enum": ["available", "unavailable"]},
+        "results_evidence": {"anyOf": [{"$ref": "#/$defs/artifactEvidence"}, {"type": "null"}]},
+        "screenshot_evidence": {"anyOf": [{"$ref": "#/$defs/artifactEvidence"}, {"type": "null"}]},
+        "terminal_failure_streak": {"type": ["integer", "null"], "minimum": 0},
+        "repeated_failed_scenarios": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/failedScenario"}
+        },
+        "repeated_failed_scenarios_state": {"enum": ["available", "unavailable"]},
+        "repeated_failed_scenarios_reason": {"$ref": "#/$defs/nullableString"},
+        "run_history": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/runHistoryPoint"}
+        },
+        "evidence_source": {"enum": ["qa-run-v1", "legacy-results-v1", "none"]},
+        "compatibility": {"$ref": "#/$defs/compatibility"},
+        "source_url": {"$ref": "#/$defs/publicUrl"},
+        "collected_at": {"type": "string", "format": "date-time"},
+        "derivation": {"$ref": "#/$defs/nonEmptyString"}
+      }
+    }
+  }
+}

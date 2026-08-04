@@ -8,15 +8,32 @@ metadata:
     app.kubernetes.io/part-of: bluefin-test-suite
 spec:
   serviceAccountName: argo
+  # The poller is the Workflow that owns digest-triggered container QA; the
+  # child templateRef is a DAG node, not a distinct Workflow.
+  workflowMetadata:
+    labels:
+      bluefin.io/evidence-contract: qa-run-v1
   activeDeadlineSeconds: 14400
+  # Serialize polls for the same state key across CronWorkflow instances.
+  # This makes the compare/QA/update sequence single-flight: a queued poll
+  # rechecks the ConfigMap after the first poll persists the digest.
+  synchronization:
+    mutexes:
+      - name: "image-poll-{{workflow.parameters.state-key}}"
   entrypoint: check-and-trigger
   arguments:
     parameters:
       - name: image
       - name: image-tag
+      # This caller resolves a digest at runtime for the referenced QA
+      # template; declare the parameter so Argo can validate that reference.
+      - name: image-digest
+        value: ""
       - name: state-key
       - name: namespace
         value: "bluefin-test"
+      - name: run-qa
+        value: "true"
       - name: suites
         value: "smoke,common,developer,software,system"
       - name: variant
@@ -47,7 +64,7 @@ spec:
                   value: "{{workflow.parameters.state-key}}"
           - name: run-pipeline
             depends: "check-digest.Succeeded"
-            when: "{{tasks.check-digest.outputs.parameters.changed}} == true"
+            when: "{{tasks.check-digest.outputs.parameters.changed}} == true && {{workflow.parameters.run-qa}} == true"
             templateRef:
               name: bluefin-qa-pipeline
               template: pipeline
@@ -57,6 +74,8 @@ spec:
                   value: "{{workflow.parameters.image}}"
                 - name: image-tag
                   value: "{{workflow.parameters.image-tag}}"
+                - name: image-digest
+                  value: "{{tasks.check-digest.outputs.parameters.remote-digest}}"
                 - name: suites
                   value: "{{workflow.parameters.suites}}"
                 - name: variant
@@ -65,8 +84,10 @@ spec:
                   value: "{{workflow.parameters.branch}}"
                 - name: testsuite-branch
                   value: "{{workflow.parameters.testsuite-branch}}"
+                - name: testsuite-repo
+                  value: "{{workflow.parameters.testsuite-repo}}"
           - name: update-digest
-            depends: "check-digest.Succeeded && run-pipeline.Succeeded"
+            depends: "check-digest.Succeeded && (run-pipeline.Succeeded || run-pipeline.Skipped)"
             when: "{{tasks.check-digest.outputs.parameters.changed}} == true"
             template: update-local
             arguments:
@@ -139,20 +160,29 @@ spec:
           limits:
             cpu: 500m
             memory: 256Mi
-        env:
-          - name: GITHUB_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: github-token
-                key: token
         source: |
           set -eu
           IMAGE_REF="{{inputs.parameters.image}}:{{inputs.parameters.image-tag}}"
+          zot_image() {
+            case "$1" in
+              ghcr.io/*) printf '192.168.1.102:30501/ghcr/%s' "${1#ghcr.io/}" ;;
+              quay.io/*) printf '192.168.1.102:30501/quay/%s' "${1#quay.io/}" ;;
+              docker.io/*) printf '192.168.1.102:30501/docker/%s' "${1#docker.io/}" ;;
+              registry.fedoraproject.org/*) printf '192.168.1.102:30501/fedora/%s' "${1#registry.fedoraproject.org/}" ;;
+              registry.k8s.io/*) printf '192.168.1.102:30501/k8s/%s' "${1#registry.k8s.io/}" ;;
+              cgr.dev/*) printf '192.168.1.102:30501/cgr/%s' "${1#cgr.dev/}" ;;
+              public.ecr.aws/*) printf '192.168.1.102:30501/ecr/%s' "${1#public.ecr.aws/}" ;;
+              lscr.io/*) printf '192.168.1.102:30501/lscr/%s' "${1#lscr.io/}" ;;
+              *) printf '%s' "$1" ;;
+            esac
+          }
+          ZOT_IMAGE_REF=$(zot_image "${IMAGE_REF}")
           REMOTE=""
           for i in 1 2 3; do
-            REMOTE=$(skopeo inspect               --no-tags               --format '{{.Digest}}'               --creds "_token:${GITHUB_TOKEN}"               "docker://${IMAGE_REF}" 2>/dev/null || true)
+            REMOTE=$(timeout 60s skopeo inspect --tls-verify=false --no-tags \
+              --format '{{.Digest}}' "docker://${ZOT_IMAGE_REF}" 2>/dev/null || true)
             [ -n "${REMOTE}" ] && break
-            echo "skopeo attempt ${i}/3 failed for ${IMAGE_REF}; retrying in $(( i * 15 ))s" >&2
+            echo "Zot skopeo attempt ${i}/3 failed for ${IMAGE_REF}; retrying in $(( i * 15 ))s" >&2
             sleep $(( i * 15 ))
           done
 

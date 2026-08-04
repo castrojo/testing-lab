@@ -20,7 +20,7 @@ labels: bug
 
 - Variant: <!-- latest / lts -->
 - GNOME Shell version: <!-- e.g. 50.1 -->
-- Workflow: <!-- e.g. bluefin-titan-smoke-abc12 -->
+- Workflow: <!-- e.g. bluefin-qa-pipeline-abc12 -->
 
 ## Acceptance criteria
 

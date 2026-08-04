@@ -25,6 +25,9 @@ spec:
         app.kubernetes.io/component: node-tuning
         app.kubernetes.io/part-of: bluefin-test-suite
     spec:
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       tolerations:
         - operator: Exists
       hostPID: true
@@ -33,6 +36,7 @@ spec:
           image: cgr.dev/chainguard/kubectl:latest-dev
           securityContext:
             privileged: true
+            runAsUser: 0
           command: [sh, -c]
           args:
             - |

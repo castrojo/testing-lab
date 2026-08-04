@@ -1,17 +1,19 @@
 # Testing Lab Copilot Instructions
 
-Use [`../AGENTS.md`](/agents.md) for repo policy and architecture, and use [`../docs/agent-cheatsheet.md`](/docs/reference/agent-cheatsheet.md) for the canonical command reference.
+Use [`../AGENTS.md`](/AGENTS.md) for repo policy and architecture, and use [`../docs/agent-cheatsheet.md`](/docs/reference/agent-cheatsheet.md) for the canonical command reference.
 
 Keep only these repo-specific inline reminders:
 
 - Use `just` entrypoints first; do not duplicate command tables here.
-- No SSH to ghost or exo-1.
+- No SSH to ghost or exo-0.
 - KubeStellar Console is the sole private cluster-admin/single-pane UI for the
   canonical local `ghost` k3s topology; Astro stays public and read-only,
   Prometheus stays backend-only, and Grafana or parallel dashboard frameworks
   are out of scope.
 - No `kubectl apply` for `argo/workflow-templates/` or `manifests/`; edit git-tracked YAML and let ArgoCD reconcile it.
-- All test runs use ephemeral KubeVirt VMs — no persistent titan VMs. `just list-vms` should show empty when no workflows run.
+- VM-backed test runs use ephemeral KubeVirt VMs — no persistent titan VMs. Container-only
+  Bluefin/Dakota QA does not create VMs; `just list-vms` should show empty when no VM
+  workflows run.
 - After pushing a fix, verify the live template via `argo-mcp-get_workflow_template` before resubmitting — templates snapshot at submit time.
 - Never enable shell tracing in Argo scripts that call authenticated APIs; workflow logs must be inspected for secret redaction before being linked to PRs.
 - Treat `pr/needs-review` as a hard maintainer gate; `automerge` and `chore/deps` labels alone do not authorize a PR-batch run.

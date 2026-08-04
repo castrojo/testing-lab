@@ -212,13 +212,32 @@ spec:
             fi
           done
 
-          WORKERS="$(kubectl get pods -n buildbarn -l app=worker -o jsonpath='{range .items[*]}{.spec.nodeName}{"|"}{.status.phase}{"|"}{.status.containerStatuses[*].ready}{"\n"}{end}')"
+          # Match the BuildBarn worker containers by name, not by container
+          # count: the DaemonSet also runs preparation sidecars whose readiness
+          # is a separate health boundary from outer remote execution.
+          WORKERS="$(kubectl get pods -n buildbarn -l app=worker -o jsonpath='{range .items[*]}{.spec.nodeName}{"|"}{.status.phase}{"|worker="}{range .status.containerStatuses[?(@.name=="worker")]}{.ready}{end}{"|runner="}{range .status.containerStatuses[?(@.name=="runner")]}{.ready}{end}{"\n"}{end}')"
           for NODE in ghost exo-0; do
-            if ! grep -Eq "^${NODE}\|Running\|true true$" <<<"${WORKERS}"; then
+            if ! grep -Eq "^${NODE}\|Running\|worker=true\|runner=true$" <<<"${WORKERS}"; then
               echo "USB4 BuildBarn gate rejected: no Ready worker on ${NODE}" >&2
               exit 1
             fi
           done
+
+          # Mandatory nested RECC admission, checked before the expensive
+          # build work: the lab-owned overlay refuses every mandatory-RECC
+          # lane while no BuildBarn runner consumes BuildStream's
+          # remoteApisSocketPath. Probe the deployed runner configuration so
+          # this lane fails here with an actionable message instead of
+          # silently running with outer remote execution only. Restoring an
+          # outer-RE-only build is a deliberate GitOps rollback, not a normal
+          # path; see docs/reference/recc-runner-seam.md.
+          RUNNER_CONFIG="$(kubectl get configmap buildbarn-config -n buildbarn -o jsonpath='{.data.runner\.jsonnet}')"
+          # Match a real jsonnet field, not the explanatory comments.
+          if ! grep -Eq '^[[:space:]]*remoteApisSocketPath[[:space:]]*:' <<<"${RUNNER_CONFIG}"; then
+            echo "RECC admission rejected: the deployed bb_runner does not consume BuildStream's remoteApisSocketPath, so nested RECC cannot run; this lane must not fall back to outer-RE-only or cache-only execution (docs/reference/recc-runner-seam.md)" >&2
+            exit 1
+          fi
+          echo "Nested RECC runner capability observed in buildbarn-config"
 
           echo "USB4-backed BuildBarn remote execution admitted"
           printf '%s' re > /tmp/mode
@@ -292,6 +311,10 @@ spec:
                 path: buildstream.conf
               - key: remote-execution.conf
                 path: remote-execution.conf
+              - key: recc-environment.conf
+                path: recc-environment.conf
+              - key: apply_recc_overlay.py
+                path: apply_recc_overlay.py
       script:
         image: "{{inputs.parameters.registry}}/bst2:64eb0b4930d57a92710822898fb73af6cc1ae35d"
         command: [bash]
@@ -315,6 +338,11 @@ spec:
           # so skipping smudge does not affect the compiled artifact.
           - name: GIT_LFS_SKIP_SMUDGE
             value: "1"
+          - name: RECC_ENDPOINT
+            valueFrom:
+              configMapKeyRef:
+                name: buildstream-remote-cache
+                key: recc-endpoint
         resources:
           requests:
             cpu: "1"
@@ -345,6 +373,17 @@ spec:
           rm -rf /src
           git clone --depth=1 --branch "${REF}" "${REPO}" /src
           cd /src
+          echo "=== Applying lab RECC overlay (cosmic) ==="
+          # Mandatory admission, no mode flags: the shared overlay refuses this
+          # lane while nested RECC is unavailable, and this lane must fail
+          # closed rather than continue with outer remote execution only.
+          # --runner-capability may only be added once a BuildBarn runner is
+          # proven to honor BuildStream's remoteApisSocketPath, and
+          # --pilot-cache-only is operator-only for the prototype baseline.
+          python3 /etc/buildstream/apply_recc_overlay.py /src \
+            --project-kind cosmic \
+            --endpoint "${RECC_ENDPOINT}" \
+            --json
           PROJECT_NAME=$(awk -F': *' '/^name:/{print $2; exit}' project.conf | tr -d '\r')
 
           cat >> /tmp/buildstream-cluster.conf <<EOF
@@ -398,6 +437,16 @@ spec:
               artifact checkout "${ELEMENT}" \
               --directory "${EXPORT_DIR}"; then
             echo "BST artifact export timed out after ${BST_EXPORT_TIMEOUT_SECONDS}s for ${ELEMENT}" >&2
+            exit 1
+          fi
+
+          _PUSH_DEST="{{inputs.parameters.registry}}"
+          registry_host="${_PUSH_DEST#*://}"
+          registry_host="${registry_host%%/*}"
+          registry_host="${registry_host%%:*}"
+          registry_host="$(printf '%s' "${registry_host}" | tr '[:upper:]' '[:lower:]')"
+          if [[ "${registry_host}" == "ghcr.io" || "${registry_host}" == *.ghcr.io ]]; then
+            echo "ERROR: GHCR push destination is forbidden: ${_PUSH_DEST}" >&2
             exit 1
           fi
 

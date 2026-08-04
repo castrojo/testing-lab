@@ -1,7 +1,11 @@
 ---
 name: cluster-buildstream
 description: >
-  USB4 admission rules, BuildStream distributed builds, and Buildbarn recovery.
+  Use when operating USB4 admission, BuildStream distributed builds, Buildbarn
+  recovery, or the isolated RECC pilot evidence path.
+metadata:
+  context7-sources:
+    - /apache/buildstream
 ---
 
 # BuildStream and Distributed Builds
@@ -198,22 +202,66 @@ grid; do not fall back to a runner-local or cache-only build. The
 the generated BuildStream configuration. A healthy run has two Ready workers,
 two action slots, and observable current worker actions.
 
+The isolated `bst2` RECC pilot is a nested sandbox workload and must run its
+script container with `privileged: true` and `seLinuxOptions.type: spc_t`.
+Without that runtime contract, BuildStream's bubblewrap sandbox fails before
+compiler execution with `Can't mount proc on /newroot/proc: Operation not
+permitted`. This requirement is specific to the pilot container; it does not
+enable nested RECC or relax the production runner admission gate.
+
 **RECC (Remote Execution C/C++ Compiler) integration:**
-The build grid supports fine-grained C/C++ compiler distribution via RECC
-(`recc` wrapper) following GNOME `gnome-build-meta` MR 4704 (`!4704`) and
-FreeDesktop-SDK work item 1961 (`freedesktop-sdk#1961`).
+The lab has a checkout-local RECC overlay and worker-local `buildbox-casd`
+preparation seam. The isolated operator pilot is the only supported cache
+experiment; production BuildStream/QA/warmup lanes fail closed until a pinned
+runner demonstrably consumes BuildStream's `remoteApisSocketPath` and stages
+the pod-local LocalCAS socket.
 - **Macro level:** BuildStream schedules element builds across BuildBarn workers.
-- **Micro level (RECC):** C/C++ compilation commands (`gcc`, `g++`, `clang`)
-  inside build elements fan out as parallel remote execution actions directly
-  to `frontend.buildbarn.svc.cluster.local:8980`.
-- **Configuration:** Injected via `recc-environment.conf` ConfigMap in
-  `manifests/buildstream-remote-cache-config.yaml` (`RECC_SERVER=frontend.buildbarn.svc.cluster.local:8980`,
-  `RECC_PROJECT_ROOT=/workspace`, `RECC_PREFIX=recc`).
+- **Micro level (RECC):** RECC can cache or distribute individual C/C++
+  compiler invocations inside one element; it is distinct from outer
+  BuildStream remote execution. Linking and non-C++ toolchains remain local
+  unless separately wrapped.
+- **Configuration:** `recc-environment.conf` supplies the shared server,
+  CAS, action-cache, project-root, and policy values. Toolchain elements must
+  supply `RECC_REMOTE_PLATFORM_chrootRootDigest`; the lab does not invent a
+  global digest or set `RECC_PREFIX`.
+- **Pilot:** Run `just run-recc-baseline mode=cache-only cache-policy=both`.
+  Keep the source revision, pinned freedesktop-sdk provider, `bst2` image,
+  and worker set fixed. See `docs/reference/recc-baseline.md` and the measured
+  results in `docs/research/2026-07-31-recc-run-results.md`.
+- **Evidence boundary:** A successful outer BuildStream build is not RECC
+  evidence. The collector preserves missing RECC action fields as
+  `unavailable`; current runs have real BuildStream/BuildBarn timing and CAS
+  data but no trustworthy RECC hit/miss metrics.
+
+### RECC pilot evidence handoff
+
+The operator-only `recc-baseline-pipeline` must use BuildStream's configured
+`logdir` as the sandbox-to-workflow evidence path. The fixture writes its
+StatsD output under `%{build-root}`, prints each record with a
+`[RECC_METRICS]` marker into the element build log, and removes the file before
+installing the deterministic artifact. The workflow points `logdir` at its
+`/work` volume and preserves complete RECC-marked lines; do not put metrics in
+`%{install-root}`, a checked-out artifact, or a host mount.
+
+This preserves artifact determinism while making action-cache hits/misses,
+local fallbacks, and compiler timing available to the collector. A cache-only
+or upload-local-build pilot must fail closed when the BuildStream logdir has no
+valid RECC StatsD metric evidence rather than report zeros or infer a warm hit from outer
+BuildStream success. This follows BuildStream's documented writable
+`%{build-root}`/`%{install-root}` sandbox paths and user-configured `logdir`
+(`source: /apache/buildstream`).
 
 ### 1. Shared Buildbarn frontend
 - **Endpoint**: `grpc://frontend.buildbarn.svc.cluster.local:8980`
 - **Role**: CAS/AC artifact writes and reads; execute-forwarding for BuildStream actions that use the in-cluster execution grid
 - **Deployment**: Frontend, scheduler, storage shards, and workers are defined under `manifests/buildbarn-*.yaml` and run in the `buildbarn` namespace
+
+Cache heat is persisted by `scripts/collect_bst_cache.py` in
+`docs/data/history/cache-heat.ndjson`. BuildBarn's current diagnostics expose
+`Get` counts, byte sums, duration sums, and gRPC status counts. The collector
+treats `OK` as a hit and `NotFound` as a miss; if those status counters are unavailable, it keeps
+`hit_count`, `miss_count`, and `effectiveness` null rather than estimating from
+storage occupancy or allocator counters.
 
 ### 2. BuildStream client config
   The build pods should generate a deterministic `buildstream.conf` that keeps upstream source caches read-only and pushes artifacts to the shared Buildbarn frontend first. Dakota's coordinator remains bounded by its two one-slot BuildBarn workers; do not increase BuildStream jobs, worker count, or semaphore capacity while remote execution or CAS materialization is unhealthy:
@@ -281,7 +329,15 @@ state must persist between workflow steps. It must use the `local-path` StorageC
 with the explicit GitOps node-to-data-mount mapping. Never use `/var/tmp`, a
 root filesystem, or a node-local `hostPath` cache.
 
-### 5. Buildbarn durable shard backup / restore
+### 5. Private maintainer procedure — Buildbarn durable shard backup / restore
+
+> [!CAUTION]
+> This section is retained for maintainers who have explicitly approved a
+> storage maintenance window and backup plan. It is not a normal public recipe:
+> host-path copies, retained PVC/PV deletion, and restore commands can destroy
+> data. Never run it from a workstation or use workstation SSH to `ghost` or
+> `exo-0`; use the approved private operator channel. Routine Buildbarn
+> operations remain API-driven through `just`, `argo`, `kubectl`, and GitOps.
 
 #### What is durable vs. disposable
 - **Durable**: the `storage` StatefulSet's per-ordinal `local-path` PVCs. `manifests/buildbarn-storage.yaml` defines two replicas (`storage-0`, `storage-1`) with **required** podAntiAffinity, plus two PVCs per ordinal: `cas` mounted at `/storage-cas` and `ac` mounted at `/storage-ac`.

@@ -385,12 +385,14 @@ spec:
         FROM __SOURCE_IMAGE__
         RUN dnf install -y --setopt=install_weak_deps=False \
               cmake extra-cmake-modules gcc-c++ make git \
-              qt6-qtbase-devel qt6-qtwayland-devel \
+              qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtwayland-devel \
               kf6-kwayland-devel kf6-kwindowsystem-devel kf6-kcoreaddons-devel \
               kpipewire-devel plasma-wayland-protocols-devel \
               libxkbcommon-devel wayland-devel \
+              qemu-guest-agent \
               python3-devel python3-flask python3-pyatspi python3-lxml \
               python3-gobject ruby ruby-devel \
+            && systemctl enable qemu-guest-agent.service \
             && dnf clean all \
             && git clone --quiet --depth 1 https://github.com/KDE/selenium-webdriver-at-spi.git /usr/src/selenium-webdriver-at-spi \
             && cd /usr/src/selenium-webdriver-at-spi \
@@ -476,6 +478,14 @@ spec:
           '    rm -f /tmp/findmnt-wrapper' \
           > "${BOOTABLE_CTX}/Containerfile"
         echo "[BUILD] deriving bootable source image ${BOOTABLE_IMAGE_LOCAL}"
+        registry_host="${BOOTABLE_IMAGE_REMOTE#*://}"
+        registry_host="${registry_host%%/*}"
+        registry_host="${registry_host%%:*}"
+        registry_host="$(printf '%s' "${registry_host}" | tr '[:upper:]' '[:lower:]')"
+        if [[ "${registry_host}" == "ghcr.io" || "${registry_host}" == *.ghcr.io ]]; then
+          echo "ERROR: GHCR push destination is forbidden: ${BOOTABLE_IMAGE_REMOTE}" >&2
+          exit 1
+        fi
         podman build --tls-verify=false -t "${BOOTABLE_IMAGE_LOCAL}" -f "${BOOTABLE_CTX}/Containerfile" "${BOOTABLE_CTX}"
         podman push --tls-verify=false "${BOOTABLE_IMAGE_LOCAL}" "docker://${BOOTABLE_IMAGE_REMOTE}"
         SOURCE_IMGREF="docker://${BOOTABLE_IMAGE_REMOTE}"
@@ -499,13 +509,12 @@ spec:
           --via-loopback \
           "${DISK}"
 
-        # Some images disable the runtime services the lab depends on.
-        # Bluefin needs qemu-guest-agent for KubeVirt accessCredentials, and
-        # the lab also needs sshd.service to be enabled in the ostree deployment.
-        echo "[POST-INSTALL] Enabling qemu-guest-agent.service and sshd.service for lab access..."
+        # Bluefin needs qemu-guest-agent for KubeVirt accessCredentials.
+        # The provision workflow starts sshd.socket after the agent is ready;
+        # enabling sshd.service here would make the socket fail to bind port 22.
+        echo "[POST-INSTALL] Enabling qemu-guest-agent.service for lab access..."
         LOOP_DEV=$(losetup -f --show -P "${DISK}")
         SYSROOT=$(mktemp -d)
-        SSHD_ENABLED=false
         QGA_ENABLED=false
         for PARTNUM in 4 3 2; do
           PART="${LOOP_DEV}p${PARTNUM}"
@@ -516,6 +525,9 @@ spec:
             DEPLOY_DIR=$(find "${SYSROOT}/ostree/deploy" -maxdepth 5 -name "*.0" -type d \
               -not -path "*/backing/*" 2>/dev/null | head -1)
             if [ -n "${DEPLOY_DIR}" ]; then
+              QGA_UNIT="${DEPLOY_DIR}/usr/lib/systemd/system/qemu-guest-agent.service"
+              test -f "${QGA_UNIT}" ||
+                { echo "[POST-INSTALL] qemu-guest-agent.service is absent" >&2; exit 1; }
               QGA_WANTS="${DEPLOY_DIR}/etc/systemd/system/multi-user.target.wants/qemu-guest-agent.service"
               if [ ! -e "${QGA_WANTS}" ]; then
                 mkdir -p "$(dirname "${QGA_WANTS}")"
@@ -526,15 +538,30 @@ spec:
               fi
               QGA_ENABLED=true
 
-              WANTS="${DEPLOY_DIR}/etc/systemd/system/multi-user.target.wants/sshd.service"
-              if [ ! -e "${WANTS}" ]; then
-                mkdir -p "$(dirname "${WANTS}")"
-                ln -sf /usr/lib/systemd/system/sshd.service "${WANTS}"
-                echo "[POST-INSTALL] sshd.service enabled in ${DEPLOY_DIR}"
-              else
-                echo "[POST-INSTALL] sshd.service already enabled"
+              # --with-static-configs avoids the btrfs findmnt bug above, but
+              # does not write the boot filesystem UUID.  A generic disk's
+              # root filesystem is labelled "root", not "boot", so GRUB needs
+              # this bootupd-format file in its EFI vendor directory to find
+              # the real grub.cfg.
+              ROOT_UUID="$(blkid -s UUID -o value "${PART}")"
+              test -n "${ROOT_UUID}"
+              ESP_ROOT="${STAGING}/esp-root"
+              mkdir -p "${ESP_ROOT}"
+              mount "${LOOP_DEV}p2" "${ESP_ROOT}"
+              BOOTUUID_WRITTEN=false
+              for GRUB_CFG in "${ESP_ROOT}"/EFI/*/grub.cfg; do
+                [ -f "${GRUB_CFG}" ] || continue
+                printf 'set BOOT_UUID="%s"\n' "${ROOT_UUID}" \
+                  > "$(dirname "${GRUB_CFG}")/bootuuid.cfg"
+                BOOTUUID_WRITTEN=true
+              done
+              sync
+              umount "${ESP_ROOT}"
+              rmdir "${ESP_ROOT}"
+              if [ "${BOOTUUID_WRITTEN}" != true ]; then
+                echo "[POST-INSTALL] bootupd EFI vendor grub.cfg was not found" >&2
+                exit 1
               fi
-              SSHD_ENABLED=true
 
               # Restore original findmnt binaries by finding all findmnt.orig in the deployed system root
               echo "[POST-INSTALL] Restoring original findmnt binaries..."
@@ -554,9 +581,6 @@ spec:
         losetup -d "${LOOP_DEV}" 2>/dev/null || true
         if [ "${QGA_ENABLED}" = false ]; then
           echo "[POST-INSTALL] WARNING: could not find ostree deploy dir to enable qemu-guest-agent"
-        fi
-        if [ "${SSHD_ENABLED}" = false ]; then
-          echo "[POST-INSTALL] WARNING: could not find ostree deploy dir to enable sshd"
         fi
 
   - name: convert-and-push
@@ -600,6 +624,14 @@ spec:
         RAW="${STAGING}/disk.raw"
         QCOW="${STAGING}/containerdisk.qcow2"
         DEST="192.168.1.102:30500/{{inputs.parameters.containerdisk-repo}}:${TAG}"
+        registry_host="${DEST#*://}"
+        registry_host="${registry_host%%/*}"
+        registry_host="${registry_host%%:*}"
+        registry_host="$(printf '%s' "${registry_host}" | tr '[:upper:]' '[:lower:]')"
+        if [[ "${registry_host}" == "ghcr.io" || "${registry_host}" == *.ghcr.io ]]; then
+          echo "ERROR: GHCR push destination is forbidden: ${DEST}" >&2
+          exit 1
+        fi
 
         echo "Converting ${RAW} to qcow2..."
         qemu-img convert -f raw -O qcow2 -p "${RAW}" "${QCOW}"

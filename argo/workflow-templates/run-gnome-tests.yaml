@@ -51,6 +51,15 @@ spec:
             # image tag used to derive the screenshot slug pushed to GHCR
             # e.g. "testing", "lts-testing", "dakota-testing"
         value: ""
+    outputs:
+      parameters:
+      - name: result
+        valueFrom:
+          path: /tmp/results/result-summary.txt
+      - name: failed-scenarios
+        valueFrom:
+          path: /tmp/results/failed-scenarios.json
+          default: "[]"
       # 60-minute ceiling: SSH wait (10min) + dnf install (10min) + test run (30min)
     activeDeadlineSeconds: 3600
     podSpecPatch: |
@@ -59,7 +68,7 @@ spec:
       tolerations: []
      # outputs.artifacts removed: Argo wait sidecar fails with exit 64 when no
       # artifact repository is configured, even for optional artifacts.
-      # Results are captured via outputs.result (stdout) + kubectl logs.
+      # Result summaries and scenario evidence are explicit file outputs.
     initContainers:
     - name: git-sync
       image: ghcr.io/projectbluefin/lab-runner:latest
@@ -480,6 +489,31 @@ spec:
         if [[ "${SUITE}" != "common" ]]; then
           ${SCP} ${VM_USER}@${VM_HOST}:/tmp/results/. /tmp/results/ || true
         fi
+        if [[ -f /tmp/results/results.json ]]; then
+          python3 - <<'PY'
+        import json
+        import re
+
+        with open("/tmp/results/results.json", encoding="utf-8") as result_file:
+            data = json.load(result_file)
+        safe_name = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,:;()/_+-]{0,159}$")
+        failed_scenarios = []
+        for feature in data:
+            for scenario in feature.get("elements", []):
+                name = scenario.get("name")
+                if (
+                    scenario.get("status") == "failed"
+                    and isinstance(name, str)
+                    and safe_name.fullmatch(name)
+                    and not any(word in name.lower() for word in
+                                ("token", "password", "secret", "authorization"))
+                    and name not in failed_scenarios
+                ):
+                    failed_scenarios.append(name)
+        with open("/tmp/results/failed-scenarios.json", "w", encoding="utf-8") as artifact_file:
+            json.dump(failed_scenarios[:20], artifact_file, separators=(",", ":"))
+        PY
+        fi
 
         # Persist results + screenshots to ghost disk for release evidence
         RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}/${SUITE}"
@@ -501,31 +535,10 @@ spec:
           *)         IMG_SLUG="bluefin-${VARIANT_TAG}" ;;
         esac
 
-        # Push desktop screenshot to GHCR as OCI artifact for release notes.
-        # Convention matches projectbluefin/testsuite/e2e.yml:
-        #   ghcr.io/projectbluefin/testsuite/desktop-screenshot:<slug>-<suite>-latest
+        # Screenshot discovery; GHCR upload is disabled, retained locally only.
         SHOT=$(find /tmp/results/ -name "*.png" | head -1)
         if [[ -n "$SHOT" && -f "$SHOT" ]]; then
-          if ! command -v oras &>/dev/null; then
-            ORAS_VER="1.2.3"
-            curl -sSfL "https://github.com/oras-project/oras/releases/download/v${ORAS_VER}/oras_${ORAS_VER}_linux_amd64.tar.gz" \
-              | tar xz -C /usr/local/bin/ oras 2>/dev/null || true
-          fi
-          if command -v oras &>/dev/null; then
-            SCREENSHOT_IMAGE="ghcr.io/projectbluefin/testsuite/desktop-screenshot"
-            PUSH_TAG="${IMG_SLUG}-${SUITE}-latest"
-            if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-              echo "${GITHUB_TOKEN}" | oras login ghcr.io -u github-actions --password-stdin 2>/dev/null || true
-              cp "$SHOT" /tmp/desktop-screenshot.png
-              oras push "${SCREENSHOT_IMAGE}:${PUSH_TAG}" \
-                --annotation "org.opencontainers.image.description=Bluefin desktop screenshot from lab e2e suite: ${SUITE}" \
-                --annotation "io.github.projectbluefin.caller_repo=projectbluefin/lab" \
-                /tmp/desktop-screenshot.png:image/png 2>&1 || true
-              echo "Screenshot pushed to ${SCREENSHOT_IMAGE}:${PUSH_TAG}" >&2
-            else
-              echo "No GITHUB_TOKEN - skipping GHCR screenshot push" >&2
-            fi
-          fi
+          echo "GHCR screenshot publication disabled; retaining screenshot locally only." >&2
         fi
 
 
@@ -546,17 +559,21 @@ spec:
           cat /tmp/results/results.json >&2
           echo "=== END BEHAVE RESULTS ===" >&2
         fi
-        # Only the final result summary goes to stdout (Argo outputs.result)
-        python3 -c "
+        # Publish a result only when structured Behave output exists and can be
+        # parsed. A missing summary must not make an execution failure look
+        # successful to the evidence reconciler.
+        if [[ -f /tmp/results/results.json ]]; then
+          python3 -c "
         import json, sys
-        try:
-            data = json.load(open('/tmp/results/results.json'))
-            failed = sum(1 for f in data for s in f.get('elements',[]) if s.get('status') == 'failed')
-            total  = sum(len(f.get('elements',[])) for f in data)
-            print(f'{total - failed}/{total} scenarios passed')
-        except Exception:
-            print('results.json not found')
-        " 2>/dev/null || echo "(python3 summary unavailable)"
+        data = json.load(open('/tmp/results/results.json'))
+        failed = sum(1 for f in data for s in f.get('elements',[]) if s.get('status') == 'failed')
+        total = sum(len(f.get('elements',[])) for f in data)
+        print(f'{total - failed}/{total} scenarios passed')
+          " > /tmp/results/result-summary.txt 2>/dev/null || {
+            rm -f /tmp/results/result-summary.txt
+            echo "ERROR: unable to derive result summary from results.json" >&2
+          }
+        fi
         # Re-raise behave's exit code so Argo marks the step failed on test failures.
         exit ${BEHAVE_RC}
         } < /dev/null

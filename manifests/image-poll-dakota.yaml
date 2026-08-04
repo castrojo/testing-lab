@@ -1,5 +1,6 @@
 # CronWorkflow: polls ghcr.io/projectbluefin/dakota:testing every 10 minutes.
-# Triggers dakota-qa-pipeline only when OCI digest changes vs ConfigMap state.
+# Tracks OCI digest changes without launching frequent QA; daily QA is scheduled
+# by nightly-dakota.
 apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow
 metadata:
@@ -9,15 +10,16 @@ metadata:
     app.kubernetes.io/part-of: lab
     bluefin.io/trigger: digest-poll
 spec:
-  # Active: Dakota now runs through the container-only dakota-qa-pipeline path,
-  # so the digest poller can dispatch suite runs without any containerDisk or
-  # VM provisioning arguments.
+  # Keep this poller active for freshness state; QA is intentionally disabled.
   suspend: false
   schedules:
     - "8/10 * * * *"
   timezone: "UTC"
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 300
+  workflowMetadata:
+    labels:
+      bluefin.io/evidence-contract: qa-run-v1
   workflowSpec:
     serviceAccountName: argo
     podGC:
@@ -35,10 +37,16 @@ spec:
           value: "digest-dakota-testing"
         - name: suites
           value: "smoke"
+        - name: image-digest
+          value: ""
+        - name: run-qa
+          value: "false"
         - name: variant
           value: "dakota"
         - name: testsuite-repo
           value: "https://github.com/projectbluefin/testsuite"
+        - name: testsuite-branch
+          value: "main"
         - name: branch
           value: "main"
     entrypoint: check-and-trigger
@@ -60,7 +68,7 @@ spec:
                     value: "{{workflow.parameters.state-key}}"
             - name: run-pipeline
               depends: "check-digest.Succeeded"
-              when: "{{tasks.check-digest.outputs.parameters.changed}} == true"
+              when: "{{tasks.check-digest.outputs.parameters.changed}} == true && {{workflow.parameters.run-qa}} == true"
               templateRef:
                 name: dakota-qa-pipeline
                 template: pipeline
@@ -70,9 +78,25 @@ spec:
                     value: "{{workflow.parameters.image}}"
                   - name: image-tag
                     value: "{{workflow.parameters.image-tag}}"
+                  - name: image-digest
+                    value: "{{tasks.check-digest.outputs.parameters.remote-digest}}"
                   - name: suites
                     value: "{{workflow.parameters.suites}}"
                   - name: variant
                     value: "{{workflow.parameters.variant}}"
                   - name: branch
                     value: "{{workflow.parameters.branch}}"
+            - name: update-digest
+              depends: "check-digest.Succeeded && (run-pipeline.Succeeded || run-pipeline.Skipped)"
+              when: "{{tasks.check-digest.outputs.parameters.changed}} == true"
+              templateRef:
+                name: image-poller
+                template: update-local
+              arguments:
+                parameters:
+                  - name: state-key
+                    value: "{{workflow.parameters.state-key}}"
+                  - name: remote-digest
+                    value: "{{tasks.check-digest.outputs.parameters.remote-digest}}"
+                  - name: expected-digest
+                    value: "{{tasks.check-digest.outputs.parameters.stored-digest}}"

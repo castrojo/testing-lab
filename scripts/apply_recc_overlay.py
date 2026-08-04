@@ -1,0 +1,859 @@
+#!/usr/bin/env python3
+"""Apply the lab-owned RECC integration to an isolated BuildStream checkout.
+
+The overlay is deliberately checkout-local.  It never edits a downstream
+repository or a workflow template, and it refuses to guess at unfamiliar
+project layouts.
+
+It is also fail-closed about the two known blockers:
+
+* production lanes are refused unless ``--runner-capability`` asserts that the
+  deployed BuildBarn runner honors BuildStream's ``remoteApisSocketPath``;
+* every overlay requires a pinned element that actually stages ``recc`` in the
+  sandbox, because the build image's host ``recc`` is not visible there.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlsplit
+
+
+OVERLAY_VERSION = "2.0.0"
+DEFAULT_ENDPOINT = "grpc://frontend.buildbarn.svc.cluster.local:8980"
+MIN_BUILDSTREAM_VERSION = (2, 5)
+MANAGED_FILES = (
+    "include/recc.yml",
+    "include/gcc-for-recc.yml",
+    "include/clang-for-recc.yml",
+    "elements/buildsystems/recc-wrapper.bst",
+    "files/recc-wrapper/recc-wrapper",
+)
+
+
+class OverlayError(RuntimeError):
+    """Raised when a checkout is not a known, safe overlay target."""
+
+
+@dataclass(frozen=True)
+class ProjectAdapter:
+    kind: str
+    required_paths: tuple[str, ...]
+    element_roots: tuple[str, ...]
+    compiler_markers: tuple[str, ...]
+    forced_digest_targets: tuple[str, ...] = ()
+    forced_wrapper_targets: tuple[str, ...] = ()
+    # Element that stages the `recc` binary into the sandbox. freedesktop-sdk
+    # builds `components/buildbox.bst` with -DRECC=ON, so that element is the
+    # only pinned provider the lab can point at today. The bst2 image's host
+    # `recc` is never visible inside a BuildStream sandbox.
+    recc_provider: str | None = "freedesktop-sdk.bst:components/buildbox.bst"
+    allow_missing_digest_targets: bool = False
+    # Mandatory-RECC lanes (production builds, warmup, and QA) must not run at
+    # all until a runner is proven to honor BuildStream's remoteApisSocketPath
+    # platform property. Only the operator-driven pilot baseline is exempt.
+    production: bool = True
+
+
+ADAPTERS = {
+    "dakota": ProjectAdapter(
+        kind="dakota",
+        required_paths=(
+            "project.conf",
+            "elements/freedesktop-sdk.bst",
+            "elements/gnome-build-meta.bst",
+            "elements/oci/layers/bluefin.bst",
+            "elements/oci/layers/bluefin-nvidia.bst",
+        ),
+        element_roots=("elements/bluefin", "elements/oci"),
+        compiler_markers=(
+            "freedesktop-sdk.bst:components/gcc",
+            "freedesktop-sdk.bst:components/clang",
+            "buildsystems/",
+        ),
+        forced_digest_targets=(
+            "elements/oci/layers/bluefin.bst",
+            "elements/oci/layers/bluefin-nvidia.bst",
+        ),
+    ),
+    "cosmic": ProjectAdapter(
+        kind="cosmic",
+        required_paths=(
+            "project.conf",
+            "elements/freedesktop-sdk.bst",
+            "elements/core/cosmic-comp.bst",
+            "elements/core/cosmic-files.bst",
+        ),
+        element_roots=(
+            "elements/core",
+            "elements/core-deps",
+            "elements/cosmic-deps",
+            "elements/cosmic-deps-nvidia",
+            "elements/gaming",
+            "elements/oci",
+        ),
+        compiler_markers=(
+            "freedesktop-sdk.bst:components/gcc",
+            "freedesktop-sdk.bst:components/clang",
+            "buildsystems/",
+        ),
+        forced_digest_targets=(
+            "elements/core/cosmic-comp.bst",
+            "elements/core/cosmic-files.bst",
+        ),
+    ),
+    "bluefin-server": ProjectAdapter(
+        kind="bluefin-server",
+        required_paths=(
+            "project.conf",
+            "elements/freedesktop-sdk.bst",
+            "elements/gnome-build-meta.bst",
+            "elements/oci/bluefin-server-ddi.bst",
+            "elements/oci/bluefin-server-installer.bst",
+        ),
+        element_roots=("elements/bluefin-server", "elements/oci"),
+        compiler_markers=(
+            "freedesktop-sdk.bst:components/gcc",
+            "freedesktop-sdk.bst:components/clang",
+            "buildsystems/",
+        ),
+        forced_digest_targets=(
+            "elements/oci/bluefin-server-ddi.bst",
+            "elements/oci/bluefin-server-installer.bst",
+        ),
+        forced_wrapper_targets=(
+            "elements/oci/bluefin-server-ddi.bst",
+            "elements/oci/bluefin-server-installer.bst",
+        ),
+    ),
+    "bst-prototype": ProjectAdapter(
+        kind="bst-prototype",
+        required_paths=(
+            "project.conf",
+            "elements/freedesktop-sdk.bst",
+            "elements/recc-baseline.bst",
+        ),
+        element_roots=("elements",),
+        compiler_markers=("g++", "clang++"),
+        forced_digest_targets=("elements/recc-baseline.bst",),
+        forced_wrapper_targets=("elements/recc-baseline.bst",),
+        recc_provider=None,
+        allow_missing_digest_targets=False,
+        production=False,
+    ),
+    # The bst-qa lane is a real lab QA lane, not an operator experiment: it
+    # carries the same mandatory-RECC admission contract as the build lanes.
+    "bst-qa": ProjectAdapter(
+        kind="bst-qa",
+        required_paths=("project.conf", "elements/recc-baseline.bst"),
+        element_roots=("elements",),
+        compiler_markers=("g++", "clang++"),
+        forced_wrapper_targets=("elements/recc-baseline.bst",),
+        recc_provider=None,
+        allow_missing_digest_targets=True,
+        production=True,
+    ),
+}
+
+
+RECC_INCLUDE = """\
+# Generated by the lab RECC checkout overlay {version}; do not commit this file.
+#
+# The nested socket stanza is intentionally absent unless the runner capability
+# was explicitly supplied to apply_recc_overlay.py.
+environment:
+  # Prepend the wrapper directory; keep the standard search path intact so
+  # build systems still resolve /bin, /usr/sbin, and /sbin tooling.
+  PATH: /usr/recc/bin:/usr/bin:/bin:/usr/sbin:/sbin
+  RECC_SERVER: {endpoint}
+  RECC_CAS_SERVER: {endpoint}
+  RECC_ACTION_CACHE_SERVER: {endpoint}
+  RECC_ACTION_UNCACHEABLE: "0"
+  RECC_PROJECT_ROOT: /workspace
+  RECC_VERBOSE: "1"
+  RECC_DEPS_GLOBAL_PATHS: true
+  RECC_NO_PATH_REWRITE: true
+
+  (?):
+  - recc == "passthrough":
+      RECC_PASSTHROUGH: true
+  - recc == "cache-only":
+      RECC_CACHE_ONLY: true
+  - recc == "upload-local-build":
+      RECC_CACHE_ONLY: true
+      RECC_CACHE_UPLOAD_LOCAL_BUILD: true
+
+environment-nocache:
+- RECC_CACHE_ONLY
+- RECC_PASSTHROUGH
+- RECC_CACHE_UPLOAD_LOCAL_BUILD
+- RECC_USE_LOCALCAS
+- RECC_USE_JOBSERVER
+{socket}
+"""
+
+GCC_DIGEST_INCLUDE = """\
+# Generated by the lab RECC checkout overlay {version}.
+filename:
+- freedesktop-sdk.bst:components/gcc.bst
+config:
+  digest-environment: RECC_REMOTE_PLATFORM_chrootRootDigest
+"""
+
+CLANG_DIGEST_INCLUDE = """\
+# Generated by the lab RECC checkout overlay {version}.
+filename:
+- freedesktop-sdk.bst:components/llvm.bst
+- freedesktop-sdk.bst:components/zlib.bst
+config:
+  digest-environment: RECC_REMOTE_PLATFORM_chrootRootDigest
+"""
+
+RECC_WRAPPER = """\
+#!/bin/sh
+set -eu
+
+if [ -z "${RECC_REMOTE_PLATFORM_chrootRootDigest:-}" ]; then
+    echo "RECC_REMOTE_PLATFORM_chrootRootDigest is required for RECC" >&2
+    exit 1
+fi
+
+if ! command -v recc >/dev/null 2>&1; then
+    echo "recc is not staged in this sandbox; the RECC wrapper cannot run." >&2
+    echo "The build image's host recc is not visible inside the sandbox; the" >&2
+    echo "element must depend on the pinned recc provider element." >&2
+    exit 1
+fi
+
+exec recc "/usr/bin/$(basename "$0")" "$@"
+"""
+
+
+def _wrapper_element(recc_provider: str, version: str) -> str:
+    return f"""\
+# Generated by the lab RECC checkout overlay {version}.
+#
+# runtime-depends supplies the `recc` binary that files/recc-wrapper/recc-wrapper
+# executes. Without it the wrapper would exec a binary that does not exist in
+# the sandbox, so the overlay refuses to generate this element unless a pinned
+# provider element is known.
+kind: import
+
+sources:
+- kind: local
+  path: files/recc-wrapper/recc-wrapper
+
+config:
+  target: /usr/recc/bin
+
+runtime-depends:
+- {recc_provider}
+
+public:
+  bst:
+    integration-commands:
+    - |
+      for COMPILER in \
+        /usr/bin/cc \
+        /usr/bin/c++ \
+        /usr/bin/gcc \
+        /usr/bin/g++ \
+        /usr/bin/clang \
+        /usr/bin/clang++ \
+        /usr/bin/*-cc \
+        /usr/bin/*-c++ \
+        /usr/bin/*-gcc \
+        /usr/bin/*-g++ \
+        /usr/bin/*-clang \
+        /usr/bin/*-clang++; do
+        [ -e "$COMPILER" ] || continue
+        ln -s recc-wrapper /usr/recc/bin/"$(basename "$COMPILER")"
+      done
+"""
+
+
+def _safe_endpoint(value: str) -> str:
+    """Validate an endpoint and return a diagnostic-safe representation."""
+
+    if not value or any(char.isspace() for char in value):
+        raise OverlayError("RECC endpoint must be a non-empty URL without whitespace")
+    if "://" not in value:
+        value = f"grpc://{value}"
+    parsed = urlsplit(value)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise OverlayError("RECC endpoint must contain a valid numeric port") from exc
+    if parsed.scheme not in {"grpc", "grpcs"} or not parsed.hostname or port is None:
+        raise OverlayError(
+            "RECC endpoint must use grpc:// or grpcs:// with a host and port"
+        )
+    hostname = parsed.hostname
+    if ":" not in hostname and not re.fullmatch(r"[A-Za-z0-9.-]+", hostname):
+        raise OverlayError("RECC endpoint host contains unsafe characters")
+    if parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
+        raise OverlayError("RECC endpoint must not contain credentials or URL data")
+    return f"{parsed.scheme}://{hostname}:{port}"
+
+
+def _version_tuple(value: str) -> tuple[int, ...]:
+    match = re.fullmatch(r"\s*(\d+(?:\.\d+)*)\s*", value)
+    if not match:
+        raise OverlayError(f"unsupported BuildStream version: {value!r}")
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def _resolve_policy(
+    adapter: ProjectAdapter,
+    *,
+    runner_capability: bool,
+    pilot_cache_only: bool,
+) -> str:
+    """Return the RECC policy, refusing every unsafe combination."""
+
+    if runner_capability and pilot_cache_only:
+        raise OverlayError(
+            "--runner-capability and --pilot-cache-only are mutually exclusive"
+        )
+    if adapter.production:
+        if pilot_cache_only:
+            raise OverlayError(
+                f"{adapter.kind} is a mandatory-RECC lane: --pilot-cache-only is "
+                "an operator-only flag for the documented prototype baseline, "
+                "and RECC cache-only/local fallback is not permitted here"
+            )
+        if not runner_capability:
+            raise OverlayError(
+                f"{adapter.kind} is a mandatory-RECC lane and RECC is blocked: "
+                "the pinned BuildBarn runner does not honor BuildStream's "
+                "remoteApisSocketPath, so nested RECC cannot be enabled. This "
+                "lane must fail closed rather than build with outer remote "
+                "execution only or with a cache-only fallback. Re-run with "
+                "--runner-capability only once a runner that consumes that "
+                "platform property is deployed and proven; see "
+                "docs/reference/recc-runner-seam.md"
+            )
+        return "remote-execution"
+    if runner_capability:
+        return "remote-execution"
+    if pilot_cache_only:
+        return "cache-only"
+    raise OverlayError(
+        f"{adapter.kind} is the operator-only pilot baseline: pass "
+        "--pilot-cache-only for the documented cache-only experiment, or "
+        "--runner-capability once nested RECC is proven. Workflow templates "
+        "must never pass either flag"
+    )
+
+
+def _element_path(text: str) -> str:
+    match = re.search(r"(?m)^element-path:\s*(\S+)\s*$", text)
+    return match.group(1) if match else "elements"
+
+
+def _resolve_recc_provider(
+    checkout: Path,
+    adapter: ProjectAdapter,
+    *,
+    override: str | None,
+    element_path: str,
+) -> str:
+    """Return the element that stages `recc`, or refuse before any write."""
+
+    provider = override or adapter.recc_provider
+    if not provider:
+        raise OverlayError(
+            f"{adapter.kind} cannot supply the recc binary: no pinned element in "
+            "this checkout provides it, and the build image's host recc is not "
+            "visible inside a BuildStream sandbox. Pass --recc-provider with a "
+            "pinned element that stages recc (for example a freedesktop-sdk "
+            "junction's components/buildbox.bst, built with -DRECC=ON)"
+        )
+    if not re.fullmatch(r"[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*"
+                        r"(?::[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*)?", provider):
+        raise OverlayError(f"recc provider is not a plain element name: {provider!r}")
+    junction, _, element = provider.partition(":")
+    if not element:
+        junction, element = "", junction
+    if not element.endswith(".bst"):
+        raise OverlayError(f"recc provider must name a .bst element: {provider!r}")
+    checkout = checkout.resolve()
+
+    def resolve_inside_checkout(path: Path, description: str) -> Path:
+        try:
+            resolved = path.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise OverlayError(
+                f"recc provider {provider!r} cannot resolve its {description} safely"
+            ) from exc
+        try:
+            resolved.relative_to(checkout)
+        except ValueError as exc:
+            raise OverlayError(
+                f"recc provider {provider!r} resolves outside the checkout: "
+                f"{resolved}"
+            ) from exc
+        return resolved
+
+    if junction:
+        if not junction.endswith(".bst"):
+            raise OverlayError(
+                f"recc provider junction must be a .bst element: {provider!r}"
+            )
+        required = resolve_inside_checkout(
+            checkout / element_path / junction, "junction path"
+        )
+        description = f"junction {junction}"
+    else:
+        required = resolve_inside_checkout(
+            checkout / element_path / element, "element path"
+        )
+        description = f"element {element}"
+    if not required.is_file():
+        raise OverlayError(
+            f"recc provider {provider!r} is unusable: {description} is missing "
+            f"from {element_path}/; the wrapper would exec a recc binary that "
+            "is not staged in the sandbox"
+        )
+    return provider
+
+
+def _project_conf_version(text: str) -> tuple[int, ...]:
+    match = re.search(r"(?m)^min-version:\s*([0-9.]+)\s*$", text)
+    if not match:
+        raise OverlayError("project.conf has no min-version")
+    return _version_tuple(match.group(1))
+
+
+def _ensure_project_include(text: str) -> str:
+    if re.search(r"(?m)^\s*-\s+include/recc\.yml\s*$", text):
+        return text
+    match = re.search(r"(?m)^(\(@\):\s*)$", text)
+    if match:
+        line_end = match.end()
+        return text[:line_end] + "\n  - include/recc.yml" + text[line_end:]
+
+    marker = re.search(r"(?m)^element-path:.*$", text)
+    if not marker:
+        raise OverlayError("project.conf has no supported element-path anchor")
+    insertion = "\n\n(@):\n  - include/recc.yml"
+    return text[: marker.end()] + insertion + text[marker.end() :]
+
+
+def _recc_option_block(policy: str) -> str:
+    return f"""
+  recc:
+    type: enum
+    description: lab RECC policy
+    values:
+    - passthrough
+    - cache-only
+    - remote-execution
+    - upload-local-build
+    default: {policy}
+"""
+
+
+def _ensure_recc_option(text: str, policy: str) -> str:
+    options = re.search(r"(?m)^options:\s*$", text)
+    if not options:
+        return text.rstrip() + "\n\noptions:" + _recc_option_block(policy)
+
+    start = options.end()
+    next_section = re.search(r"(?m)^[^\s#][^:]*:\s*$", text[start:])
+    end = start + next_section.start() if next_section else len(text)
+    block = text[start:end]
+    recc = re.search(r"(?m)^  recc:\s*$", block)
+    if not recc:
+        return text[:end].rstrip() + "\n" + _recc_option_block(policy) + text[end:]
+
+    recc_start = recc.start()
+    next_option = re.search(r"(?m)^  [A-Za-z0-9_-]+:\s*$", block[recc.end() :])
+    recc_end = recc.end() + (next_option.start() if next_option else len(block[recc.end() :]))
+    recc_block = block[recc_start:recc_end]
+    if not re.search(r"(?m)^\s+type:\s*enum\s*$", recc_block):
+        raise OverlayError("project.conf recc option is not an enum")
+    if not re.search(rf"(?m)^\s+-\s+{re.escape(policy)}\s*$", recc_block):
+        list_item = re.search(r"(?m)^(\s+)-\s+", recc_block)
+        item_indent = list_item.group(1) if list_item else "    "
+        default = re.search(r"(?m)^\s+default:", recc_block)
+        entry = f"{item_indent}- {policy}\n"
+        if default:
+            recc_block = recc_block[: default.start()] + entry + recc_block[default.start() :]
+        else:
+            recc_block += entry
+    if re.search(r"(?m)^\s+default:", recc_block):
+        recc_block = re.sub(
+            r"(?m)^(\s+default:)\s*.*$",
+            rf"\1 {policy}",
+            recc_block,
+            count=1,
+        )
+    else:
+        recc_block = recc_block.rstrip() + f"\n    default: {policy}\n"
+    return text[:start] + block[:recc_start] + recc_block + block[recc_end:] + text[end:]
+
+
+def _prepare_project_conf(text: str, policy: str) -> str:
+    version = _project_conf_version(text)
+    if version < MIN_BUILDSTREAM_VERSION:
+        text = re.sub(
+            r"(?m)^min-version:\s*[0-9.]+\s*$",
+            "min-version: 2.5",
+            text,
+            count=1,
+        )
+    text = _ensure_project_include(text)
+    return _ensure_recc_option(text, policy)
+
+
+def _compiler_target(path: Path, markers: tuple[str, ...]) -> bool:
+    text = path.read_text(encoding="utf-8")
+    match = re.search(
+        r"(?ms)^build-depends:\s*(.*?)(?=^[A-Za-z][A-Za-z0-9_-]*:\s*$|\Z)",
+        text,
+    )
+    if not match:
+        return False
+    return any(marker in match.group(0) for marker in markers)
+
+
+def _find_targets(checkout: Path, adapter: ProjectAdapter) -> list[Path]:
+    targets: list[Path] = []
+    for root_name in adapter.element_roots:
+        root = checkout / root_name
+        if not root.is_dir():
+            continue
+        targets.extend(
+            path
+            for path in sorted(root.rglob("*.bst"))
+            if _compiler_target(path, adapter.compiler_markers)
+        )
+    for name in adapter.forced_digest_targets + adapter.forced_wrapper_targets:
+        path = checkout / name
+        if path.exists() and path not in targets:
+            targets.append(path)
+    return sorted(targets)
+
+
+def _insert_build_depends(text: str, entries: tuple[str, ...]) -> str:
+    if "build-depends:" not in text:
+        kind = re.search(r"(?m)^kind:\s*.+$", text)
+        if not kind:
+            raise OverlayError("element has no kind anchor for build-depends injection")
+        return (
+            text[: kind.end()]
+            + "\n\nbuild-depends:\n"
+            + "".join(f"- {entry}\n" for entry in entries)
+            + text[kind.end() :]
+        )
+
+    match = re.search(r"(?m)^build-depends:[ \t]*(?:#.*)?$", text)
+    if not match:
+        raise OverlayError("element has an unsupported inline build-depends layout")
+    # Insert after the newline that terminates the section line, never before
+    # it: anything else can splice the first entry onto `build-depends:` when
+    # the next line is a comment.
+    line_end = text.find("\n", match.end())
+    if line_end == -1:
+        text += "\n"
+        section_start = len(text)
+    else:
+        section_start = line_end + 1
+    next_section = re.search(r"(?m)^[A-Za-z][A-Za-z0-9_-]*:", text[section_start:])
+    section_end = section_start + next_section.start() if next_section else len(text)
+    section = text[section_start:section_end]
+    missing = [
+        entry
+        for entry in entries
+        if not re.search(
+            rf"(?m)^[ \t]*-[ \t]+(?:\(@\):[ \t]*)?{re.escape(entry)}[ \t]*$", section
+        )
+    ]
+    if not missing:
+        return text
+    # Indentation comes from an existing list item on its own line, so a
+    # leading comment or blank line cannot contribute stray whitespace.
+    indent_match = re.search(r"(?m)^([ \t]*)-[ \t]+", section)
+    indent = indent_match.group(1) if indent_match else ""
+    addition = "".join(f"{indent}- {entry}\n" for entry in missing)
+    return text[:section_start] + addition + text[section_start:]
+
+
+def _patch_element(
+    path: Path,
+    *,
+    add_digest: bool,
+    digest_include: str,
+    add_wrapper: bool,
+) -> str:
+    text = path.read_text(encoding="utf-8")
+    entries: list[str] = []
+    if add_wrapper and "buildsystems/recc-wrapper.bst" not in text:
+        entries.append("buildsystems/recc-wrapper.bst")
+    if add_digest and digest_include not in text:
+        entries.append(f"(@): {digest_include}")
+    if not entries:
+        return text
+    return _insert_build_depends(text, tuple(entries))
+
+
+def _write_if_safe(path: Path, content: str, writes: dict[str, str]) -> None:
+    if path.exists():
+        current = path.read_text(encoding="utf-8")
+        if current != content:
+            raise OverlayError(f"refusing to overwrite existing file: {path}")
+        return
+    writes[str(path)] = content
+
+
+def _sha256(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def apply_overlay(
+    checkout: Path,
+    *,
+    project_kind: str,
+    endpoint: str = DEFAULT_ENDPOINT,
+    runner_capability: bool = False,
+    pilot_cache_only: bool = False,
+    recc_provider: str | None = None,
+) -> dict[str, object]:
+    """Apply an overlay and return safe diagnostics."""
+
+    checkout = Path(checkout).resolve()
+    if not checkout.is_dir():
+        raise OverlayError(f"checkout is not a directory: {checkout}")
+    try:
+        adapter = ADAPTERS[project_kind]
+    except KeyError as exc:
+        raise OverlayError(f"unsupported project kind: {project_kind}") from exc
+
+    policy = _resolve_policy(
+        adapter,
+        runner_capability=runner_capability,
+        pilot_cache_only=pilot_cache_only,
+    )
+    endpoint = _safe_endpoint(endpoint)
+    for relative in adapter.required_paths:
+        if not (checkout / relative).is_file():
+            raise OverlayError(
+                f"{project_kind} checkout is missing required path: {relative}"
+            )
+
+    project_conf = checkout / "project.conf"
+    project_text = project_conf.read_text(encoding="utf-8")
+    provider = _resolve_recc_provider(
+        checkout,
+        adapter,
+        override=recc_provider,
+        element_path=_element_path(project_text),
+    )
+    project_text = _prepare_project_conf(project_text, policy)
+
+    targets = _find_targets(checkout, adapter)
+    if not targets and not adapter.allow_missing_digest_targets:
+        raise OverlayError(
+            f"{project_kind} checkout has no recognized compiler/buildsystem elements"
+        )
+    for path in targets:
+        if "build-depends:" not in path.read_text(encoding="utf-8") and path not in {
+            checkout / name for name in adapter.forced_wrapper_targets
+        }:
+            # A recognized compiler element without a dependency list cannot be
+            # safely rewritten by this text-preserving helper.
+            if _compiler_target(path, adapter.compiler_markers) and not (
+                adapter.allow_missing_digest_targets
+            ):
+                raise OverlayError(
+                    f"unsupported build-depends layout in compiler element: {path}"
+                )
+
+    socket = ""
+    if runner_capability:
+        socket = """
+
+sandbox:
+  remote-apis-socket:
+    path: /tmp/casd.sock
+"""
+    include = RECC_INCLUDE.format(
+        version=OVERLAY_VERSION,
+        endpoint=endpoint,
+        socket=socket.rstrip("\n"),
+    )
+    gcc_include = GCC_DIGEST_INCLUDE.format(version=OVERLAY_VERSION)
+    clang_include = CLANG_DIGEST_INCLUDE.format(version=OVERLAY_VERSION)
+    wrapper_element = _wrapper_element(provider, OVERLAY_VERSION)
+
+    writes: dict[str, str] = {}
+    _write_if_safe(checkout / "include/recc.yml", include, writes)
+    _write_if_safe(checkout / "include/gcc-for-recc.yml", gcc_include, writes)
+    _write_if_safe(checkout / "include/clang-for-recc.yml", clang_include, writes)
+    _write_if_safe(
+        checkout / "elements/buildsystems/recc-wrapper.bst",
+        wrapper_element,
+        writes,
+    )
+    _write_if_safe(
+        checkout / "files/recc-wrapper/recc-wrapper",
+        RECC_WRAPPER,
+        writes,
+    )
+    wrapper_path = checkout / "files/recc-wrapper/recc-wrapper"
+    if wrapper_path.exists() and not wrapper_path.stat().st_mode & 0o111:
+        raise OverlayError(f"RECC wrapper is not executable: {wrapper_path}")
+
+    changed: dict[str, str] = {}
+    if project_text != project_conf.read_text(encoding="utf-8"):
+        changed[str(project_conf)] = project_text
+
+    forced_digest = {checkout / name for name in adapter.forced_digest_targets}
+    forced_wrapper = {checkout / name for name in adapter.forced_wrapper_targets}
+    for path in targets:
+        element_text = path.read_text(encoding="utf-8")
+        digest_include = (
+            "include/clang-for-recc.yml"
+            if re.search(r"(?i)(clang|llvm)", element_text)
+            else "include/gcc-for-recc.yml"
+        )
+        patched = _patch_element(
+            path,
+            add_digest=(
+                not adapter.allow_missing_digest_targets
+                and (
+                    path in forced_digest
+                    or _compiler_target(path, adapter.compiler_markers)
+                )
+            ),
+            digest_include=digest_include,
+            add_wrapper=path in forced_wrapper
+            or (
+                not adapter.allow_missing_digest_targets
+                and _compiler_target(path, adapter.compiler_markers)
+            ),
+        )
+        if patched != path.read_text(encoding="utf-8"):
+            changed[str(path)] = patched
+
+    # All validation is complete before touching the checkout.
+    for filename, content in writes.items():
+        target = Path(filename)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        if target.name == "recc-wrapper":
+            target.chmod(0o755)
+    for filename, content in changed.items():
+        Path(filename).write_text(content, encoding="utf-8")
+
+    changed_files = {}
+    for filename in sorted(set(writes) | set(changed)):
+        content = Path(filename).read_text(encoding="utf-8")
+        changed_files[str(Path(filename).relative_to(checkout))] = _sha256(content)
+    file_checksums = {}
+    for relative in MANAGED_FILES:
+        path = checkout / relative
+        if path.is_file():
+            file_checksums[relative] = _sha256(path.read_text(encoding="utf-8"))
+
+    digest_status = "applied"
+    if adapter.allow_missing_digest_targets:
+        digest_status = "available-but-not-attached-no-sdk-junction"
+    return {
+        "overlay_version": OVERLAY_VERSION,
+        "project_kind": project_kind,
+        "endpoint": endpoint,
+        "remote_execution_policy": policy,
+        "recc_provider": provider,
+        "nested_socket": "enabled" if runner_capability else "disabled",
+        "digest_environment": digest_status,
+        "changed_files": changed_files,
+        "file_checksums": file_checksums,
+    }
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("checkout", type=Path)
+    parser.add_argument(
+        "--project-kind",
+        choices=sorted(ADAPTERS),
+        required=True,
+        help="known BuildStream checkout adapter to apply",
+    )
+    parser.add_argument(
+        "--endpoint",
+        default=os.environ.get("RECC_SERVER", DEFAULT_ENDPOINT),
+        help="shared RECC gRPC endpoint (default: lab BuildBarn frontend)",
+    )
+    parser.add_argument(
+        "--runner-capability",
+        action="store_true",
+        help=(
+            "assert that the deployed BuildBarn runner honors BuildStream's "
+            "remoteApisSocketPath; required before any production lane may be "
+            "overlaid, and enables sandbox.remote-apis-socket"
+        ),
+    )
+    parser.add_argument(
+        "--pilot-cache-only",
+        action="store_true",
+        help=(
+            "pilot fixtures only: apply a documented cache-only experiment "
+            "instead of nested remote execution"
+        ),
+    )
+    parser.add_argument(
+        "--recc-provider",
+        default=None,
+        help=(
+            "pinned BuildStream element that stages the recc binary in the "
+            "sandbox (default: the adapter's pinned provider, if any)"
+        ),
+    )
+    parser.add_argument("--json", action="store_true", help="emit diagnostics as JSON")
+    parser.add_argument("--version", action="version", version=OVERLAY_VERSION)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        diagnostics = apply_overlay(
+            args.checkout,
+            project_kind=args.project_kind,
+            endpoint=args.endpoint,
+            runner_capability=args.runner_capability,
+            pilot_cache_only=args.pilot_cache_only,
+            recc_provider=args.recc_provider,
+        )
+    except OverlayError as exc:
+        print(f"recc overlay refused: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(diagnostics, sort_keys=True))
+    else:
+        print(
+            "RECC overlay "
+            f"v{diagnostics['overlay_version']} applied to "
+            f"{diagnostics['project_kind']}: "
+            f"policy={diagnostics['remote_execution_policy']} "
+            f"recc-provider={diagnostics['recc_provider']} "
+            f"nested-socket={diagnostics['nested_socket']} "
+            f"digest-environment={diagnostics['digest_environment']}"
+        )
+        for filename, checksum in diagnostics["changed_files"].items():
+            print(f"  {filename}: sha256:{checksum}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

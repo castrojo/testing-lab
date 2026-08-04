@@ -6,6 +6,12 @@ description: >
 
 # Node Recovery and Quirks
 
+> [!CAUTION]
+> Host-root recovery and privileged `nsenter` actions are private
+> maintainer/operator procedures. Do not use workstation SSH to `ghost` or
+> `exo-0`; use Kubernetes API-driven recovery workflows and escalate host
+> maintenance through the approved private channel.
+
 ## Fedora CoreOS 44 (FCOS) Container Memory Limits and systemd-cgroup v2 Overhead
 
 On Fedora CoreOS, containers scheduled using unified cgroups v2 and the `systemd` cgroup driver undergo scope registration via dbus. This triggers kernel memory allocations, systemd-user accounting, and auditing, which requires a baseline overhead of 12-20 MiB of memory before any user workload even executes.
@@ -36,7 +42,7 @@ the Ready condition alone — check three signals via the k8s API:
    and containers are verifiably gone. That satisfies the documented precondition for
    `kubectl delete pod --grace-period=0 --force` (kubernetes/website:
    force-delete-stateful-set-pod.md — safe only when processes are confirmed terminated).
-3. **SSH exec probe**: if a shell opens and builtins (`echo`) work but any binary exec hangs,
+3. **In-cluster shell probe**: if a recovery shell opens and builtins (`echo`) work but any binary exec hangs,
    host root-filesystem I/O is wedged (D-state) — only a power cycle fixes it. Cordon the node.
 
 Cleanup order: cordon → force-delete orphaned pods (frees scheduler requests) → reschedule
@@ -48,4 +54,3 @@ flip back to Delete after the node returns. Never delete the PV object while the
 Known trigger: hostPID build pods SIGTERMing host daemons (issue #268) — the same event can
 kill journald/sshd on workers and crash k3s on ghost (systemd restarts it; expect a short
 API outage and a wave of `connection refused` workflow errors that self-heal on next cron tick).
-

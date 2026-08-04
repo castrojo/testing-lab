@@ -57,6 +57,10 @@ spec:
         valueFrom:
           path: /tmp/results/result-summary.txt
           default: "No results generated"
+      - name: failed-scenarios
+        valueFrom:
+          path: /tmp/results/failed-scenarios.json
+          default: "[]"
     initContainers:
     - name: git-sync
       image: cgr.dev/chainguard/git:latest
@@ -145,7 +149,8 @@ spec:
           TARGET_IMAGE="${IMAGE}"
         fi
 
-        # Local Zot and other insecure registries need explicit TLS verification off.
+        # Local Zot is an HTTP registry, so configure containers/image to use
+        # its insecure transport before any digest resolution or image pull.
         SKOPEO_TLS_ARGS=()
         PODMAN_PULL_TLS_ARGS=()
         case "${IMAGE%%/*}" in
@@ -156,18 +161,41 @@ spec:
         esac
 
         # Resolve the digest remotely only when the caller did not supply one.
+        zot_image() {
+          case "$1" in
+            ghcr.io/*) printf '192.168.1.102:30501/ghcr/%s' "${1#ghcr.io/}" ;;
+            quay.io/*) printf '192.168.1.102:30501/quay/%s' "${1#quay.io/}" ;;
+            docker.io/*) printf '192.168.1.102:30501/docker/%s' "${1#docker.io/}" ;;
+            registry.fedoraproject.org/*) printf '192.168.1.102:30501/fedora/%s' "${1#registry.fedoraproject.org/}" ;;
+            registry.k8s.io/*) printf '192.168.1.102:30501/k8s/%s' "${1#registry.k8s.io/}" ;;
+            cgr.dev/*) printf '192.168.1.102:30501/cgr/%s' "${1#cgr.dev/}" ;;
+            public.ecr.aws/*) printf '192.168.1.102:30501/ecr/%s' "${1#public.ecr.aws/}" ;;
+            lscr.io/*) printf '192.168.1.102:30501/lscr/%s' "${1#lscr.io/}" ;;
+            *) printf '%s' "$1" ;;
+          esac
+        }
+        ZOT_IMAGE_REPO=$(zot_image "${IMAGE_REPO}")
+        case "${ZOT_IMAGE_REPO}" in
+          192.168.1.102:*|localhost:*|127.0.0.1:*)
+            mkdir -p /etc/containers/registries.conf.d
+            cat >/etc/containers/registries.conf.d/bluefin-local-zot.conf <<'EOF'
+        [[registry]]
+        location = "192.168.1.102:30501"
+        insecure = true
+        EOF
+            SKOPEO_TLS_ARGS=(--tls-verify=false)
+            PODMAN_PULL_TLS_ARGS=(--tls-verify=false)
+            ;;
+        esac
         if [[ -z "${IMAGE_DIGEST:-}" ]]; then
           if ! command -v skopeo >/dev/null 2>&1; then
             echo "skopeo not found; installing for digest resolution..." >&2
             dnf install -y skopeo >/dev/null 2>&1 || true
           fi
           DIGEST=""
-          if command -v skopeo >/dev/null 2>&1; then
-            SKOPEO_ARGS=()
-            if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-              SKOPEO_ARGS+=(--creds "_token:${GITHUB_TOKEN}")
-            fi
-            DIGEST=$(skopeo inspect "${SKOPEO_TLS_ARGS[@]}" "${SKOPEO_ARGS[@]}" --no-tags --format '{{.Digest}}' "docker://${IMAGE}" 2>/dev/null || true)
+          if command -v skopeo >/dev/null 2>&1 && [[ "${ZOT_IMAGE_REPO}" != "${IMAGE_REPO}" ]]; then
+            DIGEST=$(timeout 120 skopeo inspect --tls-verify=false --no-tags \
+              --format '{{.Digest}}' "docker://${ZOT_IMAGE_REPO}:${IMAGE_TAG}" 2>/dev/null || true)
           fi
           if [[ -z "${DIGEST:-}" ]]; then
             echo "Warning: could not resolve digest for ${IMAGE}; result will still be published but may fall back to tag-based matching." >&2
@@ -191,14 +219,55 @@ spec:
           exit 1
         }
         mkdir -p /tmp/results
-        if [[ "${#PODMAN_PULL_TLS_ARGS[@]}" -gt 0 ]]; then
-          podman pull "${PODMAN_PULL_TLS_ARGS[@]}" "${TARGET_IMAGE}" >/dev/null
+        if [[ "${ZOT_IMAGE_REPO}" != "${IMAGE_REPO}" ]]; then
+          if [[ -n "${DIGEST:-}" ]]; then
+            TARGET_IMAGE="${ZOT_IMAGE_REPO}@${DIGEST}"
+          else
+            TARGET_IMAGE="${ZOT_IMAGE_REPO}:${IMAGE_TAG}"
+          fi
+        fi
+
+        # Bound every pull attempt. The shared Zot pull-through cache
+        # occasionally hits "unexpected EOF" reconnecting mid-blob against
+        # ghcr.io; without a client-side timeout that hang blocks this pod
+        # (and its ghost-container-qa semaphore slot) for up to
+        # activeDeadlineSeconds instead of minutes. Retry a bounded number of
+        # times first, since a stall is often resolved by Zot's own
+        # reconnect-and-resume on the next attempt.
+        #
+        # Podman's local blob storage persists across attempts within this
+        # pod, so a retry never restarts from zero: it skips every
+        # already-completed blob and only re-fetches what didn't finish.
+        # Under real ghost-container-qa concurrency (up to 6 simultaneous
+        # pulls sharing one node's egress), this makes attempts
+        # monotonically faster -- observed live in bluefin-qa-pipeline-42jhj,
+        # where attempt 3/3 reached the image's final blob and missed the
+        # 480s deadline by only ~47s. 3 attempts (1500s) was sized for the
+        # original instant-hang case; one extra bounded attempt (4 total,
+        # 2010s worst case) covers the demonstrated near-miss for slow-but-
+        # progressing pulls without unbounding any single attempt.
+        PULL_ATTEMPTS=4
+        PULL_TIMEOUT_SECONDS=480
+        pull_ok=false
+        for attempt in $(seq 1 "${PULL_ATTEMPTS}"); do
+          echo "Pulling ${TARGET_IMAGE} (attempt ${attempt}/${PULL_ATTEMPTS}, ${PULL_TIMEOUT_SECONDS}s timeout)..." >&2
+          if timeout "${PULL_TIMEOUT_SECONDS}" podman pull "${PODMAN_PULL_TLS_ARGS[@]}" "${TARGET_IMAGE}" >/dev/null; then
+            pull_ok=true
+            break
+          fi
+          echo "Pull attempt ${attempt} for ${TARGET_IMAGE} failed or timed out after ${PULL_TIMEOUT_SECONDS}s" >&2
+          sleep 30
+        done
+        if [[ "${pull_ok}" != true ]]; then
+          echo "Giving up on ${TARGET_IMAGE} after ${PULL_ATTEMPTS} pull attempts; registry appears stalled or unreachable" >&2
+          exit 1
         fi
         podman run --detach --systemd=always --network host --privileged \
           --cgroupns=host \
           --security-opt seccomp=unconfined \
           --tmpfs /run:rw,nosuid,nodev,mode=755,size=256m \
           --name "${TARGET_NAME}" \
+          --pull=never \
           --mount type=bind,source=/sys,destination=/sys,ro,bind-propagation=rprivate \
           --mount type=bind,source=/run/udev,destination=/run/udev,ro,bind-propagation=rprivate \
           --volume /workspace:/workspace:ro \
@@ -409,13 +478,30 @@ spec:
         if [[ -f /tmp/results/results.json ]]; then
           python3 - <<'PY'
         import json
+        import re
 
         with open("/tmp/results/results.json", encoding="utf-8") as result_file:
             data = json.load(result_file)
+        safe_name = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,:;()/_+-]{0,159}$")
         failed = sum(
             1 for feature in data for scenario in feature.get("elements", [])
             if scenario.get("status") == "failed"
         )
+        failed_scenarios = []
+        for feature in data:
+            for scenario in feature.get("elements", []):
+                name = scenario.get("name")
+                if (
+                    scenario.get("status") == "failed"
+                    and isinstance(name, str)
+                    and safe_name.fullmatch(name)
+                    and not any(word in name.lower() for word in
+                                ("token", "password", "secret", "authorization"))
+                    and name not in failed_scenarios
+                ):
+                    failed_scenarios.append(name)
+        with open("/tmp/results/failed-scenarios.json", "w", encoding="utf-8") as artifact_file:
+            json.dump(failed_scenarios[:20], artifact_file, separators=(",", ":"))
         total = sum(len(feature.get("elements", [])) for feature in data)
         summary = f"{total - failed}/{total} scenarios passed"
         with open("/tmp/results/result-summary.txt", "w", encoding="utf-8") as summary_file:

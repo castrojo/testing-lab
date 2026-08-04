@@ -1,10 +1,21 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: llm-d-preempt
+value: 1000000
+preemptionPolicy: PreemptLowerPriority
+globalDefault: false
+description: "Higher scheduling priority for local LLM inference so it can preempt lower-priority work when needed."
+---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: llm-d
   labels:
     app.kubernetes.io/part-of: testing-lab
-    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/audit: baseline
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -15,7 +26,7 @@ metadata:
     app.kubernetes.io/name: llm-d-modelserver
     app.kubernetes.io/part-of: testing-lab
 spec:
-  replicas: 0 # disabled by default; scale to 1 explicitly when needed
+  replicas: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: llm-d-modelserver
@@ -23,68 +34,99 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: llm-d-modelserver
+      annotations:
+        lab.projectbluefin.io/config-version: podsecurity-v1
     spec:
+      priorityClassName: llm-d-preempt
+      nodeSelector:
+        kubernetes.io/hostname: exo-0
       containers:
         - name: modelserver
-          image: ghcr.io/ggml-org/llama.cpp:server
+          image: vllm/vllm-openai-rocm:latest
           imagePullPolicy: IfNotPresent
-          command: ["/app/llama-server"]
+          securityContext:
+            privileged: true
           args:
-            - "-hf"
-            - "ggml-org/gemma-3-1b-it-GGUF:Q4_K_M"
-            - "--alias"
-            - "gpt-4o"
-            - "--host"
-            - "0.0.0.0"
-            - "--port"
+            - --model
+            - unsloth/Llama-3.2-3B-Instruct
+            - --served-model-name
+            - local-llm
+            - --host
+            - 0.0.0.0
+            - --port
             - "8000"
-            - "--ctx-size"
-            - "8192"
-            - "--threads"
-            - "8"
-            - "--parallel"
-            - "2"
+            - --tensor-parallel-size
+            - "1"
+            - --max-model-len
+            - "4096"
+            - --gpu-memory-utilization
+            - "0.90"
+            - --trust-remote-code
+          env:
+            - name: HF_HOME
+              value: /root/.cache/huggingface
+            - name: VLLM_LOGGING_LEVEL
+              value: INFO
+            - name: HIP_VISIBLE_DEVICES
+              value: all
+            - name: ROCM_VISIBLE_DEVICES
+              value: all
           ports:
             - name: http
               containerPort: 8000
               protocol: TCP
+          volumeMounts:
+            - name: hf-cache
+              mountPath: /root/.cache/huggingface
+            - name: dev-kfd
+              mountPath: /dev/kfd
+            - name: dev-dri
+              mountPath: /dev/dri
+            - name: sys
+              mountPath: /sys
+            - name: lib-modules
+              mountPath: /lib/modules
           resources:
             requests:
-              cpu: "2"
-              memory: 4Gi
+              cpu: "4"
+              memory: 16Gi
+              amd.com/gpu: "1"
             limits:
-              cpu: "6"
-              memory: 8Gi
+              cpu: "8"
+              memory: 24Gi
+              amd.com/gpu: "1"
           readinessProbe:
             httpGet:
-              path: /v1/models
+              path: /health
               port: 8000
-            periodSeconds: 10
+            initialDelaySeconds: 60
+            periodSeconds: 15
             timeoutSeconds: 5
-            failureThreshold: 6
+            failureThreshold: 10
           livenessProbe:
             httpGet:
               path: /health
               port: 8000
+            initialDelaySeconds: 120
             periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 3
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: llm-d-modelserver
-  namespace: llm-d
-  labels:
-    app.kubernetes.io/name: llm-d-modelserver
-    app.kubernetes.io/part-of: testing-lab
-spec:
-  type: NodePort
-  selector:
-    app.kubernetes.io/name: llm-d-modelserver
-  ports:
-    - name: http
-      port: 8000
-      targetPort: 8000
-      nodePort: 30800
-      protocol: TCP
+      volumes:
+        - name: hf-cache
+          emptyDir: {}
+        - name: dev-kfd
+          hostPath:
+            path: /dev/kfd
+            type: CharDevice
+        - name: dev-dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+        - name: sys
+          hostPath:
+            path: /sys
+            type: Directory
+        - name: lib-modules
+          hostPath:
+            path: /lib/modules
+            type: Directory
