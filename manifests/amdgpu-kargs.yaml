@@ -9,18 +9,31 @@
 #   amdgpu or ttm kernel argument set — the ceiling was a driver default, not a
 #   deliberate choice.
 #
-#   amdgpu.gttsize is expressed in MiB; ttm.pages_limit in 4 KiB pages. Both
-#   must be raised together: gttsize alone is still clamped by TTM.
+#   ttm.pages_limit (4 KiB pages) is the authoritative control. amdgpu.gttsize
+#   (MiB) is deprecated upstream — the driver logs "Configuring gttsize via
+#   module parameter is deprecated, please use ttm.pages_limit" — but is still
+#   honoured, and the Strix Halo community sets both. We do the same, so the
+#   ceiling holds regardless of which knob a given kernel respects. Keep the two
+#   values in agreement if you change either.
+#
+#   Deliberately NOT set: ttm.page_pool_size. That option pre-allocates memory
+#   and permanently removes it from the OS. On a 64 GB node shared with k3s and
+#   BuildStream workers, setting it near pages_limit would be actively harmful.
+#
+#   Note the exact spelling: "gtt_size" (with underscore) is not a valid
+#   parameter and is silently ignored.
 #
 #   These are ceilings, not reservations. Memory is allocated on demand, so a
 #   higher limit costs nothing until a workload actually uses it. The value is
 #   deliberately held below total RAM so GPU allocations cannot starve k3s and
 #   the BuildStream workers that share these nodes.
 #
-# Scope note: this does NOT fix the BIOS UMA carve-out. exo-0 reports
-#   mem_info_vram_total = 512 MiB against ghost's 64 GiB on identical hardware;
-#   that is a firmware setting and must be changed in the Framework Desktop
-#   BIOS by hand. This DaemonSet only removes the GTT ceiling.
+# Scope note: this does NOT touch the BIOS UMA carve-out. exo-0 reports
+#   mem_info_vram_total = 512 MiB against ghost's 64 GiB on identical hardware.
+#   Prevailing Strix Halo guidance is that a *minimum* carve-out is correct on
+#   Linux and that real capacity should come from GTT, which would make exo-0
+#   the correctly configured node. That discrepancy is unresolved and must be
+#   settled by measuring what each node can actually allocate under ROCm.
 #
 # Applying kargs stages a new ostree deployment; it takes effect on next boot.
 # This manifest never reboots a node on its own. It annotates the node instead:
