@@ -53,16 +53,53 @@ distributed.
 
 ## AMD ROCm GPU readiness — quick checks
 
-If the AMD GPU exists on the host but Kubernetes still refuses to schedule `amd.com/gpu` workloads, confirm the ROCm device plugin is installed and the node is labeled for it:
+Both lab nodes are 64 GB Framework Desktop (Strix Halo) machines with an AMD
+iGPU. The device plugin selects nodes via the Node Feature Discovery label
+`feature.node.kubernetes.io/pci-0380_1002.present`, so no hand-applied label is
+needed — a node with an AMD display controller is picked up automatically.
+ArgoCD owns `manifests/`; do not `kubectl apply` these files.
 
 ```bash
-kubectl label node exo-0 lab.projectbluefin.io/amd-gpu=true --overwrite
-kubectl apply -f manifests/amdgpu-device-plugin.yaml
+# Which nodes advertise a GPU?
+kubectl get nodes -o custom-columns=NAME:.metadata.name,GPU:.status.allocatable.amd\\.com/gpu
+
 kubectl rollout status daemonset/amdgpu-device-plugin -n kube-system --timeout=300s
-kubectl get node exo-0 -o jsonpath='{.status.allocatable.amd\.com/gpu}{"\n"}'
 ```
 
-Expected outcome: the node advertises `1` or more `amd.com/gpu` allocatable units, and the `amdgpu-device-plugin` DaemonSet pod is `Running` on the GPU node.
+Expected outcome: every node with an AMD iGPU advertises `1` or more
+`amd.com/gpu` allocatable units, and an `amdgpu-device-plugin` pod is `Running`
+on each.
+
+### GPU-addressable memory
+
+Two independent ceilings apply, and both have bitten this lab:
+
+```bash
+# Per-node GPU memory ceilings (VRAM is BIOS-set, GTT is kernel-set)
+for n in ghost exo-0; do
+  pod=$(kubectl -n kube-system get pod -l app=usb4-link-monitor \
+    -o jsonpath="{.items[?(@.spec.nodeName=='$n')].metadata.name}")
+  echo "== $n"
+  kubectl -n kube-system exec "$pod" -- nsenter -t 1 -m -- sh -c \
+    'cat /sys/class/drm/card1/device/mem_info_vram_total /sys/class/drm/card1/device/mem_info_gtt_total'
+done
+```
+
+- **VRAM** (`mem_info_vram_total`) is the BIOS UMA setting and can only be
+  changed in the Framework Desktop firmware. A node reporting 512 MiB is
+  misconfigured; a correctly configured node reports the full 64 GiB. ROCm
+  allocates device memory from VRAM, so 512 MiB cannot host a large model
+  regardless of quantization.
+- **GTT** (`mem_info_gtt_total`) is capped by `ttm.pages_limit`, which defaults
+  to half of system RAM. `manifests/amdgpu-kargs.yaml` raises it via
+  `rpm-ostree kargs`. Kargs take effect on next boot; check progress with:
+
+```bash
+kubectl get nodes -o custom-columns=NAME:.metadata.name,KARGS:.metadata.annotations.lab\\.projectbluefin\\.io/amdgpu-kargs
+```
+
+`pending-reboot` means the kargs are staged but the node is still running the
+old kernel command line.
 
 ## Local LLM deployment — quick checks
 

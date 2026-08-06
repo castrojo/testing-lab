@@ -1,0 +1,158 @@
+# manifests/amdgpu-kargs.yaml
+# Raises the GPU-addressable memory ceiling on AMD "Strix Halo" nodes.
+#
+# Why this exists:
+#   amdgpu sizes GTT from TTM's global page limit, which defaults to half of
+#   system RAM. On the 64 GB Framework Desktop nodes that lands at ~31 GiB
+#   (ttm.pages_limit = 8,200,809 pages on ghost, 8,136,299 on exo-0), which is
+#   the real cap on how much memory the iGPU can address. Neither node had any
+#   amdgpu or ttm kernel argument set — the ceiling was a driver default, not a
+#   deliberate choice.
+#
+#   amdgpu.gttsize is expressed in MiB; ttm.pages_limit in 4 KiB pages. Both
+#   must be raised together: gttsize alone is still clamped by TTM.
+#
+#   These are ceilings, not reservations. Memory is allocated on demand, so a
+#   higher limit costs nothing until a workload actually uses it. The value is
+#   deliberately held below total RAM so GPU allocations cannot starve k3s and
+#   the BuildStream workers that share these nodes.
+#
+# Scope note: this does NOT fix the BIOS UMA carve-out. exo-0 reports
+#   mem_info_vram_total = 512 MiB against ghost's 64 GiB on identical hardware;
+#   that is a firmware setting and must be changed in the Framework Desktop
+#   BIOS by hand. This DaemonSet only removes the GTT ceiling.
+#
+# Applying kargs stages a new ostree deployment; it takes effect on next boot.
+# This manifest never reboots a node on its own. It annotates the node instead:
+#   lab.projectbluefin.io/amdgpu-kargs = applied | pending-reboot
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: amdgpu-kargs
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/part-of: lab
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: amdgpu-kargs
+  labels:
+    app.kubernetes.io/part-of: lab
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: amdgpu-kargs
+  labels:
+    app.kubernetes.io/part-of: lab
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: amdgpu-kargs
+subjects:
+  - kind: ServiceAccount
+    name: amdgpu-kargs
+    namespace: kube-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: amdgpu-kargs
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: amdgpu-kargs
+    app.kubernetes.io/component: node-tuning
+    app.kubernetes.io/part-of: lab
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: amdgpu-kargs
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: amdgpu-kargs
+        app.kubernetes.io/component: node-tuning
+        app.kubernetes.io/part-of: lab
+    spec:
+      serviceAccountName: amdgpu-kargs
+      nodeSelector:
+        feature.node.kubernetes.io/pci-0380_1002.present: "true"
+      tolerations:
+        - operator: Exists
+      hostPID: true
+      initContainers:
+        - name: set-kargs
+          image: cgr.dev/chainguard/kubectl:latest-dev
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            # 48 GiB ceiling on a 64 GiB node, leaving ~14 GiB for the OS,
+            # k3s and build workloads. gttsize is MiB; pages_limit is 4 KiB
+            # pages. Keep the two in sync if you change either.
+            - name: GTT_SIZE_MIB
+              value: "49152"
+            - name: TTM_PAGES_LIMIT
+              value: "12582912"
+          command: [bash, -c]
+          args:
+            - |
+              set -euo pipefail
+
+              ostree_kargs() { nsenter -t 1 -m -- rpm-ostree kargs "$@"; }
+
+              DESIRED="amdgpu.gttsize=${GTT_SIZE_MIB} ttm.pages_limit=${TTM_PAGES_LIMIT}"
+              CURRENT="$(ostree_kargs)"
+
+              CHANGES=()
+              for want in ${DESIRED}; do
+                key="${want%%=*}"
+                if grep -qE "(^| )${key}=${want#*=}( |$)" <<<"${CURRENT}"; then
+                  echo "ok: ${want} already staged"
+                  continue
+                fi
+                # Same key present with a different value: drop the stale token
+                # so rpm-ostree does not end up with two copies of the key.
+                stale="$(grep -oE "(^| )${key}=[^ ]*" <<<"${CURRENT}" | tr -d ' ' || true)"
+                if [[ -n "${stale}" ]]; then
+                  echo "replacing ${stale} -> ${want}"
+                  CHANGES+=("--delete-if-present=${stale}")
+                fi
+                CHANGES+=("--append-if-missing=${want}")
+              done
+
+              if [[ ${#CHANGES[@]} -gt 0 ]]; then
+                echo "applying: ${CHANGES[*]}"
+                ostree_kargs "${CHANGES[@]}"
+              fi
+
+              # Compare the staged kargs against what the running kernel booted
+              # with, so the annotation reflects reality rather than intent.
+              RUNNING="$(nsenter -t 1 -m -- cat /proc/cmdline)"
+              STATE=applied
+              for want in ${DESIRED}; do
+                grep -qE "(^| )${want}( |$)" <<<"${RUNNING}" || STATE=pending-reboot
+              done
+              echo "node ${NODE_NAME}: ${STATE}"
+
+              kubectl annotate node "${NODE_NAME}" \
+                "lab.projectbluefin.io/amdgpu-kargs=${STATE}" --overwrite
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: 1m
+              memory: 4Mi
+            limits:
+              cpu: 10m
+              memory: 32Mi
