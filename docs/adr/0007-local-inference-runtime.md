@@ -171,8 +171,12 @@ The model cache moves from `emptyDir` to a 100Gi `local-path` PVC, so a restart
 no longer re-downloads ~25 GB. `local-path` is RWO and `WaitForFirstConsumer`;
 placement is deterministic because the Deployment pins to `exo-0`.
 
-The Deployment ships at `replicas: 0` and is enabled in a **separate** GitOps
-change once the kargs reboot, the PVC bind and node headroom are confirmed.
+The Deployment ships **enabled** (`replicas: 1`). A phased `replicas: 0` rollout
+was attempted and does not work with this PVC: `WaitForFirstConsumer` means the
+PVC cannot bind until a pod consumes it, ArgoCD blocks its sync waiting for the
+PVC to report healthy, and so the Deployment is never created — a circular
+deadlock. Taking the server down is therefore a runtime `kubectl scale`, not a
+committed `replicas: 0`.
 
 ## Consequences
 

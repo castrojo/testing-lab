@@ -477,7 +477,7 @@ on gfx1151. If the annotation says `pending-reboot`, the fix is not live yet.
 - The pod is pinned to `exo-0` via a `kubernetes.io/hostname` nodeSelector — it is the only node with the Strix Halo iGPU
 - The Deployment uses `strategy: Recreate`. With one `amd.com/gpu` and an RWO cache PVC, a rolling update would deadlock, so updates cause brief downtime by design
 - The image is pinned by digest so rollback is reproducible; do not switch it to a floating tag
-- Rollback is `replicas: 0` or a revert; the PVC persists, so re-enabling does not re-download the model
+- Rollback is a runtime `kubectl -n llm-d scale deploy/llm-d-modelserver --replicas=0` or a revert; the PVC persists, so re-enabling does not re-download the model. Do not commit `replicas: 0` — with a `WaitForFirstConsumer` PVC that deadlocks ArgoCD's sync
 - `exo-0` is a 64 GB node shared with BuildBarn, KubeVirt and KubeStellar. GTT is system RAM and the kernel OOM-killer cannot reclaim it, so raising `--ctx-size` or the model quant risks the whole node, not just this pod
 - The endpoint has no authentication and permissive CORS; keep it on the trusted LAN
 

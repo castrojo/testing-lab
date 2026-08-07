@@ -46,9 +46,14 @@ metadata:
     app.kubernetes.io/name: llm-d-modelserver
     app.kubernetes.io/part-of: testing-lab
 spec:
-  # Enabled in a separate GitOps change once the kargs reboot, the PVC bind and
-  # node capacity are confirmed. See docs/adr/0007-local-inference-runtime.md.
-  replicas: 0
+  # Enabled. Note this cannot be staged at replicas: 0 while the cache PVC uses
+  # local-path: local-path is WaitForFirstConsumer, so the PVC only binds once a
+  # pod consumes it, and ArgoCD blocks its sync waiting for the PVC to become
+  # healthy — which never happens without a pod. replicas: 0 plus this PVC is a
+  # circular deadlock that also prevents the Deployment itself from being
+  # created. To take the server down, scale it to 0 at runtime rather than
+  # committing replicas: 0.
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: llm-d-modelserver
