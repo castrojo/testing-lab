@@ -297,8 +297,13 @@ spec:
           exit 1
         fi
 
-        echo "Installing test-only Python dependencies in nested target..." >&2
-        podman exec "${TARGET_NAME}" bash -c '
+        echo "Provisioning nested target (groups, test user, GDM, Python deps)..." >&2
+        # NOTE: this setup script is fed over stdin via a quoted heredoc rather
+        # than `bash -c '...'`. A single-quoted `bash -c` argument silently
+        # terminates at the first inner apostrophe, which previously mangled the
+        # `printf '%s\n'` calls below into `printf %sn` and corrupted /etc/group.
+        # Do not convert this back to `bash -c`.
+        if ! podman exec -i "${TARGET_NAME}" bash -s <<'NESTED_SETUP'
           set -euo pipefail
 
           # Ensure runtime directories GDM and logind need are present before any
@@ -328,6 +333,15 @@ spec:
           # Make sure groups exist so the test user can access DRI/input devices.
           # Some target images expose groups through NSS without writing
           # /etc/group, while useradd only accepts local group entries.
+          append_group_line() {
+            # Guard against a /etc/group whose final line lacks a trailing
+            # newline; appending directly would splice two entries onto one
+            # line and make the following grep fail.
+            if [ -s /etc/group ] && [ "$(tail -c 1 /etc/group | wc -l)" -eq 0 ]; then
+              printf '\n' >>/etc/group
+            fi
+            printf '%s\n' "$1" >>/etc/group
+          }
           for group in video render input; do
             if ! grep -q "^${group}:" /etc/group; then
               # groupadd resolves names through NSS and exits 9 ("already exists")
@@ -336,7 +350,7 @@ spec:
               if ! groupadd -r "${group}" 2>/dev/null; then
                 nss_entry=$(getent group "${group}" || true)
                 if [ -n "${nss_entry}" ]; then
-                  printf '%s\n' "${nss_entry}" >>/etc/group
+                  append_group_line "${nss_entry}"
                 else
                   # Image has no entry anywhere — synthesize with well-known fallback GIDs
                   # so tests can run on minimal images (e.g. common, knuckle CI images).
@@ -346,12 +360,15 @@ spec:
                     input)  gid=999 ;;
                     *)      gid=997 ;;
                   esac
-                  printf '%s:x:%s:\n' "${group}" "${gid}" >>/etc/group
+                  append_group_line "${group}:x:${gid}:"
                 fi
               fi
             fi
             grep -q "^${group}:" /etc/group || {
               echo "Failed to create required local group ${group}" >&2
+              echo "  getent group ${group}: $(getent group "${group}" || echo '<none>')" >&2
+              echo "  tail of /etc/group:" >&2
+              tail -n 10 /etc/group >&2
               exit 1
             }
           done
@@ -390,13 +407,48 @@ spec:
           chmod 700 /home/bluefin-test/run
 
           # Install test-only Python dependencies.
+          echo "Installing test-only Python dependencies in nested target..." >&2
           if ! python3 -m pip --version >/dev/null 2>&1; then
-            python3 -m ensurepip --default-pip
+            python3 -m ensurepip --default-pip >&2 || {
+              echo "pip is unavailable and ensurepip failed in the target image" >&2
+              exit 1
+            }
           fi
-          python3 -m pip install --quiet qecore dogtail behave
+          # Bootc/Fedora images mark the system interpreter as externally
+          # managed (PEP 668); the target container is disposable, so opt out
+          # when the flag is supported.
+          pip_args=(--disable-pip-version-check --no-input)
+          if python3 -m pip install --help 2>/dev/null | grep -q -- --break-system-packages; then
+            pip_args+=(--break-system-packages)
+          fi
+          pip_ok=false
+          for attempt in 1 2 3; do
+            if python3 -m pip install "${pip_args[@]}" qecore dogtail behave >/tmp/pip-install.log 2>&1; then
+              pip_ok=true
+              break
+            fi
+            echo "pip install attempt ${attempt}/3 failed:" >&2
+            tail -n 40 /tmp/pip-install.log >&2
+            sleep 10
+          done
+          if [ "${pip_ok}" != true ]; then
+            echo "Failed to install test-only Python dependencies (qecore dogtail behave)" >&2
+            echo "  python3: $(python3 --version 2>&1)" >&2
+            echo "  pip:     $(python3 -m pip --version 2>&1)" >&2
+            echo "  full pip log:" >&2
+            cat /tmp/pip-install.log >&2
+            exit 1
+          fi
 
           systemctl start gdm
-        '
+        NESTED_SETUP
+        then
+          :
+        else
+          echo "Nested target provisioning failed; see the errors above." >&2
+          podman exec "${TARGET_NAME}" journalctl --no-pager -n 200 >&2 || true
+          exit 1
+        fi
         for _ in $(seq 1 60); do
           if podman exec "${TARGET_NAME}" pgrep -u 1000 -f gnome-session >/dev/null; then
             break
