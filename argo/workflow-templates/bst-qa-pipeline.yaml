@@ -142,18 +142,6 @@ spec:
           git sparse-checkout set "${PROJECT_SUBDIR}"
           cd "${PROJECT_SUBDIR}"
 
-          echo "=== Applying lab RECC overlay (bst-qa) ==="
-          # Mandatory admission, no mode flags: the shared overlay refuses this
-          # lane while nested RECC is unavailable, and this lane must fail
-          # closed rather than continue with outer remote execution only.
-          # --runner-capability may only be added once a BuildBarn runner is
-          # proven to honor BuildStream's remoteApisSocketPath, and
-          # --pilot-cache-only is operator-only for the prototype baseline.
-          python3 /etc/buildstream/apply_recc_overlay.py . \
-            --project-kind bst-qa \
-            --endpoint "${RECC_ENDPOINT}" \
-            --json
-
           cp /etc/buildstream/buildstream.conf /tmp/buildstream-cluster.conf
           BST_CONF=/tmp/buildstream-cluster.conf
           REMOTE_EXECUTION_SERVICE="{{inputs.parameters.remote-execution-service}}"

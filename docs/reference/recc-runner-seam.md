@@ -99,23 +99,22 @@ overlay and keeps `remote-execution` blocked until both an upstream runner
 candidate and a nested-socket canary prove support. It must not substitute
 outer-only execution or a production cache-only fallback.
 
-RECC admission is mandatory, not optional. Every build lane, QA lane, and
-warmup path still invokes the shared overlay with no mode flags, and each gate
-step additionally probes the deployed `buildbarn-config` `runner.jsonnet` for a
-real `remoteApisSocketPath:` field before the expensive build work:
+RECC admission is currently **rolled back**. The mandatory admission probe and
+the shared-overlay invocation were removed from the `dakota`, `cosmic`,
+`bluefin-server`, `bst-qa`, and `bst-cache-warm` lanes because they gated on a
+`remoteApisSocketPath:` field that, per the concrete blocker above, the pinned
+`bb_runner` cannot provide. That made every BST lane fail closed permanently
+rather than transiently, taking the whole build grid offline.
 
-```
-RECC admission rejected: the deployed bb_runner does not consume BuildStream's
-remoteApisSocketPath, so nested RECC cannot run; this lane must not fall back
-to outer-RE-only or cache-only execution
-```
+Those lanes now build with outer BuildStream remote execution only, which is
+the documented rollback path. The USB4 link gate, the name-based
+worker/runner readiness gate, and the distributed-only (`build-mode: re`)
+requirement are all retained.
 
-So the checked-in contract makes these lanes fail closed. Building with outer
-BuildStream remote execution alone is a **rollback-only** path: revert the
-overlay invocation and the admission check in git and let ArgoCD reconcile.
-There is no runtime switch, parameter, or fallback that reaches it. Because the
-live API timed out, no current workflow health or failed-run observation is
-claimed here.
+`scripts/apply_recc_overlay.py` still refuses the production lanes without
+`--runner-capability`; it is simply no longer invoked by them. Re-enable the
+overlay invocation and the admission probe together, in the same change that
+deploys a runner which honors `remoteApisSocketPath`.
 
 ## Rollback
 
