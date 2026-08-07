@@ -579,3 +579,17 @@ sudo /var/usrlocal/bin/k3s-agent-uninstall.sh
 - **Flannel backend:** `host-gw` (pure L2 routes, all nodes on `<lab-subnet>/24`)
 - **Upgrades:** managed by system-upgrade-controller via `manifests/k3s-upgrade-plans.yaml`
 - **Version skew:** agents must not be newer than the server (ghost)
+
+### BIOS UMA carve-out — leave at minimum
+
+Measured on exo-0 (2026-08-06). The Framework Desktop UMA setting is a hard
+carve-out from system RAM, not a reallocation, and GTT is sized from what is
+left over:
+
+| BIOS UMA | `mem_info_vram_total` | `MemTotal` | `mem_info_gtt_total` |
+|---|---|---|---|
+| 512 MiB (correct) | 512 MiB | 62.1 GiB | 31.0 GiB |
+| 48 GiB (tested, reverted) | 48.0 GiB | 15.4 GiB | 7.9 GiB |
+
+Raising it cost 47 GiB of system RAM and cut GTT by 4×. Keep the carve-out at
+the minimum and get GPU capacity from `ttm.pages_limit` instead.

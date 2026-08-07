@@ -28,12 +28,21 @@
 #   deliberately held below total RAM so GPU allocations cannot starve k3s and
 #   the BuildStream workers that share these nodes.
 #
-# Scope note: this does NOT touch the BIOS UMA carve-out. exo-0 reports
-#   mem_info_vram_total = 512 MiB against ghost's 64 GiB on identical hardware.
-#   Prevailing Strix Halo guidance is that a *minimum* carve-out is correct on
-#   Linux and that real capacity should come from GTT, which would make exo-0
-#   the correctly configured node. That discrepancy is unresolved and must be
-#   settled by measuring what each node can actually allocate under ROCm.
+# BIOS note (measured 2026-08-06, do not undo): the UMA carve-out on these
+#   boards must stay at the MINIMUM (512 MiB). It was tested at 48 GiB on exo-0
+#   and the carve-out is a hard steal from system RAM, not a reallocation:
+#
+#     setting     mem_info_vram_total   MemTotal        mem_info_gtt_total
+#     512 MiB          512 MiB          62.1 GiB          31.0 GiB
+#     48 GiB            48.0 GiB        15.4 GiB           7.9 GiB
+#
+#   Raising it cost 47 GiB of system RAM and, because GTT is derived from what
+#   remains, collapsed GTT from 31 GiB to 7.9 GiB — the opposite of the goal.
+#   Kubernetes saw the node as a 15 GiB machine, too small for the buildbarn
+#   workers, KubeVirt VMs and KubeStellar control-plane pods it carries.
+#
+#   Minimum carve-out plus a raised ttm.pages_limit is therefore the correct
+#   configuration, and is what this manifest implements.
 #
 # Applying kargs stages a new ostree deployment; it takes effect on next boot.
 # This manifest never reboots a node on its own. It annotates the node instead:
