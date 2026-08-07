@@ -50,6 +50,52 @@ metadata:
    PVC provisioning fails on an unconfigured node instead of falling back to
    that node's root disk.
 
+## AMD GPU topology
+
+Both lab nodes are 64 GB Framework Desktop (Strix Halo / Ryzen AI Max+ 395)
+machines with an AMD Radeon 8060S iGPU (gfx1151, RDNA 3.5). Each advertises
+`amd.com/gpu: 1`.
+
+The `amdgpu-device-plugin` DaemonSet selects nodes via the Node Feature
+Discovery label `feature.node.kubernetes.io/pci-0380_1002.present` (AMD display
+controller). Do **not** reintroduce the old hand-applied
+`lab.projectbluefin.io/amd-gpu` label — it was only ever set on `exo-0`, which
+left ghost's GPU unusable for months.
+
+### GPU memory: two ceilings, only one of which you should touch
+
+| Control | Where | Correct value |
+|---|---|---|
+| BIOS UMA carve-out (`mem_info_vram_total`) | Framework firmware | **minimum (512 MiB)** |
+| GTT (`mem_info_gtt_total`) | `ttm.pages_limit` karg | 48 GiB (`12582912` pages) |
+
+`manifests/amdgpu-kargs.yaml` sets the kargs via `rpm-ostree` and annotates each
+node `lab.projectbluefin.io/amdgpu-kargs=applied|pending-reboot`. Kargs take
+effect only on reboot.
+
+**Do not raise the BIOS carve-out.** It was measured on 2026-08-06 and is a hard
+steal from system RAM, not a reallocation — and because GTT is sized from what
+remains, raising it makes GPU memory *worse*:
+
+| BIOS UMA | VRAM | MemTotal | GTT |
+|---|---|---|---|
+| 512 MiB (correct) | 512 MiB | 62.1 GiB | 31.0 GiB → **48 GiB with kargs** |
+| 48 GiB (tested, reverted) | 48.0 GiB | **15.4 GiB** | **7.9 GiB** |
+
+At 48 GiB carve-out, Kubernetes saw the node as a 15 GiB machine — too small for
+the buildbarn workers, KubeVirt VMs, and KubeStellar control-plane pods it
+carries. Minimum carve-out plus a raised `ttm.pages_limit` yields 48 GiB of
+GPU-addressable memory *and* keeps all 62 GiB of system RAM.
+
+Note `ttm.page_pool_size` is deliberately unset: it pre-allocates and
+permanently removes memory from the OS.
+
+### Verify
+
+```bash
+kubectl get nodes -o custom-columns=NAME:.metadata.name,GPU:.status.allocatable.amd\\.com/gpu,KARGS:.metadata.annotations.lab\\.projectbluefin\\.io/amdgpu-kargs
+```
+
 ## ROCm inference pause
 
 The local `llm-d` inference workload may be intentionally paused in

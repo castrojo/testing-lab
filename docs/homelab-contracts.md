@@ -512,7 +512,6 @@ cluster resources are created for a non-GPU cluster.
 |---|---|---|
 | KubeVirt VM-backed GPU passthrough (VFIO/IOMMU) | Requires additional substrate + #54 | #54 |
 | Multi-GPU scheduling / MIG slicing | No multi-GPU hardware in current lab | Deferred |
-| AMD ROCm (amd.com/gpu) | Primary target is NVIDIA | Deferred |
 | Intel QSV / VAAPI (i915/xe) | Deferred until NVIDIA path validated | Deferred |
 | #67 printer-device access + LAN discovery | ✅ defined | Substrate work from #54 required before tests execute |
 
