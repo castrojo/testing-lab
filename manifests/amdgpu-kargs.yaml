@@ -1,5 +1,7 @@
 # manifests/amdgpu-kargs.yaml
-# Raises the GPU-addressable memory ceiling on AMD "Strix Halo" nodes.
+# Tunes the AMD "Strix Halo" nodes for GPU compute: raises the GPU-addressable
+# memory ceiling, and raises the GPU lockup timeout so sustained inference does
+# not trip spurious resets.
 #
 # Why this exists:
 #   amdgpu sizes GTT from TTM's global page limit, which defaults to half of
@@ -19,6 +21,24 @@
 #   Deliberately NOT set: ttm.page_pool_size. That option pre-allocates memory
 #   and permanently removes it from the OS. On a 64 GB node shared with k3s and
 #   BuildStream workers, setting it near pages_limit would be actively harmful.
+#   (Some Strix Halo guides — e.g. LLMKube's onboarding doc — do recommend it.
+#   Those target dedicated 128 GB inference boxes; these nodes are shared, so
+#   the reasoning above still stands. Noted so the disagreement is deliberate.)
+#
+# GPU lockup timeout (amdgpu.lockup_timeout):
+#   The amdgpu default (~10s) is tuned for interactive desktop workloads. Under
+#   sustained heavy inference on gfx1151 — long-context generation, hours-long
+#   sessions — the default trips a *spurious* GPU reset ("device lost", ring
+#   timeout) that kills the inference backend mid-run even though the GPU is
+#   healthy and simply busy. Raising it to 20s avoids the false positive without
+#   masking a genuine hang: a truly wedged GPU still resets, just 10s later.
+#   See kyuz0/amd-strix-halo-toolboxes and defilantech/LLMKube (Strix Halo
+#   onboarding) for the community consensus on this value.
+#
+#   Deliberately NOT set: amd_iommu=off. It is measured 5-12% faster than
+#   iommu=pt on Strix Halo, but it disables IOMMU device isolation host-wide,
+#   and these nodes also run KubeVirt VMs that rely on that isolation. Inference
+#   here is throughput-tolerant, so the security property wins.
 #
 #   Note the exact spelling: "gtt_size" (with underscore) is not a valid
 #   parameter and is silently ignored.
@@ -125,6 +145,10 @@ spec:
               value: "49152"
             - name: TTM_PAGES_LIMIT
               value: "12582912"
+            # Milliseconds. Raises the GPU lockup/reset timeout from the ~10s
+            # default so sustained inference does not trip a spurious reset.
+            - name: GPU_LOCKUP_TIMEOUT_MS
+              value: "20000"
           command: [bash, -c]
           args:
             - |
@@ -132,7 +156,7 @@ spec:
 
               ostree_kargs() { nsenter -t 1 -m -- rpm-ostree kargs "$@"; }
 
-              DESIRED="amdgpu.gttsize=${GTT_SIZE_MIB} ttm.pages_limit=${TTM_PAGES_LIMIT}"
+              DESIRED="amdgpu.gttsize=${GTT_SIZE_MIB} ttm.pages_limit=${TTM_PAGES_LIMIT} amdgpu.lockup_timeout=${GPU_LOCKUP_TIMEOUT_MS}"
               CURRENT="$(ostree_kargs)"
 
               CHANGES=()
