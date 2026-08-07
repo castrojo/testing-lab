@@ -103,6 +103,19 @@ The workflow authoring guidance is split by topic:
   every contract parameter through the call-site arguments.
 - Any `script:` template without `resources:` limits
 - Templates in `argo/workflow-templates/` applied with `kubectl apply` (not via git)
+- A PR-dispatching poller that dedups on `pr-number` + `pr-sha` but never
+  cancels the superseded run, or that leaves workflows running after their PR
+  merges — both drain the `ghost-container-qa` semaphore for ~20 minutes per
+  stale run. Supersede on every poll and reap closed PRs; see
+  [patterns §20ac](patterns.md).
+- Cancelling a PR workflow with `kubectl delete` — that skips `onExit`, so
+  `report-final` never runs and the commit is stuck on `pending` forever. Use
+  `spec.shutdown: Stop` (what `argo stop` sets).
+- Reaping workflows by `bluefin.io/pr-number` alone — PR numbers collide across
+  repositories. Always pair it with `bluefin.io/repository`.
+- Treating "PR absent from the open-PR API result" as "PR is closed" without
+  proving the API call succeeded — a transient GitHub error then mass-cancels
+  every live run.
 - A `pr-poller` (or any PR-gating workflow) that skips on ANY existing commit status — it must skip only `pending` (in-flight) and `success` (already passed), and re-test on `error`/`failure`. Skipping `error` means stale statuses from deleted workflows permanently block retests.
 - A VM or build pipeline that uses a node selector to reach local storage. Use
   scheduler-selected `WaitForFirstConsumer` PVC placement on an explicitly
