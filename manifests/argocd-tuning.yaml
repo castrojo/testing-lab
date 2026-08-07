@@ -133,13 +133,19 @@ spec:
       priorityClassName: system-cluster-critical
       containers:
         - name: argocd-repo-server
+          # 256Mi was too small to render the kubestellar-console Helm chart
+          # from a cold manifest cache: steady-state syncs are served from
+          # cache, but after an outage repo-server regenerates every app at
+          # once and is OOMKilled (exit 137), which deadlocks ArgoCD because
+          # it cannot sync the fix for its own outage. Nodes have 62 GiB;
+          # 1Gi is still conservative.
           resources:
             requests:
               cpu: 50m
-              memory: 64Mi
+              memory: 256Mi
             limits:
               cpu: 500m
-              memory: 256Mi
+              memory: 1Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
