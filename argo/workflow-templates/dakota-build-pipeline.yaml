@@ -567,20 +567,32 @@ spec:
             build-commands:
             - |
               python3 - <<'PY'
-              import hashlib, os
+              import os
               from pathlib import Path
-              print("RE-DIAG cwd:", os.getcwd())
-              print("RE-DIAG dir:", sorted(x.name for x in Path('.').iterdir())[:40])
               p = Path("Makefile")
               t = p.read_text()
-              print("RE-DIAG Makefile sha256:", hashlib.sha256(t.encode()).hexdigest(), "len:", len(t))
               old = ".PHONY: manpages\nmanpages:\n\tcargo run --release --package xtask -- manpages\n"
               new = ".PHONY: manpages\nmanpages:\n\t@true\n"
-              if old not in t:
+              if new in t:
+                  # The bb_worker native file pool hardlinks input-root files;
+                  # an in-place write through a hardlink poisons the pooled
+                  # blob for every later action. A previous run's truncate-
+                  # write already mutated this file, so treat the neutralized
+                  # target as success.
+                  print("bootc manpages target already neutralized; skipping")
+              elif old in t:
+                  # Atomic replace: never mutate the hardlinked input file in
+                  # place (that corrupts the worker file pool).
+                  tmp = p.with_name(".Makefile.patch-tmp")
+                  tmp.write_text(t.replace(old, new, 1))
+                  os.replace(tmp, p)
+              else:
+                  import hashlib
                   i = t.find("manpages")
+                  print("RE-DIAG cwd:", os.getcwd())
+                  print("RE-DIAG Makefile sha256:", hashlib.sha256(t.encode()).hexdigest(), "len:", len(t))
                   print("RE-DIAG manpages context:", repr(t[max(0, i - 120):i + 200]))
                   raise SystemExit("bootc Makefile layout changed unexpectedly")
-              p.write_text(t.replace(old, new, 1))
               PY
             - make PREFIX="/usr"
 

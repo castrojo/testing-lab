@@ -8,7 +8,10 @@ metadata:
     app.kubernetes.io/component: commit-poller
     app.kubernetes.io/part-of: bluefin-test-suite
 spec:
-  suspend: false
+  # Suspended 2026-08-07: the poller was fire-and-forget failing every 5 min
+  # on the red distributed lane and its runs steal the bst-build semaphore
+  # from supervised validation runs. Re-enable after the lane is green again.
+  suspend: true
   schedules:
     - "2-59/5 * * * *"
   timezone: "UTC"
