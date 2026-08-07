@@ -229,6 +229,56 @@ spec:
                   value: "{{tasks.detect-build-mode.outputs.parameters.mode}}"
                 - name: lock-key
                   value: "{{inputs.parameters.lock-key}}"
+          # Gaming variants mirror the dakota CI build.yml matrix: same
+          # elements, `-o gaming true` (derived from the tag in bst-build-re),
+          # published with -gaming suffixes. Non-blocking like nvidia: the lab
+          # has no GPU test hardware for these lanes.
+          - name: build-bluefin-gaming
+            template: run-bst-step-nonblocking
+            depends: detect-build-mode
+            arguments:
+              parameters:
+                - name: element
+                  value: "oci/bluefin.bst"
+                - name: tag
+                  value: "dakota-gaming"
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: commit-sha
+                  value: "{{inputs.parameters.commit-sha}}"
+                - name: image-tag
+                  value: "{{inputs.parameters.image-tag}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: mode
+                  value: "{{tasks.detect-build-mode.outputs.parameters.mode}}"
+                - name: lock-key
+                  value: "{{inputs.parameters.lock-key}}"
+          - name: build-bluefin-nvidia-gaming
+            template: run-bst-step-nonblocking
+            depends: detect-build-mode
+            arguments:
+              parameters:
+                - name: element
+                  value: "oci/bluefin-nvidia.bst"
+                - name: tag
+                  value: "dakota-nvidia-gaming"
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: commit-sha
+                  value: "{{inputs.parameters.commit-sha}}"
+                - name: image-tag
+                  value: "{{inputs.parameters.image-tag}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: mode
+                  value: "{{tasks.detect-build-mode.outputs.parameters.mode}}"
+                - name: lock-key
+                  value: "{{inputs.parameters.lock-key}}"
     # Dakota builds are distributed-only. Non-RE modes are rejected to prevent
     # local/serial bypasses that write large build state to node root disks.
     - name: detect-build-mode
@@ -517,12 +567,19 @@ spec:
             build-commands:
             - |
               python3 - <<'PY'
+              import hashlib, os
               from pathlib import Path
+              print("RE-DIAG cwd:", os.getcwd())
+              print("RE-DIAG dir:", sorted(x.name for x in Path('.').iterdir())[:40])
               p = Path("Makefile")
               t = p.read_text()
+              print("RE-DIAG Makefile sha256:", hashlib.sha256(t.encode()).hexdigest(), "len:", len(t))
               old = ".PHONY: manpages\nmanpages:\n\tcargo run --release --package xtask -- manpages\n"
               new = ".PHONY: manpages\nmanpages:\n\t@true\n"
-              assert old in t, "bootc Makefile layout changed unexpectedly"
+              if old not in t:
+                  i = t.find("manpages")
+                  print("RE-DIAG manpages context:", repr(t[max(0, i - 120):i + 200]))
+                  raise SystemExit("bootc Makefile layout changed unexpectedly")
               p.write_text(t.replace(old, new, 1))
               PY
             - make PREFIX="/usr"
@@ -617,11 +674,20 @@ spec:
           fi
           echo "=== Verified BuildStream remote execution configuration ==="
 
+          # Gaming lanes are the same elements with the `gaming` project
+          # option enabled (dakota project.conf; CI: BUILD_GAMING=true).
+          # Derive from the image tag to keep template plumbing unchanged.
+          GAMING_FLAG=()
+          case "${TAG}" in
+            *gaming*) GAMING_FLAG=(-o gaming true) ;;
+          esac
+
           echo "=== Building ${ELEMENT} through BuildBarn remote execution ==="
           bst --config "${BST_CONF}" \
               --no-interactive \
               --max-jobs 12 \
               --fetchers 8 \
+              "${GAMING_FLAG[@]}" \
               build "${ELEMENT}"
 
           echo "=== Exporting ${ELEMENT} ==="
@@ -632,6 +698,7 @@ spec:
               --max-jobs 12 \
               --fetchers 8 \
               -o x86_64_v3 true \
+              "${GAMING_FLAG[@]}" \
               artifact checkout "${ELEMENT}" \
               --directory "${EXPORT_DIR}"
 
