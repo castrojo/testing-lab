@@ -407,6 +407,52 @@ spec:
           chown -R 1000:1000 /home/bluefin-test /tmp/results
           chmod 700 /home/bluefin-test/run
 
+          # Every nested target on this node shares ghost's single physical
+          # GPU. mutter's native backend takes *exclusive* DRM master on
+          # /dev/dri/card*, so only one nested GNOME session per node can ever
+          # start. Concurrent lanes log
+          #   Failed to open gpu '/dev/dri/card1': ...EBUSY: Device or resource busy
+          # then stall for ~50s in "Failed to make thread 'KMS thread' high
+          # priority scheduled", and GDM loops
+          #   GdmDisplay: Session never registered, failing
+          # forever, so the user session never returns. Force every shell
+          # instance (GDM greeter and the autologin session alike) into
+          # mutter's headless backend with a virtual monitor: nothing here ever
+          # renders to a physical display, and headless mutter never claims DRM
+          # master, so lanes stop contending for the GPU.
+          #
+          # qecore-headless enables Shell.Eval by appending `--unsafe-mode` to
+          # the *unit's* ExecStart (rewriting
+          # /etc/systemd/user/org.gnome.Shell@.service under image mode). A
+          # drop-in ExecStart= reset overrides that unit line, so `--unsafe-mode`
+          # must be repeated here or every Shell.Eval call returns `(false, '')`.
+          # Keep both flags together if this line is ever edited.
+          mkdir -p /etc/systemd/user/org.gnome.Shell@.service.d
+          printf "%s\n" \
+            "[Service]" \
+            "ExecStart=" \
+            "ExecStart=/usr/bin/gnome-shell --mode=%i --unsafe-mode --headless --virtual-monitor 1920x1080" \
+            >/etc/systemd/user/org.gnome.Shell@.service.d/10-headless.conf
+
+          # systemd-logind owns /run/user/1000 and destroys it -- together with
+          # the session bus socket inside it -- the moment the user's last
+          # session ends. qecore-headless stops GDM and SIGTERMs the session it
+          # finds, so without lingering XDG_RUNTIME_DIR and its bus vanish and
+          # can only come back if a brand new login succeeds. Lingering keeps
+          # user@1000.service (and therefore /run/user/1000/bus) alive across
+          # the GDM restart, so the runner's session-bus address stays valid.
+          loginctl enable-linger bluefin-test
+          for _ in $(seq 1 30); do
+            [ -S /run/user/1000/bus ] && break
+            sleep 1
+          done
+          if [ ! -S /run/user/1000/bus ]; then
+            echo "user@1000.service did not create /run/user/1000/bus after enable-linger" >&2
+            loginctl show-user bluefin-test >&2 || true
+            systemctl status user@1000.service --no-pager --full >&2 || true
+            exit 1
+          fi
+
           # Install test-only Python dependencies.
           echo "Installing test-only Python dependencies in nested target..." >&2
           if ! python3 -m pip --version >/dev/null 2>&1; then
@@ -463,7 +509,12 @@ spec:
         done
         podman exec "${TARGET_NAME}" pgrep -u 1000 -f gnome-session >/dev/null || {
           echo "GDM did not start a GNOME session for bluefin-test" >&2
-          podman exec "${TARGET_NAME}" journalctl --no-pager -u gdm || true
+          podman exec "${TARGET_NAME}" journalctl --no-pager -u gdm >&2 || true
+          # gnome-shell's own journal carries the decisive line when the host
+          # GPU is contended ("Failed to open gpu ...: EBUSY"); GDM alone only
+          # reports the downstream "Session never registered, failing".
+          podman exec "${TARGET_NAME}" journalctl --no-pager _COMM=gnome-shell >&2 || true
+          podman exec "${TARGET_NAME}" loginctl list-sessions >&2 || true
           exit 1
         }
 

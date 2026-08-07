@@ -122,6 +122,22 @@ The workflow authoring guidance is split by topic:
   configured non-root data mount instead.
 - Python inside bash inside YAML (colons + quotes cause parse errors — use `curl`+`jq` instead; never `python3 -c` or heredoc Python; see §16 GitHub Contents API pattern)
 - Heredoc `<< 'EOF'` inside a YAML block scalar — indentation breaks the YAML parser. ArgoCD returns `ManifestGenerationError: yaml: could not find expected ':'`. Write scripts to files in initContainers or use inline jq instead.
+- **Exclusive GPU contention in nested GNOME QA**: any nested QA target that lets
+  GNOME Shell run with mutter's *native* backend takes exclusive DRM master on the
+  host's `/dev/dri/card*`. ghost has one GPU, so with `ghost-container-qa` at 6 only
+  the first lane ever gets a session; the rest log
+  `Failed to open gpu '/dev/dri/card1': ...EBUSY: Device or resource busy`, stall in
+  `Failed to make thread 'KMS thread' high priority scheduled`, and GDM loops
+  `GdmDisplay: Session never registered, failing`. Force headless via a
+  `/etc/systemd/user/org.gnome.Shell@.service.d/*.conf` drop-in with
+  `gnome-shell --mode=%i --headless --virtual-monitor WxH`. The host GPU is *not* a
+  per-lane resource.
+- **Losing `XDG_RUNTIME_DIR` across a display-manager restart**: `systemd-logind`
+  destroys `/run/user/<uid>` — and the session bus socket inside it — when the user's
+  last session ends. `qecore-headless` stops GDM and SIGTERMs the session, so any
+  runner holding `unix:path=/run/user/<uid>/bus` is left pointing at a socket that
+  only returns if a brand new login succeeds. Run `loginctl enable-linger <user>`
+  before starting the display manager so `user@<uid>.service` and the bus survive.
 - A multi-line nested script passed as `podman exec <ctr> bash -c '...'` inside a YAML block scalar. The first apostrophe in the body (e.g. `printf '%s\n'`) silently closes the outer quote, so bash receives mangled text (`printf %sn`) with no parse error. Use `podman exec -i <ctr> bash -s <<'MARKER'` with the terminator at the block-scalar indent column instead.
 - `registry.k8s.io/kubectl` used as a shell-capable image — it is distroless, has no bash, nc, or any shell utilities. Use `cgr.dev/chainguard/kubectl:latest-dev` when you need kubectl + bash together
 - `ghcr.io/projectbluefin/lab-runner:latest` assumed to contain `skopeo` or `oras` — the live image can omit both. Use pinned `quay.io/skopeo/stable` and bootstrap pinned ORAS when registry referrers are required.
@@ -197,6 +213,8 @@ The workflow authoring guidance is split by topic:
 
 Before marking any WorkflowTemplate change done:
 
+- [ ] Nested GNOME QA targets force `gnome-shell --headless` and enable
+      `loginctl enable-linger` for the test user before starting GDM
 - [ ] All VM-running pipelines have `spec.activeDeadlineSeconds` set
 - [ ] All queueable templates/dynamic workflows (e.g. `build-containerdisk` and `digest-watch` submit payloads) have a generous workflow-level `activeDeadlineSeconds` (e.g., 14400s / 4h) to avoid queue starvation
 - [ ] Any new CronWorkflow uses `spec.schedules:` (array), not `spec.schedule:` (singular)
