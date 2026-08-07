@@ -20,6 +20,10 @@ spec:
         value: "main"
   templates:
     - name: matrix
+      # Each lane holds a `ghost-container-qa` slot; cap the fan-out so a manual
+      # matrix run cannot monopolise the shared runner. `spec.parallelism` would
+      # not reach `run-container-tests` through `templateRef`.
+      parallelism: 2
       dag:
         tasks:
           - name: test-bluefin

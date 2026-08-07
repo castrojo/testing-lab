@@ -95,6 +95,54 @@ activeDeadlineSeconds: 3600   # 1h for containerdisk, 7200 for knuckle
 
 **VMs float to any KubeVirt-capable node** — no `nodeSelector: kubernetes.io/hostname: ghost` in VM specs. The registry-mirror-config DaemonSet writes the Zot HTTP registry config to all nodes.
 
+### 15b. Semaphore topology: hold the key at one level, cap every fan-out
+
+Two rules govern every ConfigMap-backed semaphore in `manifests/workflow-semaphores.yaml`.
+`scripts/check_semaphore_topology.py` enforces both in `just lint`.
+
+**Rule 1 — declare the key on the leaf that consumes the resource, never on
+`spec.synchronization`.** A workflow-level semaphore is held for the *entire*
+run, including the orchestration time before and after the real work. If a
+parent holds `ghost-container-qa` while its `test-lane` children also need it,
+the parent starves its own children and nothing can ever make progress:
+the holder is waiting on the resource it is holding. `ghost-container-qa` is
+declared exactly once, on `run-container-tests/run-container-tests`.
+
+**Rule 2 — `spec.parallelism` does NOT travel through `templateRef`.** This is
+the trap. Only a *spec-level* `workflowTemplateRef` inherits workflow-level
+fields (`parallelism`, `activeDeadlineSeconds`, `workflowMetadata`). A
+`templateRef` inside a `dag.tasks[]`/`steps[]` entry imports the single named
+template and nothing else.
+
+```yaml
+# pr-poller's inline pr-pipeline and image-poller both do this:
+- name: qa-bluefin
+  templateRef:
+    name: bluefin-qa-pipeline   # spec.parallelism: 2 is SILENTLY DROPPED
+    template: pipeline
+```
+
+So `bluefin-qa-pipeline`'s `parallelism: 2` protected only direct submissions.
+Poller-dispatched runs fanned out all five `withItems` lanes at once and a
+single workflow held 5 of the 6 `ghost-container-qa` slots. Fix: put
+`parallelism` on the **template** that fans out, where it survives `templateRef`:
+
+```yaml
+templates:
+  - name: pipeline
+    parallelism: 2          # survives templateRef; keep it < the semaphore limit
+    dag:
+      tasks:
+        - name: test-lane
+          withItems: [smoke, common, developer, software, system]
+          templateRef: { name: run-container-tests, template: run-container-tests }
+```
+
+Invariant to preserve: `per-template parallelism < semaphore limit`, so at
+least two distinct workflows can always progress and no single pipeline can
+monopolise the runner. Raising the semaphore limit is never a fix on its own —
+it only moves the threshold.
+
 ### 15a. Locking one DAG build task
 
 `synchronization` is a template-level field; it is not valid on an individual

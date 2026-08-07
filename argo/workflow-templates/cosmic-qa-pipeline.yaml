@@ -44,6 +44,9 @@ spec:
       value: "https://github.com/projectbluefin/testsuite"
   templates:
   - name: pipeline
+    # `spec.parallelism` is not inherited through `templateRef`; cap the
+    # `ghost-container-qa` fan-out on the template itself.
+    parallelism: 2
     dag:
       tasks:
       - name: validate-suites

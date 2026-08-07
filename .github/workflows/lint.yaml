@@ -81,6 +81,11 @@ jobs:
         with:
           python-version: '3.14'
 
+      - name: Semaphore topology check
+        run: |
+          pip install --quiet pyyaml
+          python scripts/check_semaphore_topology.py argo/
+
       - name: Validate Python syntax
         run: |
           echo "Checking Python syntax..."

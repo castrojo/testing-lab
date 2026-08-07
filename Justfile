@@ -401,4 +401,6 @@ lint:
         echo "Linting $f..."; \
         argo lint --offline argo/workflow-templates/ "$f" || exit 1; \
     done
+    @echo "Checking semaphore topology..."
+    @python3 scripts/check_semaphore_topology.py argo/
     @echo "✓ All manifests valid"
