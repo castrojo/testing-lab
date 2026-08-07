@@ -7,6 +7,18 @@ without changing manifests, tests, or live cluster state.
 
 ## Canonical model
 
+> **Superseded in part (2026-08-06).** Three claims below no longer hold. See
+> `docs/skills/cluster-tooling/SKILL.md` § "AMD GPU topology" for the current
+> model. Retained for historical context.
+>
+> - ~~`exo-0` is the AMD GPU node.~~ **Both** nodes are AMD GPU nodes. ghost's
+>   iGPU was present all along but invisible to the scheduler.
+> - ~~The DaemonSet targets `lab.projectbluefin.io/amd-gpu=true`.~~ It now
+>   selects on the NFD label `feature.node.kubernetes.io/pci-0380_1002.present`.
+>   The hand-applied label is retired.
+> - ~~`llm-d-modelserver` is pinned to `exo-0`.~~ Node pinning is no longer
+>   required for GPU reasons; both nodes qualify.
+
 - `exo-0` is the AMD GPU node.
 - The ArgoCD-managed `amdgpu-device-plugin` DaemonSet targets nodes labeled
   `lab.projectbluefin.io/amd-gpu=true`.

@@ -593,3 +593,37 @@ left over:
 
 Raising it cost 47 GiB of system RAM and cut GTT by 4×. Keep the carve-out at
 the minimum and get GPU capacity from `ttm.pages_limit` instead.
+
+### Confirmed good state (2026-08-06, both nodes rebooted)
+
+| | ghost | exo-0 |
+|---|---|---|
+| `amd.com/gpu` | 1 | 1 |
+| `mem_info_gtt_total` | 48 GiB | 48 GiB |
+| `MemTotal` | 62.6 GiB | 62.1 GiB |
+| `amdgpu-kargs` annotation | `applied` | `applied` |
+
+`mem_info_vram_total` differs between the nodes (ghost 64 GiB, exo-0 512 MiB)
+and this is **not** a fault — ghost reports dynamically without carving out RAM.
+GTT is the number that matters; both are at 48 GiB.
+
+### Rebooting for kargs
+
+Kargs only apply on boot. Reboot one node at a time. KubeVirt PDBs will block a
+full drain on this 2-node cluster; that is expected — cordon, drain with a
+timeout, then reboot anyway.
+
+```bash
+kubectl drain <node> --ignore-daemonsets --delete-emptydir-data --force --timeout=150s
+# reboot, wait for Ready, then:
+kubectl uncordon <node>
+```
+
+After any reboot, `zot-cache` restarts cold and serially probes each configured
+upstream per image, so expect a burst of `ErrImagePull` / `ImagePullBackOff`
+that clears on its own. Confirm the mirror is actually healthy before chasing it:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://192.168.1.102:30501/v2/   # expect 200
+kubectl -n local-registry logs deploy/zot-cache --tail=20
+```

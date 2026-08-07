@@ -229,9 +229,13 @@ The reference implementation runs on a single node:
 | CPU | AMD Ryzen AI MAX+ 395 (Strix Halo) — 16c/32t |
 | RAM | 64GB LPDDR5X |
 | Storage | NVMe with btrfs (`/var/tmp` on btrfs for reflink support) |
-| GPU | AMD Radeon 890M (integrated) + ROCm for LLM inference |
+| GPU | AMD Radeon 8060S (integrated, gfx1151/RDNA 3.5) + ROCm for LLM inference |
 | OS | Bluefin (bootc atomic, Fedora-based) |
-| Kernel args | `amd_iommu=off amdgpu.gttsize=61440 ttm.pages_limit=15728640` |
+| Kernel args | `amdgpu.gttsize=49152 ttm.pages_limit=12582912` (48 GiB GTT, applied by `manifests/amdgpu-kargs.yaml`) |
+| BIOS UMA carve-out | **minimum (512 MiB)** — raising it steals system RAM and *shrinks* GTT |
+
+`amd_iommu=off` is deliberately **not** set. It measures ~5–12% faster for
+inference but risks breaking KubeVirt VFIO passthrough on this cluster.
 
 The btrfs reflink VM clone requires `/var/tmp/bluefin-golden` and
 `/var/tmp/bluefin-test` to be on the same btrfs volume. Verify with:
