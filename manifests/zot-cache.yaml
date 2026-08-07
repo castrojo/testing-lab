@@ -9,8 +9,14 @@
 #   public.ecr.aws             → /ecr    (pull via http://192.168.1.102:30501/ecr/...)
 #   lscr.io                    → /lscr   (pull via http://192.168.1.102:30501/lscr/...)
 #
-# Sync content filters are limited to repository scopes observed in the lab so
-# unsupported pulls fail without probing every upstream repository.
+# Sync content filters use UPSTREAM repository patterns; `destination` supplies
+# the local path segment. So quay.io/argoproj/argocd is matched by
+# prefix "argoproj/*" + destination "/quay" and served as /quay/argoproj/argocd.
+# Do NOT write the destination segment into the prefix (e.g. "quay/argoproj/*") —
+# it will never match upstream and on-demand sync silently 404s. Registries with
+# no prefix list must still declare a destination, or their images land at the
+# wrong path. Filters exist so unsupported pulls fail without probing every
+# upstream repository.
 # containerd on each node routes pulls through this via
 # manifests/registry-mirror-config.yaml (hosts.toml DaemonSet, no k3s restart needed)
 #
@@ -58,12 +64,15 @@ data:
               "maxRetries": 1,
               "retryDelay": "2m",
               "content": [
-                { "prefix": "ghcr/projectbluefin/*", "destination": "/ghcr" },
-                { "prefix": "ghcr/ublue-os/*", "destination": "/ghcr" },
-                { "prefix": "ghcr/frostyard/*", "destination": "/ghcr" },
-                { "prefix": "ghcr/flatcar/*", "destination": "/ghcr" },
-                { "prefix": "ghcr/ggml-org/*", "destination": "/ghcr" },
-                { "prefix": "ghcr/arc-runner", "destination": "/ghcr" }
+                { "prefix": "actions/*", "destination": "/ghcr" },
+                { "prefix": "buildbarn/*", "destination": "/ghcr" },
+                { "prefix": "flatcar/*", "destination": "/ghcr" },
+                { "prefix": "frostyard/*", "destination": "/ghcr" },
+                { "prefix": "ggml-org/*", "destination": "/ghcr" },
+                { "prefix": "kubestellar/*", "destination": "/ghcr" },
+                { "prefix": "project-zot/*", "destination": "/ghcr" },
+                { "prefix": "projectbluefin/*", "destination": "/ghcr" },
+                { "prefix": "ublue-os/*", "destination": "/ghcr" }
               ]
             },
             {
@@ -73,9 +82,13 @@ data:
               "maxRetries": 1,
               "retryDelay": "2m",
               "content": [
-                { "prefix": "docker/library/*", "destination": "/docker" },
-                { "prefix": "docker/rocm/*", "destination": "/docker" },
-                { "prefix": "docker/vllm/*", "destination": "/docker" }
+                { "prefix": "bitnami/*", "destination": "/docker" },
+                { "prefix": "curlimages/*", "destination": "/docker" },
+                { "prefix": "library/*", "destination": "/docker" },
+                { "prefix": "linuxserver/*", "destination": "/docker" },
+                { "prefix": "rancher/*", "destination": "/docker" },
+                { "prefix": "rocm/*", "destination": "/docker" },
+                { "prefix": "vllm/*", "destination": "/docker" }
               ]
             },
             {
@@ -85,12 +98,16 @@ data:
               "maxRetries": 1,
               "retryDelay": "2m",
               "content": [
-                { "prefix": "quay/argoproj/*", "destination": "/quay" },
-                { "prefix": "quay/buildah/*", "destination": "/quay" },
-                { "prefix": "quay/fedora/*", "destination": "/quay" },
-                { "prefix": "quay/kubevirt/*", "destination": "/quay" },
-                { "prefix": "quay/podman/*", "destination": "/quay" },
-                { "prefix": "quay/prometheus/*", "destination": "/quay" }
+                { "prefix": "argoproj/*", "destination": "/quay" },
+                { "prefix": "brancz/*", "destination": "/quay" },
+                { "prefix": "buildah/*", "destination": "/quay" },
+                { "prefix": "fedora/*", "destination": "/quay" },
+                { "prefix": "kubestellar/*", "destination": "/quay" },
+                { "prefix": "kubevirt/*", "destination": "/quay" },
+                { "prefix": "open-cluster-management/*", "destination": "/quay" },
+                { "prefix": "podman/*", "destination": "/quay" },
+                { "prefix": "prometheus/*", "destination": "/quay" },
+                { "prefix": "skopeo/*", "destination": "/quay" }
               ]
             },
             {
@@ -99,7 +116,7 @@ data:
               "tlsVerify": true,
               "maxRetries": 1,
               "retryDelay": "2m",
-              "content": []
+              "content": [{ "prefix": "**", "destination": "/fedora" }]
             },
             {
               "urls": ["https://registry.k8s.io"],
@@ -107,7 +124,7 @@ data:
               "tlsVerify": true,
               "maxRetries": 1,
               "retryDelay": "2m",
-              "content": []
+              "content": [{ "prefix": "**", "destination": "/k8s" }]
             },
             {
               "urls": ["https://cgr.dev"],
@@ -115,7 +132,7 @@ data:
               "tlsVerify": true,
               "maxRetries": 1,
               "retryDelay": "2m",
-              "content": [{ "prefix": "cgr/chainguard/*", "destination": "/cgr" }]
+              "content": [{ "prefix": "chainguard/*", "destination": "/cgr" }]
             },
             {
               "urls": ["https://public.ecr.aws"],
@@ -123,7 +140,7 @@ data:
               "tlsVerify": true,
               "maxRetries": 1,
               "retryDelay": "2m",
-              "content": []
+              "content": [{ "prefix": "**", "destination": "/ecr" }]
             },
             {
               "urls": ["https://lscr.io"],
@@ -131,7 +148,7 @@ data:
               "tlsVerify": true,
               "maxRetries": 1,
               "retryDelay": "2m",
-              "content": []
+              "content": [{ "prefix": "**", "destination": "/lscr" }]
             }
           ]
         }
