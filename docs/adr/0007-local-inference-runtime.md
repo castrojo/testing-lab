@@ -74,7 +74,11 @@ the patched ROCm toolboxes live on Docker Hub, which is not in the lab registry
 allowlist. Vulkan keeps us on an allowlisted registry with an upstream-maintained
 image.
 
-The image is **pinned by digest**, not `latest`, so rollback is reproducible.
+The image is **pinned to an immutable per-build tag** (`server-vulkan-b10290`),
+not `latest` and not a bare digest. A digest pin was tried first and fails in
+this cluster: pulls go through the zot registry mirror, whose on-demand sync
+only triggers on *tag* references, so a bare `@sha256:` reference for an
+uncached image returns 404. The build tag is equally immutable and mirror-safe.
 
 ### 3. Qwen3-30B-A3B-Instruct-2507 at Q6_K, not Q8_0
 

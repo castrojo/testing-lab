@@ -85,8 +85,14 @@ spec:
           # and defilantech/LLMKube. It also keeps us on an allowlisted registry:
           # ggml-org publishes no ROCm tags at all.
           #
-          # Pinned by digest so a rollback is reproducible. Tag: server-vulkan.
-          image: ghcr.io/ggml-org/llama.cpp:server-vulkan@sha256:654482cfc988042fe25c2255199d512bcfd057fcde9b87b8dc07b9a2d3336b6c
+          # Pinned to an immutable per-build tag rather than a digest. The lab
+          # pulls through the zot mirror, whose on-demand sync only triggers on
+          # *tag* references — a bare @sha256 digest for an uncached image 404s.
+          # server-vulkan-b10290 resolves to
+          # sha256:654482cfc988042fe25c2255199d512bcfd057fcde9b87b8dc07b9a2d3336b6c
+          # (llama.cpp b10290, upstream commit c8e03ce8). Bump the build number
+          # to upgrade; never use the floating :server-vulkan tag.
+          image: ghcr.io/ggml-org/llama.cpp:server-vulkan-b10290
           imagePullPolicy: IfNotPresent
           # Not privileged. /dev/dri/renderD128 is mode 0666 on these nodes, so
           # the Vulkan backend needs the device node and nothing else. The
