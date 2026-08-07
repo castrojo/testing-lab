@@ -17,6 +17,26 @@ metadata:
     pod-security.kubernetes.io/warn: baseline
     pod-security.kubernetes.io/audit: baseline
 ---
+# Persistent GGUF cache. Replaces the previous emptyDir, which forced a ~25 GB
+# re-download on every pod restart. local-path is RWO and WaitForFirstConsumer,
+# so this binds on whichever node the pod lands on — deterministic here because
+# the Deployment pins to exo-0.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: llm-d-model-cache
+  namespace: llm-d
+  labels:
+    app.kubernetes.io/name: llm-d-modelserver
+    app.kubernetes.io/part-of: testing-lab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 100Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,107 +46,190 @@ metadata:
     app.kubernetes.io/name: llm-d-modelserver
     app.kubernetes.io/part-of: testing-lab
 spec:
+  # Enabled in a separate GitOps change once the kargs reboot, the PVC bind and
+  # node capacity are confirmed. See docs/adr/0007-local-inference-runtime.md.
   replicas: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: llm-d-modelserver
+  # Recreate, not RollingUpdate: the node exposes exactly one amd.com/gpu and
+  # the cache PVC is RWO. A rolling update would create the replacement before
+  # deleting the old pod, the replacement could never obtain the GPU, and
+  # maxUnavailable=0 would keep the old pod forever — a permanent deadlock.
+  strategy:
+    type: Recreate
   template:
     metadata:
       labels:
         app.kubernetes.io/name: llm-d-modelserver
       annotations:
-        lab.projectbluefin.io/config-version: podsecurity-v1
+        lab.projectbluefin.io/config-version: llamacpp-vulkan-v1
     spec:
       priorityClassName: llm-d-preempt
       nodeSelector:
         kubernetes.io/hostname: exo-0
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
       containers:
         - name: modelserver
-          image: vllm/vllm-openai-rocm:latest
+          # llama.cpp on Vulkan (Mesa RADV), not ROCm/HIP. On gfx1151 the Vulkan
+          # backend is the reliable, well-supported inference path and ROCm is
+          # not required — confirmed independently by Foxlight-Foundation/Skulk
+          # and defilantech/LLMKube. It also keeps us on an allowlisted registry:
+          # ggml-org publishes no ROCm tags at all.
+          #
+          # Pinned by digest so a rollback is reproducible. Tag: server-vulkan.
+          image: ghcr.io/ggml-org/llama.cpp:server-vulkan@sha256:654482cfc988042fe25c2255199d512bcfd057fcde9b87b8dc07b9a2d3336b6c
           imagePullPolicy: IfNotPresent
+          # Not privileged. /dev/dri/renderD128 is mode 0666 on these nodes, so
+          # the Vulkan backend needs the device node and nothing else. The
+          # previous /dev/kfd, /sys and /lib/modules mounts were ROCm-era and are
+          # unnecessary on the Vulkan path.
           securityContext:
-            privileged: true
+            privileged: false
+            allowPrivilegeEscalation: false
           args:
-            - --model
-            - unsloth/Llama-3.2-3B-Instruct
-            - --served-model-name
+            # Model: Qwen3-30B-A3B-Instruct-2507 at Q6_K (~25.1 GB).
+            #
+            # MoE, 3B active of 30B total. Strix Halo is memory-bandwidth bound
+            # (~85 GB/s host-to-device), so *active* parameters set decode speed
+            # while total parameters mostly cost capacity — which is why a 30B
+            # MoE runs ~6x faster than a dense 32B of the same size.
+            #
+            # Q6_K rather than Q8_0: published quantization guidance rates Q6_K
+            # "very low" loss and recommends it for models up to 32B, while Q8_0
+            # is "minimal". The extra 7.4 GB buys almost nothing and spends the
+            # KV-cache headroom a long-context assistant actually needs.
+            - --hf-repo
+            - unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q6_K
+            - --alias
             - local-llm
-            - --host
-            - 0.0.0.0
             - --port
             - "8000"
-            - --tensor-parallel-size
-            - "1"
-            - --max-model-len
+            # Offload every layer to the iGPU.
+            - -ngl
+            - "999"
+            # Flash attention is required on Strix Halo: without it the community
+            # toolboxes report crashes and severe slowdowns.
+            - -fa
+            - "on"
+            # Disable mmap. Same intent as the --no-mmap that the Strix Halo
+            # guides mandate (mmap/SVM interaction causes trouble on this APU),
+            # expressed with the current flag since --no-mmap is deprecated.
+            - --load-mode
+            - none
+            # KV cache quantized to q8_0 — the Strix Halo toolbox default.
+            # At 64k context this costs ~3 GiB instead of ~6 GiB at f16.
+            - --cache-type-k
+            - q8_0
+            - --cache-type-v
+            - q8_0
+            # 64k context. The model supports far more, but this node has 62 GiB
+            # of RAM shared with BuildBarn/KubeVirt/KubeStellar, so start
+            # conservative; raise once steady-state headroom is measured.
+            - --ctx-size
+            - "65536"
+            - --batch-size
             - "4096"
-            - --gpu-memory-utilization
-            - "0.90"
-            - --trust-remote-code
+            - --ubatch-size
+            - "512"
+            - --threads
+            - "12"
+            # Single user: one slot, so we stay well clear of the GPU MES
+            # scheduler crashes reported under high concurrency with large
+            # batches on this hardware.
+            - --parallel
+            - "1"
+            - --cache-reuse
+            - "256"
+            # Qwen3-Instruct-2507 sampling recommended by the model authors.
+            - --temp
+            - "0.7"
+            - --top-p
+            - "0.8"
+            - --top-k
+            - "20"
+            - --min-p
+            - "0.0"
           env:
-            - name: HF_HOME
-              value: /root/.cache/huggingface
-            - name: VLLM_LOGGING_LEVEL
-              value: INFO
-            - name: HIP_VISIBLE_DEVICES
-              value: all
-            - name: ROCM_VISIBLE_DEVICES
-              value: all
+            # Where --hf-repo stores the downloaded GGUF. Points at the PVC so
+            # the model survives restarts.
+            - name: LLAMA_CACHE
+              value: /models
           ports:
             - name: http
               containerPort: 8000
               protocol: TCP
           volumeMounts:
-            - name: hf-cache
-              mountPath: /root/.cache/huggingface
-            - name: dev-kfd
-              mountPath: /dev/kfd
+            - name: model-cache
+              mountPath: /models
             - name: dev-dri
               mountPath: /dev/dri
-            - name: sys
-              mountPath: /sys
-            - name: lib-modules
-              mountPath: /lib/modules
           resources:
             requests:
               cpu: "4"
-              memory: 16Gi
+              # Reserves scheduler space for the model so nothing else fills the
+              # node underneath it. GTT is system RAM on this APU.
+              memory: 34Gi
               amd.com/gpu: "1"
             limits:
-              cpu: "8"
-              memory: 24Gi
+              cpu: "12"
+              # Generous rather than snug: GPU-backed pages may or may not be
+              # charged to this cgroup depending on kernel behaviour, and a tight
+              # limit risks an OOM kill during model load.
+              memory: 44Gi
               amd.com/gpu: "1"
+          # /health returns HTTP 503 {"error":"Loading model"} until the model is
+          # loaded. The first start downloads ~25 GB, so startup is gated by a
+          # startupProbe with a long budget (30 x 60s = 30 min) and liveness does
+          # not engage until it succeeds.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 60
+            timeoutSeconds: 10
+            failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /health
               port: 8000
-            initialDelaySeconds: 60
             periodSeconds: 15
             timeoutSeconds: 5
-            failureThreshold: 10
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /health
               port: 8000
-            initialDelaySeconds: 120
             periodSeconds: 30
             timeoutSeconds: 10
-            failureThreshold: 3
+            failureThreshold: 5
       volumes:
-        - name: hf-cache
-          emptyDir: {}
-        - name: dev-kfd
-          hostPath:
-            path: /dev/kfd
-            type: CharDevice
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: llm-d-model-cache
         - name: dev-dri
           hostPath:
             path: /dev/dri
             type: Directory
-        - name: sys
-          hostPath:
-            path: /sys
-            type: Directory
-        - name: lib-modules
-          hostPath:
-            path: /lib/modules
-            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-d-modelserver
+  namespace: llm-d
+  labels:
+    app.kubernetes.io/name: llm-d-modelserver
+    app.kubernetes.io/part-of: testing-lab
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: llm-d-modelserver
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      nodePort: 30800
+      protocol: TCP
