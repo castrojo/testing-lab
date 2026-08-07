@@ -407,19 +407,24 @@ spec:
           chown -R 1000:1000 /home/bluefin-test /tmp/results
           chmod 700 /home/bluefin-test/run
 
-          # Every nested target on this node shares ghost's single physical
-          # GPU. mutter's native backend takes *exclusive* DRM master on
-          # /dev/dri/card*, so only one nested GNOME session per node can ever
-          # start. Concurrent lanes log
+          # ROOT CAUSE FIX. Every nested target on this node shares ghost's
+          # single physical GPU. mutter's native backend takes *exclusive* DRM
+          # master on /dev/dri/card*, so only one nested GNOME session per node
+          # can ever start. Concurrent lanes log
           #   Failed to open gpu '/dev/dri/card1': ...EBUSY: Device or resource busy
           # then stall for ~50s in "Failed to make thread 'KMS thread' high
-          # priority scheduled", and GDM loops
+          # priority scheduled", so every display GDM brings up dies with
           #   GdmDisplay: Session never registered, failing
-          # forever, so the user session never returns. Force every shell
-          # instance (GDM greeter and the autologin session alike) into
-          # mutter's headless backend with a virtual monitor: nothing here ever
-          # renders to a physical display, and headless mutter never claims DRM
-          # master, so lanes stop contending for the GPU.
+          # until GDM hits its login-loop ceiling and reports
+          #   GdmLocalDisplayFactory: maximum number of display failures reached. Giving up.
+          # That -- not a bad autologin config -- is why GDM churns greeter
+          # sessions and never recreates the uid-1000 session after the
+          # qecore-headless restart. /etc/gdm/custom.conf is intact and the test
+          # user stays fully resolvable throughout; the displays simply fail.
+          # Force every shell instance (GDM greeter and the autologin session
+          # alike) into mutter's headless backend with a virtual monitor:
+          # nothing here ever renders to a physical display, and headless mutter
+          # never claims DRM master, so lanes stop contending for the GPU.
           #
           # qecore-headless enables Shell.Eval by appending `--unsafe-mode` to
           # the *unit's* ExecStart (rewriting
@@ -434,13 +439,18 @@ spec:
             "ExecStart=/usr/bin/gnome-shell --mode=%i --unsafe-mode --headless --virtual-monitor 1920x1080" \
             >/etc/systemd/user/org.gnome.Shell@.service.d/10-headless.conf
 
-          # systemd-logind owns /run/user/1000 and destroys it -- together with
-          # the session bus socket inside it -- the moment the user's last
-          # session ends. qecore-headless stops GDM and SIGTERMs the session it
-          # finds, so without lingering XDG_RUNTIME_DIR and its bus vanish and
-          # can only come back if a brand new login succeeds. Lingering keeps
-          # user@1000.service (and therefore /run/user/1000/bus) alive across
-          # the GDM restart, so the runner's session-bus address stays valid.
+          # HARDENING, not the root-cause fix. Isolated A/B on ghost showed the
+          # headless drop-in above is necessary *and sufficient*, while this
+          # alone is not: a linger-only lane keeps /run/user/1000/bus and the
+          # uid-1000 manager session alive (Linger=yes, socket present) yet
+          # still fails, because the shell never starts -- the failure class
+          # simply changes from bus-unavailable=137 to service-unknown=151.
+          # Keep it anyway: systemd-logind owns /run/user/1000 and destroys it,
+          # together with the session bus socket inside it, the moment the
+          # user's last session ends. qecore-headless stops GDM and SIGTERMs the
+          # session it finds, so without lingering the XDG_RUNTIME_DIR and
+          # DBUS_SESSION_BUS_ADDRESS values baked into the qecore podman exec
+          # below point at a path that can disappear mid-run.
           loginctl enable-linger bluefin-test
           for _ in $(seq 1 30); do
             [ -S /run/user/1000/bus ] && break

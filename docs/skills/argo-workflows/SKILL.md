@@ -138,6 +138,9 @@ The workflow authoring guidance is split by topic:
   runner holding `unix:path=/run/user/<uid>/bus` is left pointing at a socket that
   only returns if a brand new login succeeds. Run `loginctl enable-linger <user>`
   before starting the display manager so `user@<uid>.service` and the bus survive.
+  This is hardening, not a cure: with the GPU contended, lingering only shifts the
+  failure class from `bus-unavailable` to `service-unknown`, because the shell still
+  never starts. Fix the GPU contention first.
 - A multi-line nested script passed as `podman exec <ctr> bash -c '...'` inside a YAML block scalar. The first apostrophe in the body (e.g. `printf '%s\n'`) silently closes the outer quote, so bash receives mangled text (`printf %sn`) with no parse error. Use `podman exec -i <ctr> bash -s <<'MARKER'` with the terminator at the block-scalar indent column instead.
 - `registry.k8s.io/kubectl` used as a shell-capable image — it is distroless, has no bash, nc, or any shell utilities. Use `cgr.dev/chainguard/kubectl:latest-dev` when you need kubectl + bash together
 - `ghcr.io/projectbluefin/lab-runner:latest` assumed to contain `skopeo` or `oras` — the live image can omit both. Use pinned `quay.io/skopeo/stable` and bootstrap pinned ORAS when registry referrers are required.
