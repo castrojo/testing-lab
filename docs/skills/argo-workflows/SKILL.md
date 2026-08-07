@@ -63,6 +63,18 @@ The workflow authoring guidance is split by topic:
   workflow `parallelism` — that limit does not cover simultaneous workflows.
   Put a template-level `synchronization.semaphores` reference on the shared
   template and define its capacity in the GitOps-managed ConfigMap.
+- A `dag`/`steps` template that fans out (`withItems`/`withParam`, or several
+  sibling tasks) to a semaphore-holding template via `templateRef` but declares
+  no template-level `parallelism` — `spec.parallelism` is **not** inherited
+  through `templateRef` (only a spec-level `workflowTemplateRef` inherits it),
+  so one workflow can hold every slot and starve every other run. Put
+  `parallelism` on the fan-out template and keep it below the semaphore limit.
+  Enforced by `scripts/check_semaphore_topology.py` in `just lint`; see
+  [patterns §15b](patterns.md).
+- A `spec.synchronization` semaphore on a pipeline whose children need the same
+  key — the parent holds the slot for the whole run and deadlocks its own
+  children. Declare the key only on the leaf template that consumes the
+  resource.
 - A `synchronization` block placed directly on a `dag.tasks[]` entry — Argo's
   schema rejects it. Wrap the `templateRef` in a local `steps` template and put
   the ConfigMap-backed semaphore on that wrapper when only one DAG task needs

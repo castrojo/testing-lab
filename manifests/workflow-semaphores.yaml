@@ -21,6 +21,14 @@
 #                        total requested memory below the 95% pressure threshold.
 #                        Lowered from 8 to 6 to relieve memory pressure on ghost
 #                        while preserving enough parallelism for the suite fan-out.
+#                        Topology rule: this key is declared ONLY on the
+#                        run-container-tests template (the leaf that consumes the
+#                        runner). No orchestration template and no
+#                        spec.synchronization may reference it, and every
+#                        fan-out template that calls it must carry its own
+#                        template-level `parallelism` — spec.parallelism is not
+#                        inherited through templateRef. Enforced by
+#                        scripts/check_semaphore_topology.py in `just lint`.
 #                        VMs are still scheduled natively and must not use this
 #                        semaphore (see docs/skills/argo-workflows/patterns.md).
 #   dakota-publish      — Serializes Zot-to-GHCR Dakota publication workflows

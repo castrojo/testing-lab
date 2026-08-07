@@ -49,6 +49,10 @@ spec:
       value: "https://github.com/projectbluefin/testsuite"
   templates:
   - name: pipeline
+    # See bluefin-qa-pipeline: `spec.parallelism` is not inherited through
+    # `templateRef`, so the per-workflow fan-out cap must live on the template
+    # itself or one pipeline can hold most of the `ghost-container-qa` slots.
+    parallelism: 2
     dag:
       tasks:
       - name: validate-suites

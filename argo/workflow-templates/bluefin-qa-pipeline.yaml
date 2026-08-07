@@ -72,6 +72,15 @@ spec:
           - name: testsuite-repo
             value: "{{workflow.parameters.testsuite-repo}}"
   - name: pipeline
+    # Semaphore topology: every `test-lane` acquires one `ghost-container-qa`
+    # slot (declared template-level on run-container-tests). `spec.parallelism`
+    # above is NOT inherited when a caller reaches this template through
+    # `templateRef` — only a spec-level `workflowTemplateRef` inherits it. The
+    # pr-poller `pr-pipeline` and image-poller both use `templateRef`, so
+    # without this template-level cap one fan-out grabs up to five of the six
+    # slots and starves every other PR. Keep this value <= the semaphore limit
+    # so no single pipeline can monopolise the runner.
+    parallelism: 2
     inputs:
       parameters:
       - name: image
