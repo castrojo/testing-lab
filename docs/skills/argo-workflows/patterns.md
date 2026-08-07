@@ -569,6 +569,58 @@ App authentication; classic PATs and OAuth apps cannot update checks.
 
 > Source: `/websites/github_en_rest` — Check runs and repository dispatch.
 
+### 20ac. Reap superseded and closed-PR workflows in the poller
+
+Deduping on `bluefin.io/pr-number` + `bluefin.io/pr-sha` means a new push
+creates a *new* workflow, but nothing ever cancels the old one. Combined with
+workflows that keep running after their PR merges, the queue accumulates runs
+whose results are already worthless while each holds a `ghost-container-qa`
+slot for ~20 minutes. Measured drain during one incident: PR #675 with 4
+concurrent workflows for 4 SHAs, #691 with 4, #697 with 3, #724 with 4, plus 24
+workflows for already-merged PRs.
+
+`pr-poller` therefore does three things beyond dispatch:
+
+1. **Supersede** — for every open PR, stop any in-flight workflow whose
+   `pr-sha` differs from the current head. This runs *before* the dispatch cap
+   and *before* the dedup guard, because superseding is about the PR's current
+   head, not about whether this poll happens to dispatch.
+2. **Reap** — after the open-PR passes, stop any in-flight workflow whose PR is
+   no longer in the open set.
+3. **Align admission with capacity** — `MAX_DISPATCH` is capped at
+   `ghost-container-qa limit / pipeline parallelism`, i.e. the number of
+   *workflows* the runner can execute concurrently, not the raw slot count.
+   Since §15b each pipeline holds at most `parallelism` slots, so with a limit
+   of 6 and `parallelism: 2` the runner runs 3 workflows at a time and
+   `MAX_DISPATCH=3`. Admitting more per 5-minute poll cannot make anything
+   finish sooner; it only deepens the queue. If either number changes, this one
+   must be rederived.
+
+**Cancel with `spec.shutdown: Stop`, never `kubectl delete`.** `Stop` is what
+`argo stop` sets: running pods are terminated but the `onExit` handler still
+executes, so `report-final` publishes a terminal `ghost-lab` status. A hard
+delete skips `onExit` and strands the commit on `pending` forever.
+
+```bash
+kubectl patch workflow "${wf}" -n argo --type merge -p '{"spec":{"shutdown":"Stop"}}'
+```
+
+**Three safety rules, all load-bearing:**
+
+- Only reap products whose open-PR enumeration completed with **zero** API
+  errors. A transient GitHub failure must never be read as "every PR merged".
+- Only reap products that returned **at least one** open PR. A sudden empty
+  result set is far more likely to be an auth/scope regression than a mass
+  merge.
+- Only consider workflows carrying `bluefin.io/repository`. PR numbers collide
+  across repositories, so an unlabelled workflow can never be safely
+  attributed. Every label selector keyed on `pr-number` must also key on
+  `bluefin.io/repository`.
+
+Idempotency comes for free: workflows already carrying `spec.shutdown`, or
+labelled `workflows.argoproj.io/completed=true`, are filtered out, so the pass
+is a no-op on every subsequent 5-minute run.
+
 ### 20b. Dakota verification: use containerized QA when VM path is blocked
 
 Dakota images are built from a composefs-oci backend that declares `bootloader = "systemd"` but

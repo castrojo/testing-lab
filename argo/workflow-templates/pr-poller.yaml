@@ -97,9 +97,71 @@ spec:
           API="https://api.github.com"
           ARGO_WORKFLOW_URL_BASE="http://192.168.1.102:2746/workflows/argo"
           # Max new dispatches per run — prevents burst storms when many PRs are in
-          # failure state after a cluster outage.
-          MAX_DISPATCH=8
+          # failure state after a cluster outage. Sized in *workflows*, not slots:
+          # since #612 each QA pipeline template carries `parallelism: 2`, so one
+          # workflow holds at most 2 of the 6 `ghost-container-qa` slots and the
+          # runner executes 6 / 2 = 3 workflows concurrently. Admitting more than
+          # that per 5-minute poll cannot make anything finish sooner; it only
+          # deepens the queue. Keep this <= ghost-container-qa / pipeline
+          # parallelism (asserted in tests/unit/test_pr_poller_reaper.py).
+          MAX_DISPATCH=3
           DISPATCHED=0
+
+          # Open PRs seen this run, keyed "<product>/<number>". Populated from
+          # the GitHub search results and used by the reaper below.
+          declare -A OPEN_PRS=()
+          # Products whose open-PR enumeration completed with zero API errors.
+          # The reaper only acts on these, so a transient GitHub outage can
+          # never be mistaken for "every PR was merged".
+          declare -A SCAN_HEALTHY=()
+
+          # Graceful cancellation. `spec.shutdown: Stop` is what `argo stop`
+          # sets: running pods are terminated but the `onExit` handler still
+          # runs, so `report-final` publishes a terminal ghost-lab status
+          # instead of leaving the commit stuck on `pending`. A hard
+          # `kubectl delete` would skip onExit and strand the status.
+          stop_workflow() {
+            local wf="$1" reason="$2"
+            if kubectl patch workflow "${wf}" -n argo --type merge \
+                 -p '{"spec":{"shutdown":"Stop"}}' >/dev/null 2>&1; then
+              echo "reaper: stopped ${wf} — ${reason}" >&2
+            else
+              echo "reaper: could not stop ${wf} (${reason}); will retry next poll" >&2
+            fi
+          }
+
+          # In-flight poller-dispatched workflows for a product, as
+          # "<name> <pr-number> <pr-sha>" lines. Completed workflows and ones
+          # already shutting down are excluded so the reaper is idempotent.
+          # Workflows without a bluefin.io/repository label are ignored entirely:
+          # PR numbers collide across repositories, so an unlabelled workflow can
+          # never be safely attributed.
+          inflight_workflows() {
+            local product="$1"
+            kubectl get workflows -n argo \
+              -l "bluefin.io/trigger=pr-auto,bluefin.io/repository=${product}" \
+              -o json 2>/dev/null \
+              | jq -r '.items[]
+                  | select((.metadata.labels["workflows.argoproj.io/completed"] // "false") != "true")
+                  | select((.spec.shutdown // "") == "")
+                  | select((.metadata.labels["bluefin.io/pr-number"] // "") != "")
+                  | "\(.metadata.name) \(.metadata.labels["bluefin.io/pr-number"]) \(.metadata.labels["bluefin.io/pr-sha"] // "")"'
+          }
+
+          # Newest SHA wins: stop any in-flight workflow for this PR whose head
+          # SHA differs from the one being dispatched. Without this, a push
+          # leaves the superseded run holding a ghost-container-qa slot for its
+          # full ~20 minutes producing a result nobody will read.
+          stop_superseded_workflows() {
+            local product="$1" pr_num="$2" sha12="$3"
+            local wf pr sha
+            while read -r wf pr sha; do
+              [[ -z "${wf}" ]] && continue
+              [[ "${pr}" != "${pr_num}" ]] && continue
+              [[ "${sha}" == "${sha12}" ]] && continue
+              stop_workflow "${wf}" "superseded by ${product} PR #${pr_num} ${sha12}"
+            done < <(inflight_workflows "${product}")
+          }
 
           dispatch_lab_check() {
             local repo="$1"
@@ -168,22 +230,31 @@ spec:
            local REPO SHA PR_NUM HEAD_BRANCH BRANCH TESTSUITE_BRANCH EXISTING TMPL TITLE TITLE_SLUG
            local PRODUCT DISPLAY_NAME PR_IMAGE PR_IMAGE_TAG PR_SUITES BST_WORKLOAD REPORTER
 
+           REPO=$(echo "$PR" | jq -r '.base.repo.full_name')
+           SHA=$(echo "$PR"  | jq -r '.head.sha')
+           PR_NUM=$(echo "$PR" | jq -r '.number')
+           # Repository slug used for the bluefin.io/repository label. PR numbers
+           # collide across repositories, so every label selector that keys on
+           # pr-number must also key on this.
+           PRODUCT="${REPO##*/}"
+           SHA12="${SHA:0:12}"
+
+           # Newest SHA wins. Runs before the dispatch cap and before the dedup
+           # guard: superseding is about this PR's *current* head, not about
+           # whether we dispatch anything this poll. Without it a push leaves the
+           # old run holding a ghost-container-qa slot for its full ~20 minutes
+           # producing a result nobody will read.
+           stop_superseded_workflows "${PRODUCT}" "${PR_NUM}" "${SHA12}"
+
            # Rate-limit: stop dispatching once we hit MAX_DISPATCH this run
            if [[ "$DISPATCHED" -ge "$MAX_DISPATCH" ]]; then
-             REPO=$(echo "$PR" | jq -r '.base.repo.full_name')
-             PR_NUM=$(echo "$PR" | jq -r '.number')
              echo "PR #${PR_NUM} ${REPO}: dispatch cap (${MAX_DISPATCH}) reached, deferring to next run" >&2
              return
            fi
 
-           REPO=$(echo "$PR" | jq -r '.base.repo.full_name')
-           SHA=$(echo "$PR"  | jq -r '.head.sha')
-           PR_NUM=$(echo "$PR" | jq -r '.number')
-
            # Dedup: one workflow per PR head SHA by default. Refresh mode
            # bypasses this guard so an operator can force a fresh run for an
            # already-open PR without waiting for a new commit.
-           SHA12="${SHA:0:12}"
            if [[ "${REFRESH_EXISTING}" == "true" ]]; then
              kubectl delete workflow -n argo -l "bluefin.io/pr-number=${PR_NUM},bluefin.io/pr-sha=${SHA12}" --ignore-not-found >/dev/null 2>&1 || true
              echo "PR #${PR_NUM} ${REPO}: refresh mode enabled, re-dispatching ${SHA12}" >&2
@@ -293,7 +364,6 @@ spec:
                  "$REPO" == "projectbluefin/bluefin-lts" ||
                  "$REPO" == "projectbluefin/dakota" ||
                  "$REPO" == "projectbluefin/testsuite" ]]; then
-            PRODUCT="${REPO##*/}"
             REPORTER="github-check-reporter"
             case "${PRODUCT}" in
               dakota)
@@ -541,6 +611,7 @@ spec:
              bluefin.io/trigger: pr-auto
              bluefin.io/pr-number: "${PR_NUM}"
              bluefin.io/pr-sha: "${SHA12}"
+             bluefin.io/repository: "${PRODUCT}"
           spec:
            workflowTemplateRef:
              name: ${TMPL}
@@ -563,27 +634,52 @@ spec:
           # --- Pass 1: every open PR in auto-test repos ---
           for REPO in "${AUTO_REPOS[@]}"; do
            REPO_QUERY=$(jq -rn --arg q "repo:${REPO} is:pr is:open" '$q|@uri')
+           REPO_PRODUCT="${REPO##*/}"
            PAGE=1
+           # Every GitHub call for this repo must succeed before the reaper is
+           # allowed to treat "absent from OPEN_PRS" as "PR is closed".
+           SCAN_OK=1
+           SEEN_OPEN=0
            while true; do
              RESULTS=$(curl -sf \
                -H "Authorization: token ${GITHUB_TOKEN}" \
                -H "Accept: application/vnd.github+json" \
-               "${API}/search/issues?q=${REPO_QUERY}&per_page=30&page=${PAGE}")
+               "${API}/search/issues?q=${REPO_QUERY}&per_page=30&page=${PAGE}") || {
+                 echo "Repo ${REPO}: open-PR search failed on page ${PAGE}; skipping reap this run" >&2
+                 SCAN_OK=0
+                 break
+               }
              COUNT=$(echo "$RESULTS" | jq '.total_count // 0')
              ITEMS=$(echo "$RESULTS" | jq '.items | length')
              [[ "$ITEMS" -eq 0 ]] && break
              echo "Repo ${REPO}: ${COUNT} open PR(s), page ${PAGE}, ${ITEMS} items" >&2
+             # Record the open set from the search payload itself, so a failed
+             # per-PR detail fetch can never make a live PR look closed.
+             while read -r open_num; do
+               OPEN_PRS["${REPO_PRODUCT}/${open_num}"]=1
+               SEEN_OPEN=1
+             done < <(echo "$RESULTS" | jq -r '.items[].number')
              while read -r item; do
                PR_URL=$(echo "$item" | jq -r '.pull_request.url')
                PR=$(curl -sf \
                  -H "Authorization: token ${GITHUB_TOKEN}" \
                  -H "Accept: application/vnd.github+json" \
-                 "$PR_URL")
+                 "$PR_URL") || {
+                   echo "Repo ${REPO}: PR detail fetch failed for ${PR_URL}; skipping reap this run" >&2
+                   SCAN_OK=0
+                   continue
+                 }
                dispatch_pr "$PR"
              done < <(echo "$RESULTS" | jq -c '.items[]')
              [[ "$ITEMS" -lt 30 ]] && break
              (( PAGE++ ))
            done
+           # Require at least one observed open PR. A repo that suddenly reports
+           # zero open PRs is far more likely to be an auth/scope regression than
+           # a genuine mass merge, and reaping on it would cancel every live run.
+           if [[ "$SCAN_OK" == "1" && "$SEEN_OPEN" == "1" ]]; then
+             SCAN_HEALTHY["${REPO_PRODUCT}"]=1
+           fi
           done
 
           # --- Pass 2: label-based catch-all for projectbluefin repos ---
@@ -604,3 +700,27 @@ spec:
              dispatch_pr "$PR"
            done < <(echo "$LABEL_RESULTS" | jq -c '.items[]')
           fi
+
+          # --- Pass 3: reap workflows whose PR is no longer open ---
+          # A merged or closed PR keeps its workflow running for the full ~20
+          # minutes, holding a ghost-container-qa slot to produce a result nobody
+          # will read. Cancel gracefully so `report-final` still publishes a
+          # terminal ghost-lab status.
+          #
+          # Safety: only products whose open-PR enumeration completed with zero
+          # API errors AND returned at least one open PR are eligible, and only
+          # workflows carrying a bluefin.io/repository label are considered.
+          # Re-running this every 5 minutes is a no-op once a workflow has
+          # spec.shutdown set.
+          for REPO in "${AUTO_REPOS[@]}"; do
+           REPO_PRODUCT="${REPO##*/}"
+           if [[ -z "${SCAN_HEALTHY[${REPO_PRODUCT}]:-}" ]]; then
+             echo "reaper: skipping ${REPO}; open-PR enumeration was incomplete this run" >&2
+             continue
+           fi
+           while read -r WF WF_PR WF_SHA; do
+             [[ -z "${WF}" ]] && continue
+             [[ -n "${OPEN_PRS[${REPO_PRODUCT}/${WF_PR}]:-}" ]] && continue
+             stop_workflow "${WF}" "${REPO} PR #${WF_PR} (${WF_SHA}) is merged or closed"
+           done < <(inflight_workflows "${REPO_PRODUCT}")
+          done
