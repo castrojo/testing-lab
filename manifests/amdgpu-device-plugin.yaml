@@ -16,8 +16,13 @@ spec:
         app.kubernetes.io/name: amdgpu-device-plugin
         app.kubernetes.io/part-of: lab
     spec:
+      # Driven off Node Feature Discovery rather than a hand-applied label so
+      # every node with an AMD display controller (PCI class 0380, vendor 1002)
+      # advertises amd.com/gpu automatically. The previous hand-applied
+      # lab.projectbluefin.io/amd-gpu label was only ever set on exo-0, which
+      # left ghost's iGPU invisible to the scheduler.
       nodeSelector:
-        lab.projectbluefin.io/amd-gpu: "true"
+        feature.node.kubernetes.io/pci-0380_1002.present: "true"
       priorityClassName: system-node-critical
       containers:
         - name: amdgpu-device-plugin
