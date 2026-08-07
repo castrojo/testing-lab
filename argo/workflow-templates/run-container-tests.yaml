@@ -303,7 +303,8 @@ spec:
         # terminates at the first inner apostrophe, which previously mangled the
         # `printf '%s\n'` calls below into `printf %sn` and corrupted /etc/group.
         # Do not convert this back to `bash -c`.
-        if ! podman exec -i "${TARGET_NAME}" bash -s <<'NESTED_SETUP'
+        setup_rc=0
+        podman exec -i "${TARGET_NAME}" bash -s <<'NESTED_SETUP' || setup_rc=$?
           set -euo pipefail
 
           # Ensure runtime directories GDM and logind need are present before any
@@ -440,12 +441,17 @@ spec:
             exit 1
           fi
 
-          systemctl start gdm
+          echo "Starting GDM in nested target..." >&2
+          if ! systemctl start gdm; then
+            gdm_rc=$?
+            echo "systemctl start gdm failed (rc=${gdm_rc})" >&2
+            systemctl status gdm --no-pager --full >&2 || true
+            exit 1
+          fi
+          echo "Nested target provisioning complete." >&2
         NESTED_SETUP
-        then
-          :
-        else
-          echo "Nested target provisioning failed; see the errors above." >&2
+        if [ "${setup_rc}" -ne 0 ]; then
+          echo "Nested target provisioning failed (rc=${setup_rc}); see the errors above." >&2
           podman exec "${TARGET_NAME}" journalctl --no-pager -n 200 >&2 || true
           exit 1
         fi
