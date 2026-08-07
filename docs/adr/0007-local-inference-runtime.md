@@ -222,6 +222,27 @@ A healthy result is a completion returned with all layers offloaded to Vulkan, a
 sustained multi-hour session with **zero** amdgpu resets, and no node memory
 pressure or evictions on `exo-0`.
 
+## Measured result (2026-08-06, first deployment)
+
+| Metric | Value |
+|---|---|
+| Decode | **73.7 tok/s** (200 tok), **70.8 tok/s** sustained (1200 tok) |
+| Prompt | 59.2 tok/s |
+| GTT resident | 26.5 GiB (`mem_info_gtt_used`), model + KV |
+| Model load | ~5 s from the warm PVC cache |
+| First download | ~25 GB at ~0.5 GB/min, ~50 min |
+| Node | `MemoryPressure=False`, 0 pod restarts |
+
+This lands in the same band as the published 69.6 tok/s for a 30B-A3B MoE at
+Q4_K_M, while running the higher-quality Q6_K — confirming the model is
+GPU-resident and that the extra quantization bits are effectively free here.
+
+**Confirmed hazard:** during this run `kubectl top node exo-0` reported 8%
+memory use while 26.5 GiB was resident in GTT. GPU-backed pages really do escape
+ordinary node memory accounting, so **`kubectl top` cannot be used to judge
+headroom on this node** and pod memory limits should not be treated as a
+guarantee. Node-level eviction thresholds remain the real protection.
+
 ## References
 
 - [`kyuz0/amd-strix-halo-toolboxes`](https://github.com/kyuz0/amd-strix-halo-toolboxes) — Strix Halo llama.cpp images, tested `models.ini` presets, host tuning

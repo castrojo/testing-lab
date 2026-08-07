@@ -268,6 +268,46 @@ Do not guess flags, chart schema, or MCP method names. The K8sGPT MCP server exp
       scrape healthy.
 - [ ] Build workflow metric labels remain limited to `pipeline` and `status`.
 
+## GPU inference on Strix Halo (`exo-0`)
+
+`exo-0` is a **64 GB** Framework Desktop (62.1 GiB allocatable), not the 128 GB
+box every published Strix Halo guide assumes. Scale all community advice down.
+
+- **Use Vulkan, not ROCm.** On `gfx1151` the Vulkan/RADV backend is the reliable
+  llama.cpp path; ROCm is not required for inference. `ghcr.io/ggml-org/llama.cpp`
+  publishes **no ROCm tags at all** — only `vulkan`, `cuda`, `musa`, `intel`.
+- **The 48 GiB GTT ceiling is not a budget.** GTT is system RAM shared with
+  BuildBarn, KubeVirt and KubeStellar. amdgpu GTT pins pages the OOM-killer
+  cannot reclaim, so overcommitting deadlocks the node rather than evicting a pod.
+- **`kubectl top` cannot measure GPU memory here.** Measured: `top node` reported
+  8% while 26.5 GiB was resident in GTT. Read
+  `/sys/class/drm/card*/device/mem_info_gtt_used` instead.
+- **MoE beats dense ~6-12x.** The node is bandwidth-bound (~85 GB/s
+  host-to-device), so *active* parameters set decode speed. A 30B-A3B MoE
+  measured 70-74 tok/s at Q6_K; a dense 32B manages ~11 tok/s.
+- **Tensor parallelism over the USB4 link is dead.** ~128 collectives/token x
+  70-100 us = 9-13 ms/token of stall. Independently measured elsewhere as ~15%
+  *slower* than single-node. The link helps load time, not decode.
+- **`-fa on` and no-mmap (`--load-mode none`) are mandatory** on Strix Halo.
+- **`amdgpu.lockup_timeout=20000`** prevents a spurious "device lost" GPU reset
+  that kills long generations; the ~10s default is a desktop tuning. Needs a
+  reboot — check the `lab.projectbluefin.io/amdgpu-kargs` node annotation.
+- Never raise the BIOS UMA carve-out above its 512 MiB minimum; it steals system
+  RAM and *shrinks* GTT.
+
+Two cluster-specific traps that cost real time:
+
+- **Digest-pinned images cannot be pulled.** Node pulls go through the zot mirror
+  (`override_path = true`, no upstream fallback) and zot's on-demand sync only
+  triggers on *tag* references. A bare `@sha256:` for an uncached image 404s.
+  Pin to an immutable per-build tag instead.
+- **`replicas: 0` + a `WaitForFirstConsumer` PVC deadlocks ArgoCD.** The PVC
+  cannot bind without a pod, ArgoCD blocks its sync waiting for PVC health, and
+  so the Deployment is never created at all. Scale at runtime instead of
+  committing `replicas: 0`.
+
+See `docs/adr/0007-local-inference-runtime.md`.
+
 ## Key references
 
 - Cluster topology: `/AGENTS.md`
