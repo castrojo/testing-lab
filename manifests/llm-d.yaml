@@ -193,16 +193,19 @@ spec:
               memory: 44Gi
               amd.com/gpu: "1"
           # /health returns HTTP 503 {"error":"Loading model"} until the model is
-          # loaded. The first start downloads ~25 GB, so startup is gated by a
-          # startupProbe with a long budget (30 x 60s = 30 min) and liveness does
-          # not engage until it succeeds.
+          # loaded. The first start downloads ~25 GB as a single file, which is
+          # network-bound and measured at ~30-60 min on the lab link, so the
+          # budget here is deliberately generous (120 x 60s = 2h). It costs
+          # nothing after the first success, and an undersized budget kills the
+          # pod mid-download and restarts the transfer. Liveness does not engage
+          # until the startupProbe succeeds.
           startupProbe:
             httpGet:
               path: /health
               port: 8000
             periodSeconds: 60
             timeoutSeconds: 10
-            failureThreshold: 30
+            failureThreshold: 120
           readinessProbe:
             httpGet:
               path: /health
