@@ -1,0 +1,21 @@
+# GitHub hosted MCP server for kagent. The Authorization header value is stored
+# out-of-band in the github-mcp-castrojo Secret; never commit the token.
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: github-castrojo
+  namespace: kagent
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    app.kubernetes.io/part-of: lab
+spec:
+  description: GitHub MCP server authenticated as castrojo
+  protocol: STREAMABLE_HTTP
+  url: https://api.githubcopilot.com/mcp/
+  headersFrom:
+    - name: Authorization
+      valueFrom:
+        type: Secret
+        name: github-mcp-castrojo
+        key: AUTHORIZATION

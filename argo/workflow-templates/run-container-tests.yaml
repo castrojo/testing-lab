@@ -381,6 +381,25 @@ spec:
             usermod -aG video,render,input bluefin-test
           fi
 
+          # dogtail/qecore synthesise keyboard and pointer events by writing to
+          # /dev/uinput (qecore.utility.check_uinput_availability). Podman gives
+          # this privileged container its own tmpfs /dev -- a different device
+          # and inode from both the pod's and the node's -- so the node it
+          # materialises there is mode 0600 root:root with no group at all.
+          # Group membership alone can therefore never grant access, which is
+          # why bluefin-test being in `input` above is not sufficient. Because
+          # the node is lane-local, giving it to the local `input` group is
+          # safe and does not affect any other concurrent lane or the node.
+          if [ ! -e /dev/uinput ]; then
+            modprobe uinput 2>/dev/null || true
+          fi
+          if [ -e /dev/uinput ]; then
+            chgrp input /dev/uinput && chmod 0660 /dev/uinput
+            echo "uinput: $(ls -l /dev/uinput)" >&2
+          else
+            echo "WARNING: /dev/uinput is absent; dogtail input synthesis will fail" >&2
+          fi
+
           # GDM PAM autologin requires a non-expired shadow lastchg value. Without
           # it the user is forced to change the password and the session never
           # registers.
@@ -480,7 +499,15 @@ spec:
           fi
           pip_ok=false
           for attempt in 1 2 3; do
-            if python3 -m pip install "${pip_args[@]}" qecore dogtail behave >/tmp/pip-install.log 2>&1; then
+            # setuptools is explicit and load-bearing, not incidental: qecore's
+            # Sandbox._attach_version_status_to_report() does `import
+            # pkg_resources` to build the per-scenario version table. That
+            # module ships only with setuptools and was dropped from setuptools
+            # 81+, and Python 3.12+ no longer seeds it into fresh environments,
+            # so without this pin every after_scenario hook raises
+            # ModuleNotFoundError. Keep it pinned below 81 for as long as qecore
+            # imports pkg_resources.
+            if python3 -m pip install "${pip_args[@]}" "setuptools<81" qecore dogtail behave >/tmp/pip-install.log 2>&1; then
               pip_ok=true
               break
             fi
@@ -489,7 +516,7 @@ spec:
             sleep 10
           done
           if [ "${pip_ok}" != true ]; then
-            echo "Failed to install test-only Python dependencies (qecore dogtail behave)" >&2
+            echo "Failed to install test-only Python dependencies (setuptools qecore dogtail behave)" >&2
             echo "  python3: $(python3 --version 2>&1)" >&2
             echo "  pip:     $(python3 -m pip --version 2>&1)" >&2
             echo "  full pip log:" >&2
@@ -581,6 +608,19 @@ spec:
           podman exec "${TARGET_NAME}" loginctl list-sessions >&2 || true
           exit 1
         }
+
+        # Bounded, non-fatal environment snapshot. Container lanes are only
+        # reachable through Argo logs, so record the handful of facts that
+        # explain nearly every class of environment failure: whether the shell
+        # actually inherited --unsafe-mode from the headless drop-in (Shell.Eval
+        # returns rc=1 without it), whether the test user can reach /dev/uinput
+        # (dogtail input synthesis), and which desktop apps AT-SPI can find.
+        echo "=== nested target environment snapshot ===" >&2
+        podman exec "${TARGET_NAME}" bash -c 'tr "\0" " " </proc/$(pgrep -u 1000 -f "gnome-shell --mode" | head -1)/cmdline; echo' >&2 || true
+        podman exec "${TARGET_NAME}" id bluefin-test >&2 || true
+        podman exec "${TARGET_NAME}" ls -l /dev/uinput >&2 || true
+        podman exec "${TARGET_NAME}" sh -c 'ls /usr/share/applications/org.gnome.Settings.desktop /usr/bin/gnome-control-center 2>&1' >&2 || true
+        echo "=== end environment snapshot ===" >&2
 
         cat >/workspace/run-behave.sh <<'EOF'
         #!/bin/bash
