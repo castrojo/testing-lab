@@ -1,0 +1,111 @@
+# kagent — AI-assisted cluster operations, installed via OCI Helm charts.
+# The CRD chart must sync before the main chart.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kagent-crds
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/part-of: lab
+spec:
+  project: default
+  source:
+    repoURL: ghcr.io/kagent-dev/kagent/helm
+    chart: kagent-crds
+    targetRevision: 0.9.12
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kagent
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kagent
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    app.kubernetes.io/part-of: lab
+spec:
+  project: default
+  source:
+    repoURL: ghcr.io/kagent-dev/kagent/helm
+    chart: kagent
+    targetRevision: 0.9.12
+    helm:
+      valuesObject:
+        # Use the lab's pull-through-cache-friendly registries. The chart otherwise
+        # defaults the controller/UI/agent images to cr.kagent.dev.
+        controller:
+          image:
+            registry: ghcr.io
+          agentImage:
+            registry: ghcr.io
+          skillsInitImage:
+            registry: ghcr.io
+          goAgentImage:
+            registry: ghcr.io
+        ui:
+          image:
+            registry: ghcr.io
+        # Default to the lab's local OpenAI-compatible llama.cpp endpoint. The
+        # service does not require an API key, so leave the secret refs empty.
+        providers:
+          default: openAI
+          openAI:
+            model: local-llm
+            apiKeySecretRef: ""
+            apiKeySecretKey: ""
+            config:
+              baseUrl: http://llm-d-modelserver.llm-d.svc.cluster.local:8000/v1
+        database:
+          postgres:
+            bundled:
+              image:
+                registry: cgr.dev
+                repository: chainguard
+                name: postgres
+                tag: latest
+        # Keep the install to the core k8s agent. The lab has no Grafana, and
+        # querydoc would otherwise require a separate OpenAI key.
+        grafana-mcp:
+          enabled: false
+        querydoc:
+          enabled: false
+        helm-agent:
+          enabled: false
+        kgateway-agent:
+          enabled: false
+        istio-agent:
+          enabled: false
+        promql-agent:
+          enabled: false
+        observability-agent:
+          enabled: false
+        argo-rollouts-agent:
+          enabled: false
+        cilium-policy-agent:
+          enabled: false
+        cilium-manager-agent:
+          enabled: false
+        cilium-debug-agent:
+          enabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kagent
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
