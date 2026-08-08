@@ -58,13 +58,15 @@ spec:
           image:
             registry: ghcr.io
         # Default to the lab's local OpenAI-compatible llama.cpp endpoint. The
-        # service does not require an API key, so leave the secret refs empty.
+        # service does not require authentication, but the ADK OpenAI client
+        # requires an API key env var, so install a non-secret placeholder.
         providers:
           default: openAI
           openAI:
             model: local-llm
-            apiKeySecretRef: ""
-            apiKeySecretKey: ""
+            apiKey: sk-local-noauth
+            apiKeySecretRef: kagent-openai
+            apiKeySecretKey: OPENAI_API_KEY
             config:
               baseUrl: http://llm-d-modelserver.llm-d.svc.cluster.local:8000/v1
         database:
