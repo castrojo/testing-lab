@@ -524,6 +524,60 @@ spec:
             exit 1
           fi
 
+          # Neutralise a TOCTOU race in qecore-headless verify_file_ownership().
+          #
+          # /run/user/$UID/dconf/user is not a persistent file: it is dconf's
+          # one-byte shm invalidation flag. dconf_shm_flag() -- called by
+          # dconf-service on *every* write to the user database -- sets the byte
+          # and then unlink()s the file, and dconf_shm_open() recreates it the
+          # next time any client reads a key. Under a live GNOME session the
+          # path therefore blinks in and out of existence continuously.
+          #
+          # qecore checks it in two steps: os.path.isfile(), then a separate
+          # `sudo stat -c %U %G <path>`. Spawning sudo takes tens of
+          # milliseconds, which is an enormous window on a path that dconf
+          # deletes on every write. When a write lands in between, stat exits 1
+          # with "cannot statx ...: No such file or directory" and qecore calls
+          # print_fail(recoverable=False) -> "unrecoverable headless errors",
+          # after which before_scenario kills every scenario in the suite
+          # ("0 passed, 0 failed, N skipped"). Measured on a live lane: 103
+          # ENOENT hits out of 1019 isfile-true iterations (~10%) with ordinary
+          # dconf read/write traffic in flight.
+          #
+          # Note the absence of the file is already benign -- verify_file_ownership()
+          # returns early when isfile() is False -- so the only bug is that the
+          # second lookup is not allowed to observe the same absence. Appending
+          # `|| true` makes the two observations agree: a vanished file yields
+          # rc 0 with output that contains no "root", so qecore correctly takes
+          # no action. A file that genuinely *is* root-owned still stats fine and
+          # still gets removed, so the check keeps doing its actual job.
+          #
+          # Do not "fix" this by sleeping or polling for the file to settle;
+          # there is no quiescent state to wait for while a session is running.
+          headless_script=$(command -v qecore-headless || true)
+          if [ -z "${headless_script}" ]; then
+            echo "qecore-headless not found on PATH after pip install" >&2
+            exit 1
+          fi
+          if ! grep -q 'dconf/user || true"' "${headless_script}"; then
+            matches=$(grep -c '/dconf/user"$' "${headless_script}" || true)
+            if [ "${matches}" != "1" ]; then
+              echo "Unexpected qecore-headless layout: found ${matches} dconf stat command lines (expected 1)." >&2
+              echo "Re-check verify_file_ownership() in $(python3 -m pip show qecore 2>/dev/null | grep -i ^Version || echo qecore)." >&2
+              grep -n 'dconf/user' "${headless_script}" >&2 || true
+              exit 1
+            fi
+            sed -i 's#/dconf/user"$#/dconf/user || true"#' "${headless_script}"
+          fi
+          grep -q 'dconf/user || true"' "${headless_script}" || {
+            echo "Failed to make the qecore dconf ownership check TOCTOU-safe" >&2
+            exit 1
+          }
+          python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "${headless_script}" || {
+            echo "Patched qecore-headless no longer parses as Python" >&2
+            exit 1
+          }
+
           echo "Starting GDM in nested target..." >&2
           if ! systemctl start gdm; then
             gdm_rc=$?

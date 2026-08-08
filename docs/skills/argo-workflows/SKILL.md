@@ -141,6 +141,24 @@ The workflow authoring guidance is split by topic:
   This is hardening, not a cure: with the GPU contended, lingering only shifts the
   failure class from `bus-unavailable` to `service-unknown`, because the shell still
   never starts. Fix the GPU contention first.
+- **Treating `/run/user/<uid>/dconf/user` as a persistent file**: it is dconf's
+  one-byte shm invalidation flag. `dconf_shm_flag()` runs on *every* write to the
+  user database and `unlink()`s the file; `dconf_shm_open()` recreates it on the
+  next read by any client. Under a live GNOME session the path blinks in and out
+  of existence constantly, so any check that tests for it and then acts on it in a
+  second process is a TOCTOU race. `qecore-headless`'s `verify_file_ownership()` is
+  exactly that — `os.path.isfile()` followed by a separate `sudo stat`, where the
+  sudo spawn alone is a tens-of-milliseconds window — and it reports the resulting
+  `stat: cannot statx ...: No such file or directory` as an *unrecoverable* headless
+  error, which makes `before_scenario` skip the whole suite
+  (`0 scenarios passed, 0 failed, N skipped` plus
+  `HOOK-ERROR in after_all: AssertionError: No scenario matched tags`). Measured on
+  a live lane: ~10% of isfile-true iterations lose the race under ordinary dconf
+  traffic. Provisioning makes the stat tolerate a vanished path (`|| true`), which
+  is correct because qecore already returns early when the file is simply absent
+  and a nonexistent file has no ownership to repair. This is not a linger side
+  effect and not something a wait loop can fix: there is no quiescent state to wait
+  for while a session is running.
 - A multi-line nested script passed as `podman exec <ctr> bash -c '...'` inside a YAML block scalar. The first apostrophe in the body (e.g. `printf '%s\n'`) silently closes the outer quote, so bash receives mangled text (`printf %sn`) with no parse error. Use `podman exec -i <ctr> bash -s <<'MARKER'` with the terminator at the block-scalar indent column instead.
 - **Assuming group membership grants a nested QA target access to `/dev/uinput`**:
   podman gives every container its own tmpfs `/dev` (a different device and inode
@@ -235,6 +253,9 @@ Before marking any WorkflowTemplate change done:
 
 - [ ] Nested GNOME QA targets force `gnome-shell --headless` and enable
       `loginctl enable-linger` for the test user before starting GDM
+- [ ] Nested GNOME QA targets make the `qecore-headless` dconf ownership check
+      tolerate a vanished `/run/user/<uid>/dconf/user`, and the patch is asserted
+      (fail the provisioning step if it does not apply) rather than best-effort
 - [ ] Nested GNOME QA targets grant the test user `/dev/uinput` by mode, not by
       group membership alone, and install `setuptools` alongside `qecore`
 - [ ] All VM-running pipelines have `spec.activeDeadlineSeconds` set
