@@ -1,0 +1,128 @@
+# GitHub assistant for kagent, backed by the github-castrojo RemoteMCPServer.
+# Read-only tools run directly; write-capable tools require in-UI approval.
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: github-castrojo
+  namespace: kagent
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  labels:
+    app.kubernetes.io/part-of: lab
+spec:
+  description: GitHub assistant authenticated as castrojo
+  type: Declarative
+  declarative:
+    runtime: python
+    modelConfig: default-model-config
+    systemMessage: |
+      You are GitHubAssist, an AI agent for GitHub work as the authenticated
+      user. Always call `get_me` first when account or permission context is
+      unclear. Prefer search tools for targeted queries and list tools for
+      broad browsing. Before creating issues or pull requests, search for
+      duplicates and inspect repository templates when present. Do not perform
+      write operations unless the user clearly asked for the action; the
+      platform will request approval for write-capable tools.
+    tools:
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer
+          name: github-castrojo
+          toolNames:
+            - add_comment_to_pending_review
+            - add_issue_comment
+            - add_reply_to_pull_request_comment
+            - assign_copilot_to_issue
+            - create_branch
+            - create_or_update_file
+            - create_pull_request
+            - create_pull_request_with_copilot
+            - create_repository
+            - delete_file
+            - fork_repository
+            - get_commit
+            - get_copilot_job_status
+            - get_file_contents
+            - get_label
+            - get_latest_release
+            - get_me
+            - get_release_by_tag
+            - get_tag
+            - get_team_members
+            - get_teams
+            - issue_read
+            - issue_write
+            - list_branches
+            - list_commits
+            - list_issue_fields
+            - list_issue_types
+            - list_issues
+            - list_pull_requests
+            - list_releases
+            - list_repository_collaborators
+            - list_tags
+            - merge_pull_request
+            - pull_request_read
+            - pull_request_review_write
+            - push_files
+            - request_copilot_review
+            - run_secret_scanning
+            - search_code
+            - search_commits
+            - search_issues
+            - search_pull_requests
+            - search_repositories
+            - search_users
+            - sub_issue_write
+            - update_pull_request
+            - update_pull_request_branch
+          requireApproval:
+            - add_comment_to_pending_review
+            - add_issue_comment
+            - add_reply_to_pull_request_comment
+            - assign_copilot_to_issue
+            - create_branch
+            - create_or_update_file
+            - create_pull_request
+            - create_pull_request_with_copilot
+            - create_repository
+            - delete_file
+            - fork_repository
+            - issue_write
+            - merge_pull_request
+            - pull_request_review_write
+            - push_files
+            - run_secret_scanning
+            - sub_issue_write
+            - update_pull_request
+            - update_pull_request_branch
+    deployment:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 1000m
+          memory: 256Mi
+    a2aConfig:
+      skills:
+        - id: github-account
+          name: GitHub Account
+          description: Inspect the authenticated GitHub account, repositories, issues, pull requests, and releases.
+          tags:
+            - github
+            - account
+          examples:
+            - "Who am I authenticated as?"
+            - "List open pull requests in projectbluefin/lab."
+            - "Search GitHub for kagent RemoteMCPServer examples."
+        - id: github-write-with-approval
+          name: GitHub Changes With Approval
+          description: Create or update GitHub resources after explicit user approval.
+          tags:
+            - github
+            - write
+          examples:
+            - "Create an issue for this bug after checking for duplicates."
+            - "Open a pull request for this branch."
