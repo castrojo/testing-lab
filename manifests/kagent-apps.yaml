@@ -75,6 +75,15 @@ spec:
                 repository: chainguard
                 name: postgres
                 tag: latest
+              # Chainguard's postgres user is uid/gid 70, unlike the chart's
+              # default Alpine postgres assumption of 999.
+              podSecurityContext:
+                fsGroup: 70
+                runAsUser: 70
+                runAsGroup: 70
+                runAsNonRoot: true
+                seccompProfile:
+                  type: RuntimeDefault
         # Keep the install to the core k8s agent. The lab has no Grafana, and
         # querydoc would otherwise require a separate OpenAI key.
         grafana-mcp:
