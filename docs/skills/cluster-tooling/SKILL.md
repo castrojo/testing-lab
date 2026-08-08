@@ -50,6 +50,26 @@ metadata:
    PVC provisioning fails on an unconfigured node instead of falling back to
    that node's root disk.
 
+## kagent
+
+`manifests/kagent-apps.yaml` installs kagent as two ArgoCD-managed OCI Helm
+Applications: `kagent-crds` in sync wave 0, then `kagent` in wave 1. The
+default `ModelConfig` uses the lab's OpenAI-compatible llm-d endpoint
+(`http://llm-d-modelserver.llm-d.svc.cluster.local:8000/v1`, model
+`local-llm`) with no API key. Keep the UI ClusterIP-only; do not expose another
+general-purpose dashboard.
+
+Install-specific traps from the first rollout:
+
+- Override the chart's `cr.kagent.dev` images to `ghcr.io` so node pulls use
+  the zot GHCR mirror.
+- The chart's bundled PostgreSQL defaults to `docker.io/library/postgres` and
+  uid/gid 999. The lab uses `cgr.dev/chainguard/postgres:latest`, whose
+  `postgres` user is uid/gid 70; set the pod security context accordingly.
+- Zot sync globs treat `*` as one repository path segment. Nested repos such as
+  `kagent-dev/kagent/controller` need `kagent-dev/**`, not `kagent-dev/*`.
+  Bump `lab.projectbluefin.io/config-version` when changing the zot ConfigMap.
+
 ## AMD GPU topology
 
 Both lab nodes are 64 GB Framework Desktop (Strix Halo / Ryzen AI Max+ 395)
