@@ -56,8 +56,10 @@ metadata:
 Applications: `kagent-crds` in sync wave 0, then `kagent` in wave 1. The
 default `ModelConfig` uses the lab's OpenAI-compatible llm-d endpoint
 (`http://llm-d-modelserver.llm-d.svc.cluster.local:8000/v1`, model
-`local-llm`) with no API key. Keep the UI ClusterIP-only; do not expose another
-general-purpose dashboard.
+`local-llm`). The endpoint itself is unauthenticated, but the ADK OpenAI client
+requires an API key environment variable, so the chart installs the non-secret
+placeholder `sk-local-noauth` as `kagent-openai`. Keep the UI ClusterIP-only; do
+not expose another general-purpose dashboard.
 
 Install-specific traps from the first rollout:
 
