@@ -142,6 +142,23 @@ The workflow authoring guidance is split by topic:
   failure class from `bus-unavailable` to `service-unknown`, because the shell still
   never starts. Fix the GPU contention first.
 - A multi-line nested script passed as `podman exec <ctr> bash -c '...'` inside a YAML block scalar. The first apostrophe in the body (e.g. `printf '%s\n'`) silently closes the outer quote, so bash receives mangled text (`printf %sn`) with no parse error. Use `podman exec -i <ctr> bash -s <<'MARKER'` with the terminator at the block-scalar indent column instead.
+- **Assuming group membership grants a nested QA target access to `/dev/uinput`**:
+  podman gives every container its own tmpfs `/dev` (a different device and inode
+  from both the pod's and the node's), and materialises `uinput` there as mode
+  `0600 root:root` with no group. Adding the test user to `input` therefore
+  changes nothing, and dogtail/qecore abort with
+  `User '<user>' does not have write permissions for '/dev/uinput'`. Because the
+  node is lane-local, `chgrp input /dev/uinput && chmod 0660 /dev/uinput` inside
+  the target is both sufficient and safe — it cannot affect concurrent lanes or
+  the host.
+- **Installing `qecore` without `setuptools`**: qecore's
+  `Sandbox._attach_version_status_to_report()` does `import pkg_resources` from
+  its `after_scenario` hook. `pkg_resources` ships only with setuptools, was
+  dropped in setuptools 81, and is no longer seeded into fresh Python 3.12+
+  environments, so every scenario logs a `ModuleNotFoundError` traceback.
+  `@non_critical_execution` swallows it, so this is report loss and log noise —
+  not scenario failures — but it buries real errors. Install `setuptools<81`
+  alongside qecore.
 - `registry.k8s.io/kubectl` used as a shell-capable image — it is distroless, has no bash, nc, or any shell utilities. Use `cgr.dev/chainguard/kubectl:latest-dev` when you need kubectl + bash together
 - `ghcr.io/projectbluefin/lab-runner:latest` assumed to contain `skopeo` or `oras` — the live image can omit both. Use pinned `quay.io/skopeo/stable` and bootstrap pinned ORAS when registry referrers are required.
 - A WorkflowTemplate file name that doesn't match its `metadata.name` (confuses ArgoCD tracking)
@@ -218,6 +235,8 @@ Before marking any WorkflowTemplate change done:
 
 - [ ] Nested GNOME QA targets force `gnome-shell --headless` and enable
       `loginctl enable-linger` for the test user before starting GDM
+- [ ] Nested GNOME QA targets grant the test user `/dev/uinput` by mode, not by
+      group membership alone, and install `setuptools` alongside `qecore`
 - [ ] All VM-running pipelines have `spec.activeDeadlineSeconds` set
 - [ ] All queueable templates/dynamic workflows (e.g. `build-containerdisk` and `digest-watch` submit payloads) have a generous workflow-level `activeDeadlineSeconds` (e.g., 14400s / 4h) to avoid queue starvation
 - [ ] Any new CronWorkflow uses `spec.schedules:` (array), not `spec.schedule:` (singular)
