@@ -11,7 +11,10 @@ metadata:
   labels:
     app.kubernetes.io/part-of: lab
 spec:
-  suspend: false
+  # Suspended 2026-08: aurora VM QA suspended together with the aurora
+  # pollers (third-party lane not under review). Submit on demand via
+  # `argo submit --from cronworkflow/nightly-kde -n argo`.
+  suspend: true
   schedules:
     - "0 4 * * *"
   timezone: "UTC"

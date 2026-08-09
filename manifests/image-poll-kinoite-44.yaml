@@ -12,6 +12,10 @@ metadata:
     bluefin.io/trigger: digest-poll
     bluefin.io/role: base-image-watcher
 spec:
+  # Suspended 2026-08 together with the aurora lanes (their base-image digests
+  # are no longer consumed while aurora QA is dark). Submit on demand via
+  # `argo submit --from cronworkflow/image-poll-kinoite-44 -n argo`.
+  suspend: true
   schedules:
     - "50 */3 * * *"
   timezone: "UTC"

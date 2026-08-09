@@ -10,7 +10,12 @@ def load(path):
     return yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))
 
 
-def test_shared_bst_pollers_are_enabled_and_staggered():
+def test_shared_bst_pollers_are_suspended_but_staggered_for_on_demand():
+    # Both commit pollers stay suspended: dakota since #609 (failing poller),
+    # cosmic since the 2026-08 bandwidth cuts (unreviewed lane whose cold BST
+    # builds drove ~1 TiB/day uplink spikes). Files and staggered schedules are
+    # kept so `argo submit --from cronworkflow/<name>-commit-poller` and
+    # `just force-dakota-poll` remain the on-demand escape hatch.
     template = load("argo/workflow-templates/bst-commit-poller.yaml")
     templates = {item["name"]: item for item in template["spec"]["templates"]}
 
@@ -34,7 +39,7 @@ def test_shared_bst_pollers_are_enabled_and_staggered():
         ("cosmic", "4-59/5 * * * *", "poll-cosmic"),
     ):
         cron = load(f"manifests/{name}-commit-poller.yaml")
-        assert cron["spec"]["suspend"] is False
+        assert cron["spec"]["suspend"] is True
         assert cron["spec"]["schedules"] == [schedule]
         assert cron["spec"]["concurrencyPolicy"] == "Forbid"
         assert cron["spec"]["workflowSpec"]["entrypoint"] == entrypoint
