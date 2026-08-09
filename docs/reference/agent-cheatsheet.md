@@ -271,6 +271,12 @@ argo submit -n argo --from cronworkflow/orphan-vm-cleanup
 | `nightly-smoke-lts` | 02:30 | `bluefin-qa-pipeline` (`lts-testing`) |
 | `orphan-vm-cleanup` | every 30 min | Clean orphan test VMs |
 
+Suspended since the 2026-08 bandwidth cuts (PR #632) but runnable on demand via
+`argo submit -n argo --from cronworkflow/<name>`: `nightly-smoke-stable`,
+`nightly-smoke-lts-stable`, `nightly-knuckle`, `nightly-kde`, the aurora /
+snosi / fedora-bootc / bluefin-main image pollers, and both BST commit pollers.
+Full list: `docs/reference/workflow-reference.md`.
+
 Any patch that must survive beyond a short debug session also needs a matching git change under `manifests/`.
 
 ---

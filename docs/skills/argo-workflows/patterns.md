@@ -488,7 +488,8 @@ kubectl patch workflow <name> -n argo -p '{"spec":{"shutdown":"Stop"}}' --type=m
 
 **Dakota lanes and the mutex:** keep the lanes separate.
 - `dakota-commit-poller` → `bst-commit-poller` → `dakota-build-pipeline`
-  (BuildStream publish lane) is expected to run.
+  (BuildStream publish lane) is suspended by default (#609); drive it on demand
+  with `just force-dakota-poll`.
 - `image-poll-dakota` → `dakota-qa-pipeline` is the active container-only QA lane.
 If mutex contention appears, stop stale failed workflows holding `ghost-heavy-compute`; do not
 blanket-stop all Dakota build-publish runs or suspend the active QA poller.

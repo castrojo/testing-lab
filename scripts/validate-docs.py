@@ -93,6 +93,29 @@ def find_forbidden(files: set[Path]) -> list[str]:
     return hits
 
 
+def validate_router() -> list[str]:
+    """Enforce the projectbluefin/common doc structure: AGENTS.md routes to
+    docs/SKILL.md (the skill router), which indexes every skill."""
+    errors: list[str] = []
+    router = ROOT / "docs" / "SKILL.md"
+    if not router.exists():
+        return ["docs/SKILL.md: missing skill router (common doc structure)"]
+    text = router.read_text(encoding="utf-8")
+    for section in ("Read order", "Skill index"):
+        if f"## {section}" not in text:
+            errors.append(f"docs/SKILL.md: missing '## {section}' section")
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    if "docs/SKILL.md" not in agents:
+        errors.append("AGENTS.md: must route skill discovery to docs/SKILL.md")
+    for skill in skills():
+        rel = skill.relative_to(router.parent)
+        if rel.parts[0].startswith("_") or any(part.startswith("_") for part in rel.parts):
+            continue  # underscore-prefixed dirs are templates, not live skills
+        if f"]({rel})" not in text:
+            errors.append(f"docs/SKILL.md: skill index does not list {rel}")
+    return errors
+
+
 def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
@@ -112,6 +135,7 @@ def main() -> int:
                                 for _ in [0] if len(p.read_text(encoding="utf-8").splitlines()) > REFERENCE_MAX_LINES)
 
     errors.extend(validate_links(files))
+    errors.extend(validate_router())
     warnings.extend(find_forbidden(files))
 
     if warnings:

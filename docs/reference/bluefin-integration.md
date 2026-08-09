@@ -74,19 +74,21 @@ Flatcar OS substrate tests. Not part of the Bluefin image pipelines; runs via
 The Bluefin and Bluefin-LTS image-poll CronWorkflows run every 10 minutes at
 staggered offsets (`:00`, `:02`, `:04`, and `:06`) and call the generic
 `image-poller` WorkflowTemplate. Dakota's `image-poll-dakota` CronWorkflow runs
-at `:08` and owns a small check-and-trigger DAG that calls the Dakota pipeline.
-Each poll run:
+at `:08` with `run-qa=false`: it tracks the Dakota testing digest for freshness
+only, and daily QA comes from `nightly-dakota` at 03:00 UTC. Each poll run:
 
-1. Pulls the current digest for the target image from ghcr.io
+1. Resolves the current digest for the target image by inspecting the upstream
+   registry directly (never through the zot cache — a tag read triggers zot
+   on-demand sync of the full image; see PR #632)
 2. Reads the last-known digest from `image-polling-digests` in namespace `argo`
 3. If digests match: exits cleanly (no test run)
-4. If the digest changed: submits `bluefin-qa-pipeline` for Bluefin/LTS or
-   `dakota-qa-pipeline` for Dakota; each fans out `run-container-tests`
+4. If the digest changed: submits `bluefin-qa-pipeline` for Bluefin/LTS
+   (Dakota tracks only); each fans out `run-container-tests`
 5. Each selected suite attempts to publish its structured results back into this repo
 6. The generic Bluefin/LTS `image-poller` persists its new digest only after the
    downstream workflow succeeds
 
-This means a changed Bluefin, Bluefin-LTS, or Dakota digest triggers
+This means a changed Bluefin or Bluefin-LTS digest triggers
 container-only validation within 10 minutes, automatically, with no human action.
 
 ---
@@ -168,6 +170,7 @@ To force a run outside `AUTO_REPOS`: add the `test-on-lab` label to a PR in the
 
 Dakota runs through `dakota-qa-pipeline` rather than `bluefin-qa-pipeline`, but
 the QA lane uses the same container-only fan-out through `run-container-tests`.
-BuildStream artifact builds remain separate in `dakota-build-pipeline`; the active
-`image-poll-dakota` lane tests the resulting `:testing` image. Dakota PRs can also
+BuildStream artifact builds remain separate in `dakota-build-pipeline`; the
+`image-poll-dakota` lane tracks the resulting `:testing` digest (`run-qa=false`)
+and `nightly-dakota` at 03:00 UTC runs the daily QA. Dakota PRs can also
 use the `test-on-lab` label via the PR label poller.
