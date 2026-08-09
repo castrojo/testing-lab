@@ -9,7 +9,10 @@ metadata:
     app.kubernetes.io/part-of: lab
     bluefin.io/trigger: digest-poll
 spec:
-  suspend: false
+  # Suspended 2026-08: tracks ublue-os/bluefin (third-party rebuild lane) not
+  # under review; QA fired on every digest change. Submit on demand via
+  # `argo submit --from cronworkflow/image-poll-bluefin-main -n argo`.
+  suspend: true
   schedules:
     - "12 */3 * * *"
   timezone: "UTC"

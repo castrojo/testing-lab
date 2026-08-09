@@ -8,7 +8,10 @@ metadata:
   labels:
     app.kubernetes.io/part-of: lab
 spec:
-  suspend: false
+  # Suspended 2026-08: stable lane changes rarely and is not under burst
+  # review. Submit on demand via
+  # `argo submit --from cronworkflow/nightly-smoke-lts-stable -n argo`.
+  suspend: true
   schedules:
     - "30 3 * * *"
   timezone: "UTC"

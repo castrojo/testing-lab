@@ -11,7 +11,10 @@ metadata:
     app.kubernetes.io/part-of: lab
     bluefin.io/trigger: digest-poll
 spec:
-  suspend: false
+  # Suspended 2026-08: aurora is a third-party lane not under review; QA fired
+  # on every upstream digest change. Submit on demand via
+  # `argo submit --from cronworkflow/image-poll-aurora-testing -n argo`.
+  suspend: true
   schedules:
     - "20 */3 * * *"
   timezone: "UTC"

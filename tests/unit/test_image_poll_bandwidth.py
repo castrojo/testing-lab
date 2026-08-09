@@ -33,6 +33,17 @@ def test_image_poller_serializes_each_state_key():
     assert mutexes == [{"name": "image-poll-{{workflow.parameters.state-key}}"}]
 
 
+def test_image_poller_inspects_upstream_not_zot():
+    # Polling through the zot cache on a tag reference triggers zot on-demand
+    # sync, which copies the full image (manifest + blobs) into the cache on
+    # every new digest even when QA is skipped. The poller must inspect the
+    # upstream registry directly so a poll costs kilobytes, not gigabytes.
+    source = (ROOT / "argo/workflow-templates/image-poller.yaml").read_text()
+    assert "30501" not in source
+    assert "zot_image" not in source
+    assert "github-token" in source  # ghcr.io inspects need --creds _token:...
+
+
 def test_container_runner_preserves_digest_pinning_and_has_no_extra_closer():
     source = (ROOT / "argo/workflow-templates/run-container-tests.yaml").read_text()
     assert 'TARGET_IMAGE="${IMAGE_REPO}@${IMAGE_DIGEST}"' in source

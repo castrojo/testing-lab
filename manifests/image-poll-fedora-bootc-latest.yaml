@@ -9,7 +9,10 @@ metadata:
     app.kubernetes.io/part-of: lab
     bluefin.io/trigger: digest-poll
 spec:
-  suspend: false
+  # Suspended 2026-08: unreviewed lane; QA fired on every upstream digest
+  # change. Submit on demand via
+  # `argo submit --from cronworkflow/image-poll-fedora-bootc-latest -n argo`.
+  suspend: true
   schedules:
     - "10 */3 * * *"
   timezone: "UTC"
