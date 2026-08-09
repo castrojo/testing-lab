@@ -164,6 +164,15 @@ traffic. Zot pull counters are included as a ranked image-repository activity
 signal, but Zot does not expose per-repository byte totals; do not present
 those counts as bandwidth.
 
+**Zot on-demand sync pulls blobs on tag reads.** Any `skopeo inspect` or pull
+of a *tag* through the cache (`192.168.1.102:30501/...`) copies the manifest
+AND all blobs from upstream when the digest changed — a digest poll through
+zot costs a full multi-GB image, not kilobytes. Digest pollers/watchers must
+inspect the upstream registry directly (`skopeo inspect docker://ghcr.io/...`
+with `--creds "_token:${GITHUB_TOKEN}"` for ghcr); see
+`argo/workflow-templates/image-poller.yaml` and the regression test in
+`tests/unit/test_image_poll_bandwidth.py` (PR #632).
+
 `traffic_report.py` also ranks workload counters when cAdvisor exposes
 Kubernetes namespace/pod/container labels. These are still interface totals,
 not network-flow records: the current cAdvisor stack has no remote
