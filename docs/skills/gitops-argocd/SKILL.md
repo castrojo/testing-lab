@@ -242,9 +242,11 @@ Commit and push. ArgoCD sets the CronWorkflow's suspend flag and stops schedulin
 
 **Suspend vs delete:** temporarily broken → suspend. Permanently abandoned → delete the file; ArgoCD prune removes the CronWorkflow.
 
-**Currently suspended:** `image-poll-dakota` (the QA poller that triggers
-`dakota-qa-pipeline`). Keep this suspended while the QA lane still requires
-`bootc install to-disk` on a dakota image without UKI support.
+**Currently suspended:** see the full list in
+[`docs/reference/workflow-reference.md`](../../reference/workflow-reference.md#cache-warming-pollers)
+("Suspended in the 2026-08 bandwidth cuts"). Notable: `dakota-commit-poller`
+(suspended in #609 while the QA lane still requires `bootc install to-disk` on a
+dakota image without UKI support) and the aurora/KDE cron cluster.
 
 ### 9. Taking GitOps ownership of unmanaged Deployments/Services
 

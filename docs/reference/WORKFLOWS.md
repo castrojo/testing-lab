@@ -270,6 +270,10 @@ filed issue.
 
 ### `nightly-kde`
 
+> **Suspended 2026-08** (bandwidth cuts, PR #632) together with the aurora
+> image-poll lanes. Submit on demand with
+> `argo submit --from cronworkflow/nightly-kde -n argo`.
+
 The `nightly-kde` CronWorkflow schedules the `aurora-qa-pipeline` at 04:00 UTC.
 The schedule is only a trigger: the pipeline's `aurora-vm-qa` key in the
 GitOps-managed `workflow-semaphores` ConfigMap is the serialization guard, so

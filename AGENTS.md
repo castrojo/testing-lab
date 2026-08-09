@@ -6,8 +6,9 @@ ArgoCD, KubeVirt, and the manifests that run the lab test cluster.
 ## Start here
 
 1. Read this file.
-2. Find the skill for the area you need in [`docs/skills/README.md`](docs/skills/README.md)
-   and load only that skill.
+2. Find the skill for the area you need in [`docs/SKILL.md`](docs/SKILL.md)
+   (the skill router, same convention as `projectbluefin/common`) and load
+   only that skill.
 3. For deterministic commands, check the [`Justfile`](Justfile) or
    [`docs/reference/agent-cheatsheet.md`](docs/reference/agent-cheatsheet.md).
 4. For operational failure modes, read [`docs/ops/RUNBOOK.md`](docs/ops/RUNBOOK.md).
@@ -58,7 +59,7 @@ npm ci && npm run build
 
 | Task | Where to go |
 |---|---|
-| Which skill should I load? | [`docs/skills/README.md`](docs/skills/README.md) |
+| Which skill should I load? | [`docs/SKILL.md`](docs/SKILL.md) |
 | Authoring Argo workflow templates (YAML) | [`docs/skills/argo-workflows/SKILL.md`](docs/skills/argo-workflows/SKILL.md) |
 | KubeVirt VM provisioning / boot failures | [`docs/skills/kubevirt-vms/SKILL.md`](docs/skills/kubevirt-vms/SKILL.md) |
 | ArgoCD sync, GitOps rules, bootstrap vs managed | [`docs/skills/gitops-argocd/SKILL.md`](docs/skills/gitops-argocd/SKILL.md) |

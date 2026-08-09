@@ -193,15 +193,15 @@ must fail for repair; it must not use an Ethernet, local, or cache-only fallback
 
 | CronWorkflow | Interval | Triggers | Keeps warm |
 | --- | --- | --- | --- |
-| `dakota-commit-poller` | every 5 min at minute +2 | shared `bst-commit-poller` → `dakota-build-pipeline` when `dakota:testing` changes | Dakota BuildStream cache/execution path |
-| `cosmic-commit-poller` | every 5 min at minute +4 | shared `bst-commit-poller` → `cosmic-build-pipeline` when `cosmic-build-meta:main` changes | Cosmic BuildStream cache/execution path |
+| `dakota-commit-poller` | **suspended** (was every 5 min at minute +2) | shared `bst-commit-poller` → `dakota-build-pipeline` when `dakota:testing` changes | Dakota BuildStream cache/execution path; on-demand via `just force-dakota-poll` |
+| `cosmic-commit-poller` | **suspended** 2026-08 (was every 5 min at minute +4) | shared `bst-commit-poller` → `cosmic-build-pipeline` when `cosmic-build-meta:main` changes | Cosmic BuildStream cache/execution path; on-demand via `argo submit --from cronworkflow/cosmic-commit-poller` |
 | `image-poll-bluefin-testing` | every 10 min at :00 | `image-poller` when `ghcr.io/projectbluefin/bluefin:testing` changes | Bluefin container-only QA (`smoke`) |
 | `image-poll-lts-testing` | every 10 min at :02 | `image-poller` when `ghcr.io/projectbluefin/bluefin-lts:testing` changes | Bluefin-LTS container-only QA (`smoke`) |
 | `image-poll-bluefin-stable` | every 10 min at :04 | `image-poller` when `ghcr.io/projectbluefin/bluefin:stable` changes | Bluefin container-only QA (full suite) |
 | `image-poll-lts-stable` | every 10 min at :06 | `image-poller` when `ghcr.io/projectbluefin/bluefin-lts:stable` changes | Bluefin-LTS container-only QA (full suite) |
 | `image-poll-dakota` | every 10 min at :08 | custom digest DAG with `run-qa=false` | Dakota testing digest freshness; daily QA runs at 03:00 UTC |
-| `image-poll-bluefin-main` | every 3h at :12 | `image-poller` when `ghcr.io/ublue-os/bluefin:latest` changes | Bluefin latest container-only QA (full suite) |
-| `image-poll-snosi-latest` | every 3h at :30 | `image-poller` when `ghcr.io/frostyard/snow:latest` changes | Snosi GNOME desktop image coverage |
+| `image-poll-bluefin-main` | **suspended** 2026-08 (was every 3h at :12) | `image-poller` when `ghcr.io/ublue-os/bluefin:latest` changes | Bluefin latest container-only QA (full suite) |
+| `image-poll-snosi-latest` | **suspended** 2026-08 (was every 3h at :30) | `image-poller` when `ghcr.io/frostyard/snow:latest` changes | Snosi GNOME desktop image coverage |
 | `flatcar-kernel-poller` | 10 min | `flatcar-kernel-build` when kernel.org's latest stable version changes | Flatcar kernel build cache |
 | `flatcar-kernel-gate` | 30 min | (gate/promotion check, see `/docs/skills/flatcar-node-onboarding/SKILL.md`) | N/A |
 
@@ -239,16 +239,33 @@ until `run-pipeline.Succeeded`. If the digest is written before QA passes, the
 poller will treat the image as already seen and silently skip the failed lane on
 the next cycle.
 
+**Bandwidth contract (PR #632):** `image-poller` resolves digests by inspecting
+the **upstream registry directly** — never through the zot cache. Zot on-demand
+sync copies manifest + all blobs on a tag read, so polling through zot pulled
+every new multi-GB image even when QA was skipped. The regression test in
+`tests/unit/test_image_poll_bandwidth.py` enforces this.
+
+**Suspended in the 2026-08 bandwidth cuts** (files kept; run on demand with
+`argo submit --from cronworkflow/<name> -n argo`): `image-poll-aurora-main`,
+`image-poll-aurora-stable`, `image-poll-aurora-testing`, `image-poll-akmods-44`,
+`image-poll-kinoite-44`, `image-poll-snosi-latest`,
+`image-poll-fedora-bootc-latest`, `image-poll-fedora-bootc-rawhide`,
+`image-poll-bluefin-main`, `nightly-kde`, `nightly-knuckle`,
+`nightly-smoke-stable`, `nightly-smoke-lts-stable`, `dakota-commit-poller`,
+`cosmic-commit-poller`. Unreviewed lanes go dark together: the aurora pollers,
+their akmods/kinoite base-image watchers, and `nightly-kde` are one group — do
+not resume a member without the others.
+
 ## Nightly Schedule
 
 | CronWorkflow | Time (UTC) | Pipeline | Parameters |
 | --- | --- | --- | --- |
 | `nightly-smoke` | 02:00 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin`, `image-tag=testing`, `suites=smoke,developer,system`, `variant=bluefin` |
-| `nightly-smoke-stable` | 03:00 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin`, `image-tag=stable`, `suites=smoke`, `variant=bluefin` |
+| `nightly-smoke-stable` | **suspended** 2026-08 (was 03:00) | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin`, `image-tag=stable`, `suites=smoke`, `variant=bluefin` |
 | `nightly-smoke-lts` | 02:30 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin-lts`, `image-tag=testing`, `suites=smoke,developer,system`, `variant=bluefin-lts` |
-| `nightly-smoke-lts-stable` | 03:30 | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin-lts`, `image-tag=stable`, `suites=smoke`, `variant=bluefin-lts` |
+| `nightly-smoke-lts-stable` | **suspended** 2026-08 (was 03:30) | `bluefin-qa-pipeline` | `image=ghcr.io/projectbluefin/bluefin-lts`, `image-tag=stable`, `suites=smoke`, `variant=bluefin-lts` |
 | `nightly-dakota` | 03:00 | `dakota-qa-pipeline` | `image=ghcr.io/projectbluefin/dakota`, `image-tag=testing`, `suites=smoke,developer,system`, `variant=dakota` |
-| `nightly-knuckle` | 03:30 | `knuckle-qa-pipeline` | `branch=main`, `namespace=knuckle-test`, `suite=smoke`, `tests-branch=main` |
+| `nightly-knuckle` | **suspended** 2026-08 (was 03:30) | `knuckle-qa-pipeline` | `branch=main`, `namespace=knuckle-test`, `suite=smoke`, `tests-branch=main` |
 
 ## Priority Classes
 
