@@ -119,7 +119,16 @@ spec:
             emptyDir: {}
 
   - name: run-tests
-    activeDeadlineSeconds: 3600
+    # 2h, sized for the slowest lane (suite=homebrew) rather than the fastest:
+    # Pod Ready incl. bootc image pull <=600s (the kubectl wait timeout),
+    # systemd reaching a usable state <=120s, clone + pip install ~300s,
+    # brew-setup.service unpacking and chowning the Homebrew prefix ~300s,
+    # user manager + GDM/qecore session ~360s, brew-preinstall.service pulling
+    # casks over the network with Restart=on-failure/StartLimitBurst=3 ~900s,
+    # and 15 Ptyxis/dogtail-driven scenarios at ~180s each ~2700s => ~89min
+    # before any node contention. Every other suite finishes far inside this;
+    # the deadline is a hang guard, not a budget.
+    activeDeadlineSeconds: 7200
     inputs:
       parameters:
       - name: target-pod
@@ -215,49 +224,104 @@ spec:
         chown -R 1000:1000 /home/bluefin-test
 
         if [[ "${SUITE}" == "homebrew" ]]; then
+          report_user_manager_failure() {
+            echo "$1" >&2
+            systemctl status --no-pager --full user@1000.service >&2 || true
+            loginctl show-user bluefin-test >&2 || true
+          }
+
           # brew-setup.service ships enabled and carries
           # ConditionPathExists=!/etc/.linuxbrew, so once it has run systemd
           # *skips* it and `start` still exits 0. Only the binary proves the
-          # prefix was provisioned; the suite fails on the same path.
+          # prefix was provisioned, so capture the start result instead of
+          # letting `set -e` end the run before that gate can report anything.
           systemctl unmask --runtime brew-setup.service
-          systemctl start brew-setup.service
+          BREW_SETUP_RC=0
+          systemctl start brew-setup.service || BREW_SETUP_RC=$?
           if [[ ! -x /var/home/linuxbrew/.linuxbrew/bin/brew ]]; then
-            echo "brew-setup.service left no brew at /var/home/linuxbrew/.linuxbrew/bin/brew" >&2
+            echo "brew-setup.service left no brew at /var/home/linuxbrew/.linuxbrew/bin/brew (systemctl start exit ${BREW_SETUP_RC})" >&2
             systemctl status --no-pager --full brew-setup.service >&2 || true
+            journalctl --no-pager --unit brew-setup.service >&2 || true
             exit 1
+          fi
+          if [[ "${BREW_SETUP_RC}" -ne 0 ]]; then
+            echo "brew-setup.service start exited ${BREW_SETUP_RC} but the prefix is provisioned; continuing on the binary gate" >&2
+            systemctl status --no-pager --full brew-setup.service >&2 || true
           fi
 
           # brew-preinstall.service is a *user* unit, so the suite needs a live
           # user manager. Lingering makes logind create the user object, its
           # runtime directory, and user@1000.service; the session bus follows
-          # from that manager's dbus.socket (ListenStream=%t/bus).
-          loginctl enable-linger bluefin-test
-          systemctl start user@1000.service
-          RUNTIME_DIR=$(loginctl show-user bluefin-test --property=RuntimePath --value)
+          # from that manager's dbus.socket (ListenStream=%t/bus). Each step is
+          # captured rather than fatal on its own so the sockets below stay the
+          # authoritative gate and every exit carries diagnostics.
+          LINGER_RC=0
+          loginctl enable-linger bluefin-test || LINGER_RC=$?
+          USER_MANAGER_RC=0
+          systemctl start user@1000.service || USER_MANAGER_RC=$?
+          RUNTIME_DIR=$(loginctl show-user bluefin-test --property=RuntimePath --value 2>/dev/null || true)
           if [[ -z "${RUNTIME_DIR}" ]]; then
-            echo "logind assigned no runtime directory to bluefin-test" >&2
+            report_user_manager_failure "logind assigned no runtime directory to bluefin-test (enable-linger exit ${LINGER_RC}, user@1000.service start exit ${USER_MANAGER_RC})"
             exit 1
           fi
+          DBUS_SOCKET_RC=0
           runuser -u bluefin-test -- env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
-            systemctl --user start dbus.socket
+            systemctl --user start dbus.socket || DBUS_SOCKET_RC=$?
           # The two lookups the lane owns must agree: `systemctl --user` reaches
           # the manager over local transport at ${XDG_RUNTIME_DIR}/systemd/private,
           # while qecore/dogtail reach the session and a11y bus over the absolute
           # DBUS_SESSION_BUS_ADDRESS/AT_SPI_BUS_ADDRESS below. Both are derived
           # from this directory, so assert it carries both sockets before behave.
-          test -S "${RUNTIME_DIR}/systemd/private"
-          test -S "${RUNTIME_DIR}/bus"
+          if [[ ! -S "${RUNTIME_DIR}/systemd/private" ]]; then
+            report_user_manager_failure "user@1000.service exposed no control socket at ${RUNTIME_DIR}/systemd/private (start exit ${USER_MANAGER_RC}); systemctl --user cannot reach the manager"
+            exit 1
+          fi
+          if [[ ! -S "${RUNTIME_DIR}/bus" ]]; then
+            report_user_manager_failure "the bluefin-test user manager exposed no session bus at ${RUNTIME_DIR}/bus (dbus.socket start exit ${DBUS_SOCKET_RC}); qecore and dogtail would have no a11y bus"
+            exit 1
+          fi
+
+          # Hand the validated directory to the runner and the suite through the
+          # same durable /workspace contract the suite inputs already use, so
+          # nothing downstream asks logind a second time and acts on an answer
+          # that was never checked against these two sockets.
+          printf '%s\n' "${RUNTIME_DIR}" >/workspace/qa-runtime-dir
         fi
         TARGET_SETUP
 
         kubectl exec -n "{{workflow.namespace}}" "${TARGET_POD}" -- \
           test -x /usr/libexec/gnome-ponytail-daemon
+
+        # Every suite but homebrew keeps the runner-created
+        # /home/bluefin-test/run. The homebrew lane instead uses the directory
+        # logind assigned to the user manager started above, and derives both
+        # bus addresses from it: `systemctl --user` (which the suite calls to
+        # start brew-preinstall.service) resolves the manager through
+        # XDG_RUNTIME_DIR and ignores the bus variables, while qecore/dogtail
+        # use the bus variables and ignore XDG_RUNTIME_DIR. Moving one without
+        # the other yields an unreachable manager or a dead a11y bus. Read the
+        # directory TARGET_SETUP validated and persisted; do not re-query
+        # logind, whose answer would be unvalidated and could differ.
+        RUNTIME_DIR=/home/bluefin-test/run
+        if [[ "${SUITE}" == "homebrew" ]]; then
+          RUNTIME_DIR=$(kubectl exec -n "{{workflow.namespace}}" "${TARGET_POD}" -- \
+            cat /workspace/qa-runtime-dir 2>/dev/null | tr -d '\r\n' || true)
+          if [[ -z "${RUNTIME_DIR}" ]]; then
+            echo "TARGET_SETUP persisted no user-manager runtime directory at /workspace/qa-runtime-dir" >&2
+            kubectl exec -n "{{workflow.namespace}}" "${TARGET_POD}" -- \
+              loginctl show-user bluefin-test >&2 || true
+            exit 1
+          fi
+          echo "homebrew lane: user manager and session bus rooted at ${RUNTIME_DIR}"
+        fi
+
         kubectl exec -i -n "{{workflow.namespace}}" "${TARGET_POD}" -- \
-          env SUITE="${SUITE}" BEHAVE_TAGS="${BEHAVE_TAGS}" bash -s <<'TARGET_SUITE'
+          env SUITE="${SUITE}" BEHAVE_TAGS="${BEHAVE_TAGS}" RUNTIME_DIR="${RUNTIME_DIR}" bash -s <<'TARGET_SUITE'
         set -euo pipefail
         mkdir -p /workspace/results
         chown 1000:1000 /workspace/results
-        printf 'SUITE=%q\nBEHAVE_TAGS=%q\n' "${SUITE}" "${BEHAVE_TAGS}" \
+        printf 'SUITE=%q\nBEHAVE_TAGS=%q\nRUNTIME_DIR=%q\n' \
+          "${SUITE}" "${BEHAVE_TAGS}" "${RUNTIME_DIR}" \
           >/workspace/qa-suite.env
         cat >/workspace/run-behave.sh <<'RUN_BEHAVE'
         #!/bin/bash
@@ -282,6 +346,28 @@ spec:
           TAGS_ARG="${BEHAVE_TAGS}"
         fi
 
+        if [[ "${SUITE}" == "homebrew" ]]; then
+          # brew-preinstall.service is WantedBy=graphical-session.target with
+          # Restart=on-failure, RestartSec=30, and StartLimitBurst=3, so the
+          # session qecore just started may already have run it, failed, and
+          # rate-limited it. Report that first — the real failure must not be
+          # swallowed — then clear the state so the suite's own explicit start
+          # reports the unit's actual error instead of "start request repeated
+          # too quickly". Use the runtime directory the lane validated: it is
+          # the manager the suite talks to, and a mismatch here is the session
+          # split rule 8 warns about, so say so out loud.
+          if [[ "${XDG_RUNTIME_DIR:-}" != "${RUNTIME_DIR}" ]]; then
+            echo "warning: session XDG_RUNTIME_DIR='${XDG_RUNTIME_DIR:-}' differs from the lane's '${RUNTIME_DIR}'" >&2
+          fi
+          if [[ "$(env XDG_RUNTIME_DIR="${RUNTIME_DIR}" systemctl --user is-failed brew-preinstall.service || true)" == "failed" ]]; then
+            echo "brew-preinstall.service was already failed before behave started it:" >&2
+            env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+              systemctl --user status --no-pager --full brew-preinstall.service >&2 || true
+          fi
+          env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+            systemctl --user reset-failed brew-preinstall.service || true
+        fi
+
         BEHAVE_RC=0
         python3 -m behave "/workspace/testsuite/tests/${SUITE}/features/" \
           --format json.pretty \
@@ -294,25 +380,6 @@ spec:
         TARGET_SUITE
 
         mkdir -p /tmp/results
-        # Every suite but homebrew keeps the runner-created
-        # /home/bluefin-test/run. The homebrew lane instead uses the directory
-        # logind assigned to the user manager started above, and derives both
-        # bus addresses from it: `systemctl --user` (which the suite calls to
-        # start brew-preinstall.service) resolves the manager through
-        # XDG_RUNTIME_DIR and ignores the bus variables, while qecore/dogtail
-        # use the bus variables and ignore XDG_RUNTIME_DIR. Moving one without
-        # the other yields an unreachable manager or a dead a11y bus.
-        RUNTIME_DIR=/home/bluefin-test/run
-        if [[ "${SUITE}" == "homebrew" ]]; then
-          RUNTIME_DIR=$(kubectl exec -n "{{workflow.namespace}}" "${TARGET_POD}" -- \
-            loginctl show-user bluefin-test --property=RuntimePath --value | tr -d '\r\n')
-          if [[ -z "${RUNTIME_DIR}" ]]; then
-            echo "Could not read the runtime directory of the bluefin-test user manager" >&2
-            exit 1
-          fi
-          echo "homebrew lane: user manager and session bus rooted at ${RUNTIME_DIR}"
-        fi
-
         QECORE_RC=0
         kubectl exec -n "{{workflow.namespace}}" "${TARGET_POD}" -- \
           runuser -u bluefin-test -- env \

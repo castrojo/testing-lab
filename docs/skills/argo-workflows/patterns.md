@@ -692,7 +692,16 @@ never directly under Argo emissary PID 1.
   under `/home` breaks whichever was left behind.
 - Pass test-suite inputs through a durable target file, not environment
   variables: qecore does not forward arbitrary env vars into the desktop
-  session.
+  session. Derived runtime facts belong there too: validate the user manager's
+  `RuntimePath` once in `TARGET_SETUP`, write it to `/workspace/qa-runtime-dir`,
+  and have the runner and `run-behave.sh` read that file. Re-querying logind
+  from the runner returns an answer nothing has checked.
+- Under `set -euo pipefail`, capture provisioning exit codes (`|| RC=$?`,
+  `$(cmd || true)`) so the binary/socket check stays authoritative and every
+  failure exits with a named message plus `systemctl status` and `loginctl
+  show-user` output instead of a silent abort.
+- Size `activeDeadlineSeconds` for the slowest suite the template can run, and
+  say in a comment which phases the number covers.
 - Delete the owner-referenced target in the runner's EXIT trap as a prompt
   cleanup fallback.
 

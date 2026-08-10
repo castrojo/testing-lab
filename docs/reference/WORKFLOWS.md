@@ -177,13 +177,36 @@ from an EXIT trap on every outcome.
 
 #### ChairLift / Homebrew lane
 
+> **Status: statically validated only — never executed against the cluster.**
+> `argo lint`, the unit suite, `bash -n`, and mocked branch runs all pass, but
+> no `suite=homebrew` workflow has been submitted yet. The live risk is the
+> **GNOME desktop session handoff** inside the container target: full desktop
+> suites are still unproven there, and this lane needs a real session for the
+> Ptyxis-driven Brew/bctl scenarios and the two `@chairlift_ui` scenarios. If
+> `qecore-headless` cannot produce a `gnome-session`, the lane fails at that
+> pre-existing boundary before Behave starts, not in the provisioning added
+> for this suite. Treat the first live run as the experiment that settles it.
+
 `suite=homebrew` is the only suite that provisions Homebrew and a systemd user
-manager in the target — `brew-setup.service` is unmasked and started, then
-`loginctl enable-linger bluefin-test` and `user@1000.service` bring up the user
-manager whose `RuntimePath` supplies `XDG_RUNTIME_DIR`,
-`DBUS_SESSION_BUS_ADDRESS`, and `AT_SPI_BUS_ADDRESS` for that run. Every other
-suite keeps the runner-created `/home/bluefin-test/run`. This lane is not
-runnable on the QEMU `e2e.yml` path, which masks `brew-setup.service`.
+manager in the target — `brew-setup.service` is unmasked and started (the
+`brew` binary, not the unit's exit code, is the gate), then `loginctl
+enable-linger bluefin-test` and `user@1000.service` bring up the user manager
+whose `RuntimePath` supplies `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, and
+`AT_SPI_BUS_ADDRESS` for that run. That directory is validated in the target
+(both `systemd/private` and `bus` must be live sockets) and persisted to
+`/workspace/qa-runtime-dir`, which the runner and `run-behave.sh` both read —
+logind is never asked twice. Every other suite keeps the runner-created
+`/home/bluefin-test/run`. This lane is not runnable on the QEMU `e2e.yml` path,
+which masks `brew-setup.service`.
+
+`activeDeadlineSeconds` on `run-tests` is **7200** (2h), sized for this lane:
+image pull and Pod readiness (≤600s), systemd start (≤120s), clone plus pip
+install (~300s), `brew-setup.service` (~300s), user manager and GDM/qecore
+session (~360s), the network-bound cask install driven by
+`brew-preinstall.service` (~900s, it retries on failure), and 15
+Ptyxis/dogtail-driven scenarios at ~180s each (~2700s) — about 89 minutes with
+no node contention. Other suites finish far inside it; the deadline is a hang
+guard, not a budget.
 
 Submit it against a `common` PR build:
 
