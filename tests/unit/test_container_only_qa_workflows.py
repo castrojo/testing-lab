@@ -625,6 +625,54 @@ def test_native_systemd_runner_budgets_one_cask_install_and_bounds_the_wait():
     assert f"BREW_PREINSTALL_WAIT_SECONDS (the same {wait_cap}s)" in comment
 
 
+def test_native_systemd_runner_forces_headless_gnome_shell_before_qecore():
+    # Live evidence, workflow chairlift-diagnose-smoke-mhkxg: qecore-headless
+    # stops and restarts GDM, org.gnome.Shell@user.service then times out with
+    # "Failed to make thread 'KMS thread' high priority scheduled: Timeout was
+    # reached", gnome-shell aborts, GDM answers "Session never registered,
+    # failing", and the bluefin-test session bus disappears leaving only
+    # gdm-greeter. That is mutter's *native* backend contending for exclusive
+    # DRM master on ghost's single GPU — the class run-container-tests already
+    # closed with a user-unit drop-in. The native-systemd runner shares the
+    # host GPU and the qecore GDM restart, so it needs the same drop-in, in
+    # place before qecore ever touches GDM.
+    blocks = _systemd_runner_blocks()
+    setup = blocks["TARGET_SETUP"]
+
+    drop_in = "\n".join(
+        [
+            "mkdir -p /etc/systemd/user/org.gnome.Shell@.service.d",
+            'printf "%s\\n" \\',
+            '  "[Service]" \\',
+            '  "ExecStart=" \\',
+            '  "ExecStart=/usr/bin/gnome-shell --mode=%i --unsafe-mode'
+            ' --headless --virtual-monitor 1920x1080" \\',
+            "  >/etc/systemd/user/org.gnome.Shell@.service.d/10-headless.conf",
+        ]
+    )
+    assert drop_in in setup, (
+        "TARGET_SETUP must install the headless org.gnome.Shell@.service"
+        " drop-in verbatim"
+    )
+
+    # The GPU is a host resource, not a per-suite one, so this cannot sit
+    # behind a suite guard: every native-systemd desktop suite starts a shell.
+    guard = 'if [[ "${SUITE}" == "homebrew" ]]; then'
+    assert setup.index(drop_in) < setup.index(guard)
+
+    # It must land before anything can start a user manager that would load
+    # the unit without it, and before qecore restarts GDM.
+    assert setup.index(drop_in) < setup.index("systemctl start user@1000.service")
+    invocation = re.search(r"^\s*qecore-headless \\$", blocks["runner"], re.M)
+    assert invocation is not None, "the runner never invokes qecore-headless"
+    assert blocks["runner"].index(drop_in) < invocation.start()
+
+    # The `ExecStart=` reset overrides the unit line qecore-headless rewrites
+    # to append `--unsafe-mode`, so the flag must be repeated in the drop-in or
+    # every Shell.Eval call (wait_for_shell.py, dogtail) returns `(false, '')`.
+    assert "--unsafe-mode --headless --virtual-monitor 1920x1080" in setup
+
+
 def test_native_systemd_runner_asks_logind_for_the_runtime_path_exactly_once():
     # A second RuntimePath lookup would return an answer nothing has checked
     # against the two sockets asserted in TARGET_SETUP, and could differ.
