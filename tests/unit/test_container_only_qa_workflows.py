@@ -1,8 +1,10 @@
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[2]
 PIPELINE = ROOT / "argo/workflow-templates/bluefin-qa-pipeline.yaml"
+SYSTEMD_RUNNER = ROOT / "argo/workflow-templates/run-systemd-container-tests.yaml"
 FORBIDDEN = (
     "assert-cd",
     "containerdisk-tag",
@@ -12,6 +14,36 @@ FORBIDDEN = (
     "qa-vm-fleet",
     "kubectl delete vm",
 )
+
+
+def _systemd_run_tests_template():
+    """The `run-tests` template of the native-systemd runner, parsed."""
+    import yaml
+
+    document = yaml.safe_load(SYSTEMD_RUNNER.read_text(encoding="utf-8"))
+    templates = {
+        template["name"]: template for template in document["spec"]["templates"]
+    }
+    return templates["run-tests"]
+
+
+def _heredoc(name, text):
+    """The body of a quoted `<<'NAME'` heredoc, without its delimiters."""
+    match = re.search(r"<<'%s'\n(.*?)\n\s*%s\n" % (name, name), text, re.S)
+    assert match is not None, f"{name} heredoc not found"
+    return match.group(1)
+
+
+def _systemd_runner_blocks():
+    """Runner source plus each nested heredoc, so assertions can be scoped."""
+    runner = _systemd_run_tests_template()["script"]["source"]
+    target_suite = _heredoc("TARGET_SUITE", runner)
+    return {
+        "runner": runner,
+        "TARGET_SETUP": _heredoc("TARGET_SETUP", runner),
+        "TARGET_SUITE": target_suite,
+        "RUN_BEHAVE": _heredoc("RUN_BEHAVE", target_suite),
+    }
 
 
 def test_bluefin_image_poll_qa_is_container_only():
@@ -218,6 +250,170 @@ def test_native_systemd_runner_uses_a_scheduler_managed_target_pod():
     assert "nodeSelector:" not in content
     assert "containerDisk" not in content
     assert "bootc install to-disk" not in content
+
+
+def test_native_systemd_runner_accepts_homebrew_in_both_suite_allowlists():
+    # The runner guards the suite twice: once before it touches the cluster and
+    # once inside the heredoc that writes /workspace/run-behave.sh. A suite that
+    # is added to only one of them either never provisions or dies inside the
+    # qecore session with an opaque exit 2.
+    blocks = _systemd_runner_blocks()
+    allow = "smoke|common|developer|software|system|homebrew) ;;"
+
+    assert allow in blocks["runner"]
+    assert allow in blocks["RUN_BEHAVE"]
+    assert blocks["runner"].count(allow) == 2  # runner + the nested RUN_BEHAVE
+    assert blocks["runner"].count("Unsupported container suite: ${SUITE}") == 2
+
+
+def test_native_systemd_runner_deadline_is_sized_for_the_homebrew_lane():
+    # The homebrew lane adds a network-bound cask install and 15 Ptyxis-driven
+    # scenarios on top of the shared pull/boot/session cost, so the shared 3600s
+    # hang guard no longer bounds the slowest suite this template can run.
+    template = _systemd_run_tests_template()
+    content = SYSTEMD_RUNNER.read_text(encoding="utf-8")
+
+    assert template["activeDeadlineSeconds"] == 7200
+    assert "sized for the slowest lane (suite=homebrew)" in content
+
+
+def test_native_systemd_runner_asks_logind_for_the_runtime_path_exactly_once():
+    # A second RuntimePath lookup would return an answer nothing has checked
+    # against the two sockets asserted in TARGET_SETUP, and could differ.
+    blocks = _systemd_runner_blocks()
+
+    assert blocks["runner"].count("--property=RuntimePath") == 1
+    assert "--property=RuntimePath" in blocks["TARGET_SETUP"]
+    assert "--property=RuntimePath" not in blocks["RUN_BEHAVE"]
+    assert (
+        "RUNTIME_DIR=$(loginctl show-user bluefin-test --property=RuntimePath"
+        " --value 2>/dev/null || true)" in blocks["TARGET_SETUP"]
+    )
+
+
+def test_native_systemd_runner_persists_the_validated_runtime_dir_for_readers():
+    # TARGET_SETUP proves the directory carries both sockets, then hands it to
+    # the runner and the suite through the same durable /workspace contract the
+    # suite inputs use.
+    blocks = _systemd_runner_blocks()
+    runner_after_setup = blocks["runner"].split("TARGET_SETUP\n", 2)[-1]
+
+    assert (
+        "printf '%s\\n' \"${RUNTIME_DIR}\" >/workspace/qa-runtime-dir"
+        in blocks["TARGET_SETUP"]
+    )
+    assert "cat /workspace/qa-runtime-dir" in runner_after_setup
+    assert (
+        "TARGET_SETUP persisted no user-manager runtime directory at"
+        " /workspace/qa-runtime-dir" in runner_after_setup
+    )
+    assert "loginctl" not in blocks["RUN_BEHAVE"]
+    assert "qa-runtime-dir" not in blocks["RUN_BEHAVE"]
+    assert 'RUNTIME_DIR=/home/bluefin-test/run' in runner_after_setup
+    assert 'RUNTIME_DIR=%q' in blocks["TARGET_SUITE"]
+    assert "source /workspace/qa-suite.env" in blocks["RUN_BEHAVE"]
+
+
+def test_native_systemd_runner_socket_failures_carry_named_diagnostics():
+    # Under `set -euo pipefail` a bare `test -S` or `systemctl start` aborts the
+    # script before anything can explain it. Every provisioning step captures
+    # its exit code; the binary and socket checks decide and report.
+    setup = _systemd_runner_blocks()["TARGET_SETUP"]
+
+    assert "report_user_manager_failure() {" in setup
+    assert "systemctl status --no-pager --full user@1000.service >&2 || true" in setup
+    assert "loginctl show-user bluefin-test >&2 || true" in setup
+    assert 'if [[ ! -S "${RUNTIME_DIR}/systemd/private" ]]; then' in setup
+    assert 'if [[ ! -S "${RUNTIME_DIR}/bus" ]]; then' in setup
+    assert "test -S" not in setup
+    assert setup.count("report_user_manager_failure ") == 3
+    assert setup.count("exit 1") == 4  # brew binary gate + the three above
+
+    for capture in (
+        "systemctl start brew-setup.service || BREW_SETUP_RC=$?",
+        "loginctl enable-linger bluefin-test || LINGER_RC=$?",
+        "systemctl start user@1000.service || USER_MANAGER_RC=$?",
+        "systemctl --user start dbus.socket || DBUS_SOCKET_RC=$?",
+    ):
+        assert capture in setup
+
+    assert "journalctl --no-pager --unit brew-setup.service >&2 || true" in setup
+    assert (
+        "exposed no control socket at ${RUNTIME_DIR}/systemd/private" in setup
+    )
+    assert "exposed no session bus at ${RUNTIME_DIR}/bus" in setup
+
+
+def test_native_systemd_runner_clears_the_brew_preinstall_restart_race():
+    # brew-preinstall.service is Type=oneshot, RemainAfterExit=true,
+    # Restart=on-failure, RestartSec=30, StartLimitBurst=3, and is pulled in by
+    # graphical-session.target. Between restart attempts it sits in
+    # `activating (auto-restart)`, where is-failed reports nothing and
+    # reset-failed clears nothing, and the queued restart then races the
+    # suite's explicit start. Inspect, diagnose, stop (which cancels the queued
+    # restart), then reset — all before behave, never after.
+    behave = _systemd_runner_blocks()["RUN_BEHAVE"]
+
+    show = behave.index("--property=ActiveState --value")
+    diagnose = behave.index("before behave started it")
+    stop = behave.index("systemctl --user stop brew-preinstall.service")
+    reset = behave.index("systemctl --user reset-failed brew-preinstall.service")
+    run = behave.index("python3 -m behave")
+
+    assert show < diagnose < stop < reset < run
+    assert "BREW_PREINSTALL_STATE=${BREW_PREINSTALL_STATE:-unknown}" in behave
+    assert (
+        'if [[ "${BREW_PREINSTALL_STATE}" != "inactive" \\\n'
+        '    && "${BREW_PREINSTALL_STATE}" != "active" ]]; then' in behave
+    )
+    assert "systemctl --user is-failed" not in behave
+
+    # Both cleanup steps capture their exit code and report it by name instead
+    # of discarding it with `|| true`.
+    assert (
+        "systemctl --user stop brew-preinstall.service || BREW_PREINSTALL_STOP_RC=$?"
+        in behave
+    )
+    assert (
+        "systemctl --user reset-failed brew-preinstall.service"
+        " || BREW_PREINSTALL_RESET_RC=$?" in behave
+    )
+    assert "reset-failed brew-preinstall.service || true" not in behave
+    assert 'if [[ "${BREW_PREINSTALL_STOP_RC}" -ne 0 ]]; then' in behave
+    assert 'if [[ "${BREW_PREINSTALL_RESET_RC}" -ne 0 ]]; then' in behave
+    assert "a queued auto-restart may still race the suite's explicit start" in behave
+    assert "the suite may report a stale start limit instead of the real error" in behave
+
+    # The whole block is guarded on the lane and uses the validated directory,
+    # and a session that disagrees with it is called out rather than silently
+    # honoured.
+    guarded = behave.split('if [[ "${SUITE}" == "homebrew" ]]; then', 1)[1]
+    assert guarded.index("systemctl --user stop brew-preinstall.service") < guarded.index(
+        "\nfi\n"
+    )
+    assert behave.count('env XDG_RUNTIME_DIR="${RUNTIME_DIR}"') >= 6
+    assert (
+        "warning: session XDG_RUNTIME_DIR='${XDG_RUNTIME_DIR:-}' differs from"
+        " the lane's '${RUNTIME_DIR}'" in behave
+    )
+
+
+def test_native_systemd_runner_deletes_the_target_pod_on_termination_signals():
+    # activeDeadlineSeconds expiry and `argo terminate` arrive as signals, and
+    # an untrapped SIGTERM kills bash without running the EXIT trap — the
+    # privileged 8Gi/4CPU target Pod would then wait for owner-reference GC.
+    runner = _systemd_runner_blocks()["runner"]
+
+    assert "cleanup_target() {" in runner
+    assert (
+        'kubectl delete pod "${TARGET_POD}" -n "{{workflow.namespace}}" \\\n'
+        "    --ignore-not-found --wait=false || true" in runner
+    )
+    assert "trap cleanup_target EXIT" in runner
+    assert "trap 'cleanup_target; exit 143' TERM" in runner
+    assert "trap 'cleanup_target; exit 130' INT" in runner
+    assert runner.count("kubectl delete pod") == 1
+    assert runner.index("trap cleanup_target EXIT") < runner.index("kubectl wait")
 
 
 def test_pr_poller_uses_the_exact_testsuite_pr_source():

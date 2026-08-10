@@ -163,7 +163,9 @@ as PID 1** — not a VM. There is no KubeVirt VMI, no golden disk, no
 containerDisk, and no disk artifact: the runner creates the target Pod from a
 bootc OCI image, waits for `systemctl is-system-running` plus `dbus` and
 `systemd-logind`, runs qecore-headless + Behave inside it, and deletes the Pod
-from an EXIT trap on every outcome.
+from a cleanup trap on `EXIT`, `TERM`, and `INT` — so deadline expiry and
+`argo terminate`, which arrive as signals, free the target promptly instead of
+leaving it to owner-reference GC.
 
 | Parameter | Default | Notes |
 |---|---|---|
@@ -178,8 +180,11 @@ from an EXIT trap on every outcome.
 #### ChairLift / Homebrew lane
 
 > **Status: statically validated only — never executed against the cluster.**
-> `argo lint`, the unit suite, `bash -n`, and mocked branch runs all pass, but
-> no `suite=homebrew` workflow has been submitted yet. The live risk is the
+> `argo lint`, the unit suite (which now pins this lane's allowlists, deadline,
+> single `RuntimePath` lookup, `/workspace/qa-runtime-dir` contract, socket
+> diagnostics, `brew-preinstall` settling, and signal traps), `bash -n`, and
+> mocked branch runs all pass, but no `suite=homebrew` workflow has been
+> submitted yet. The live risk is the
 > **GNOME desktop session handoff** inside the container target: full desktop
 > suites are still unproven there, and this lane needs a real session for the
 > Ptyxis-driven Brew/bctl scenarios and the two `@chairlift_ui` scenarios. If
@@ -194,8 +199,15 @@ enable-linger bluefin-test` and `user@1000.service` bring up the user manager
 whose `RuntimePath` supplies `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, and
 `AT_SPI_BUS_ADDRESS` for that run. That directory is validated in the target
 (both `systemd/private` and `bus` must be live sockets) and persisted to
-`/workspace/qa-runtime-dir`, which the runner and `run-behave.sh` both read —
-logind is never asked twice. Every other suite keeps the runner-created
+`/workspace/qa-runtime-dir`; the runner reads that file and passes the value on
+to `run-behave.sh` through `/workspace/qa-suite.env` — logind is never asked
+twice. Immediately before Behave, `run-behave.sh` settles
+`brew-preinstall.service` with that same runtime directory: it reads
+`ActiveState`, dumps `status` for anything that is not a settled
+`inactive`/`active`, stops the unit (cancelling a queued `Restart=on-failure`
+auto-restart and any latched `RemainAfterExit=true` success), then clears the
+start-limit counter with `reset-failed`, so the suite's own explicit start
+reports the unit's real error. Every other suite keeps the runner-created
 `/home/bluefin-test/run`. This lane is not runnable on the QEMU `e2e.yml` path,
 which masks `brew-setup.service`.
 

@@ -169,7 +169,21 @@ spec:
             ;;
         esac
 
-        trap 'kubectl delete pod "${TARGET_POD}" -n "{{workflow.namespace}}" --ignore-not-found --wait=false' EXIT
+        # activeDeadlineSeconds expiry and `argo terminate` both reach this
+        # runner as a signal, and an untrapped SIGTERM kills bash without ever
+        # running the EXIT trap — the target Pod would then survive until
+        # owner-reference GC, holding this node's 8Gi/4CPU reservation. Trap
+        # TERM and INT as well and exit from the handler so the deadline path
+        # deletes the Pod promptly. Deleting twice is harmless because
+        # --ignore-not-found makes the delete idempotent.
+        cleanup_target() {
+          kubectl delete pod "${TARGET_POD}" -n "{{workflow.namespace}}" \
+            --ignore-not-found --wait=false || true
+        }
+        trap cleanup_target EXIT
+        trap 'cleanup_target; exit 143' TERM
+        trap 'cleanup_target; exit 130' INT
+
         kubectl wait --for=condition=Ready "pod/${TARGET_POD}" \
           -n "{{workflow.namespace}}" --timeout=600s
 
@@ -348,24 +362,54 @@ spec:
 
         if [[ "${SUITE}" == "homebrew" ]]; then
           # brew-preinstall.service is WantedBy=graphical-session.target with
-          # Restart=on-failure, RestartSec=30, and StartLimitBurst=3, so the
-          # session qecore just started may already have run it, failed, and
-          # rate-limited it. Report that first — the real failure must not be
-          # swallowed — then clear the state so the suite's own explicit start
-          # reports the unit's actual error instead of "start request repeated
-          # too quickly". Use the runtime directory the lane validated: it is
-          # the manager the suite talks to, and a mismatch here is the session
-          # split rule 8 warns about, so say so out loud.
+          # Type=oneshot, RemainAfterExit=true, Restart=on-failure,
+          # RestartSec=30, and StartLimitBurst=3, so the session qecore just
+          # started may already have run it. Report whatever state it is in
+          # first — the real failure must not be swallowed — then put the unit
+          # back to a clean inactive state so the suite's own explicit start
+          # reports the unit's actual error. Use the runtime directory the lane
+          # validated: it is the manager the suite talks to, and a mismatch here
+          # is the session split rule 8 warns about, so say so out loud.
           if [[ "${XDG_RUNTIME_DIR:-}" != "${RUNTIME_DIR}" ]]; then
             echo "warning: session XDG_RUNTIME_DIR='${XDG_RUNTIME_DIR:-}' differs from the lane's '${RUNTIME_DIR}'" >&2
           fi
-          if [[ "$(env XDG_RUNTIME_DIR="${RUNTIME_DIR}" systemctl --user is-failed brew-preinstall.service || true)" == "failed" ]]; then
-            echo "brew-preinstall.service was already failed before behave started it:" >&2
+          BREW_PREINSTALL_STATE=$(env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+            systemctl --user show brew-preinstall.service \
+            --property=ActiveState --value 2>/dev/null || true)
+          BREW_PREINSTALL_STATE=${BREW_PREINSTALL_STATE:-unknown}
+          # `failed` is only half the race: between attempts Restart=on-failure
+          # parks the unit in `activating (auto-restart)`, where it is neither
+          # failed nor idle, so is-failed says nothing and reset-failed clears
+          # nothing. Anything that is not a settled inactive/active is worth a
+          # status dump before it is cleared away.
+          if [[ "${BREW_PREINSTALL_STATE}" != "inactive" \
+            && "${BREW_PREINSTALL_STATE}" != "active" ]]; then
+            echo "brew-preinstall.service was ${BREW_PREINSTALL_STATE} before behave started it:" >&2
             env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
               systemctl --user status --no-pager --full brew-preinstall.service >&2 || true
           fi
+          # Stop before reset-failed: stopping cancels a queued auto-restart
+          # job (reset-failed does not), and with RemainAfterExit=true it also
+          # clears a stale `active` left by the session's own run so the suite's
+          # start actually executes the unit instead of being a no-op.
+          BREW_PREINSTALL_STOP_RC=0
           env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
-            systemctl --user reset-failed brew-preinstall.service || true
+            systemctl --user stop brew-preinstall.service || BREW_PREINSTALL_STOP_RC=$?
+          if [[ "${BREW_PREINSTALL_STOP_RC}" -ne 0 ]]; then
+            echo "warning: stopping brew-preinstall.service before behave exited ${BREW_PREINSTALL_STOP_RC} (state was ${BREW_PREINSTALL_STATE}); a queued auto-restart may still race the suite's explicit start" >&2
+            env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+              systemctl --user status --no-pager --full brew-preinstall.service >&2 || true
+          fi
+          # Now clear the failure state and the start-limit counter. Never
+          # after the suite's start: that would hide real failures.
+          BREW_PREINSTALL_RESET_RC=0
+          env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+            systemctl --user reset-failed brew-preinstall.service || BREW_PREINSTALL_RESET_RC=$?
+          if [[ "${BREW_PREINSTALL_RESET_RC}" -ne 0 ]]; then
+            echo "warning: reset-failed brew-preinstall.service exited ${BREW_PREINSTALL_RESET_RC} (state was ${BREW_PREINSTALL_STATE}); the suite may report a stale start limit instead of the real error" >&2
+            env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+              systemctl --user status --no-pager --full brew-preinstall.service >&2 || true
+          fi
         fi
 
         BEHAVE_RC=0

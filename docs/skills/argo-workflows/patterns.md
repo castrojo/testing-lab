@@ -702,8 +702,12 @@ never directly under Argo emissary PID 1.
   show-user` output instead of a silent abort.
 - Size `activeDeadlineSeconds` for the slowest suite the template can run, and
   say in a comment which phases the number covers.
-- Delete the owner-referenced target in the runner's EXIT trap as a prompt
-  cleanup fallback.
+- Delete the owner-referenced target from a `cleanup_target` function trapped on
+  `EXIT`, `TERM`, **and** `INT` — deadline expiry and `argo terminate` arrive as
+  signals, and an untrapped SIGTERM kills bash before the EXIT trap runs, so the
+  target Pod lingers until owner-reference GC. Exit from the TERM/INT handler
+  (`trap 'cleanup_target; exit 143' TERM`) so the shell does not resume;
+  `kubectl delete --ignore-not-found` makes the double delete harmless.
 
 This runner validates the OCI userspace, systemd/logind startup, resolver
 repair, qecore, and GDM bootstrap. Tests requiring a bootloader, kernel,

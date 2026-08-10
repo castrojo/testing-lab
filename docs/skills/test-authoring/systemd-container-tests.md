@@ -76,15 +76,34 @@ known desktop limitation, not as a regression in that provisioning.
    show-user <user>` before `exit 1`. The same applies to command substitution:
    `RUNTIME_DIR=$(loginctl show-user … || true)` so an empty value reaches the
    friendly diagnostic instead of killing the shell.
-10. **Reset failed/start-limit state before a suite starts a session unit:**
-    units pulled in by `graphical-session.target` with `Restart=on-failure` and
-    `StartLimitBurst` can already be failed and rate-limited by the time Behave
-    starts them explicitly, and the suite then sees "start request repeated too
-    quickly" instead of the real error. Report the pre-existing failure, then
-    `systemctl --user reset-failed <unit> || true` in `run-behave.sh` — with the
-    lane's reconciled `XDG_RUNTIME_DIR`, not a guess — immediately before
-    behave. Never reset *after* the suite's start: that would hide real
-    failures.
+10. **Settle a session unit's state before a suite starts it:** units pulled in
+    by `graphical-session.target` with `Restart=on-failure` and
+    `StartLimitBurst` may already have run by the time Behave starts them
+    explicitly. `failed` is only half of it: between attempts the unit sits in
+    `activating (auto-restart)`, where `is-failed` reports nothing and
+    `reset-failed` clears nothing, and the queued restart then races the
+    suite's own start; with `RemainAfterExit=true` a *successful* prior run
+    leaves it `active`, so the suite's start is a no-op that proves nothing.
+    In `run-behave.sh`, immediately before behave and with the lane's
+    reconciled `XDG_RUNTIME_DIR` (not a guess): read `ActiveState` via
+    `systemctl --user show <unit> --property=ActiveState --value`, dump
+    `systemctl --user status` for anything that is not a settled
+    `inactive`/`active`, `stop` the unit — which cancels a queued auto-restart
+    and clears a stale `active` — and only then `reset-failed` to clear the
+    start-limit counter. Capture both exit codes and warn by name; `|| true`
+    throws away the reason the next failure will be blamed on. Never reset
+    *after* the suite's start: that would hide real failures.
+11. **Trap TERM and INT, not just EXIT:** `activeDeadlineSeconds` expiry and
+    `argo terminate` reach the runner as signals, and an untrapped SIGTERM
+    kills bash without running the EXIT trap — the privileged target Pod then
+    waits for owner-reference GC while holding its whole CPU/memory
+    reservation. Put the delete in a function, `trap` it on `EXIT`, and add
+    `trap 'cleanup; exit 143' TERM` / `trap 'cleanup; exit 130' INT` so the
+    handler exits instead of resuming. `kubectl delete --ignore-not-found`
+    makes the double delete harmless. A trapped signal is handled once the
+    current foreground command returns, so the deletion is immediate when the
+    signal reaches the runner's process group (which also ends the in-flight
+    `kubectl exec`) and otherwise happens as soon as that exec returns.
 
 #### The `homebrew` lane
 
@@ -103,8 +122,10 @@ systemctl start user@1000.service                 # … and its manager
 RUNTIME_DIR=$(loginctl show-user bluefin-test --property=RuntimePath --value 2>/dev/null || true)
 runuser -u bluefin-test -- env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
   systemctl --user start dbus.socket
-test -S "${RUNTIME_DIR}/systemd/private"          # manager reachable
-test -S "${RUNTIME_DIR}/bus"                      # session bus live
+# each socket check is a guard, not a bare `test`, so it can name the failure:
+#   if [[ ! -S "${RUNTIME_DIR}/systemd/private" ]]; then …; exit 1; fi
+[[ -S "${RUNTIME_DIR}/systemd/private" ]]         # manager reachable
+[[ -S "${RUNTIME_DIR}/bus" ]]                     # session bus live
 printf '%s\n' "${RUNTIME_DIR}" >/workspace/qa-runtime-dir
 ```
 
@@ -125,10 +146,14 @@ bus addresses under `/home/bluefin-test/run` is exactly the split rule 8
 forbids. Every other suite keeps the runner-created `/home/bluefin-test/run`
 triple unchanged.
 
-`run-behave.sh` also clears `brew-preinstall.service`'s failed/start-limit state
-with the same reconciled `XDG_RUNTIME_DIR`, immediately before Behave's explicit
-start (rule 9). The wall-clock budget for this lane is documented on
-`activeDeadlineSeconds` (7200s) in the template and in
+`run-behave.sh` also settles `brew-preinstall.service` immediately before
+Behave's explicit start, with the same reconciled `XDG_RUNTIME_DIR` (rule 10):
+read `ActiveState`, dump `status` for anything that is not a settled
+`inactive`/`active`, `stop` — cancelling a queued auto-restart and any latched
+`RemainAfterExit=true` success — then `reset-failed`, warning by name if either
+step fails. The runner deletes the target Pod from a `cleanup_target` function
+trapped on `EXIT`, `TERM`, and `INT` (rule 11). The wall-clock budget for this
+lane is documented on `activeDeadlineSeconds` (7200s) in the template and in
 [`docs/reference/WORKFLOWS.md`](../../reference/WORKFLOWS.md).
 
 The suite itself verifies this contract in `before_all` and fails the run — it
@@ -171,11 +196,16 @@ Submission contract: [`docs/reference/WORKFLOWS.md`](../../reference/WORKFLOWS.m
   session or lingering enabled. Run `loginctl enable-linger` first, then read
   `--property=RuntimePath`; `runuser` alone opens no PAM/logind session, so
   without it there is no user manager and no `/run/user/<uid>` at all.
-- `brew-preinstall.service` is `WantedBy=graphical-session.target` with
-  `Restart=on-failure`, `RestartSec=30`, `StartLimitIntervalSec=600`, and
-  `StartLimitBurst=3`. The session qecore starts pulls it in on its own, so by
-  the time the suite starts it explicitly it may already be `failed` and
-  rate-limited — and the suite would report the start-limit, not the cause.
+- `brew-preinstall.service` is `Type=oneshot` with `RemainAfterExit=true`,
+  `WantedBy=graphical-session.target`, `Restart=on-failure`, `RestartSec=30`,
+  `StartLimitIntervalSec=600`, and `StartLimitBurst=3`. The session qecore
+  starts pulls it in on its own, so by the time the suite starts it explicitly
+  it may be `failed` (suite reports the start-limit, not the cause),
+  `activating (auto-restart)` during the 30s `RestartSec` gap (a queued restart
+  job that `reset-failed` does not cancel and that then races the suite's
+  start), or `active` from a successful run that `RemainAfterExit` keeps
+  latched (the suite's start becomes a no-op). Read `ActiveState`, stop, then
+  `reset-failed` — see rule 10.
 - Wall clock: `run-tests` carries `activeDeadlineSeconds: 7200`. The homebrew
   lane's own budget (pull + boot + pip + brew prefix + session + network cask
   install + 15 Ptyxis/dogtail scenarios) is ~89 minutes with no contention;
