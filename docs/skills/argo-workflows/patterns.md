@@ -677,6 +677,19 @@ never directly under Argo emissary PID 1.
 - Do not overwrite qecore's desktop session environment with fake `/home`
   runtime-bus values; the real login session D-Bus socket and bus address must
   remain intact.
+- Validate `suite` in **both** guards — the runner's `case` and the second one
+  inside the heredoc that writes `/workspace/run-behave.sh`. Passing only the
+  first boots the target and then exits 2 from inside it.
+- Keep suite-specific provisioning behind `if [[ "${SUITE}" == "<suite>" ]]` in
+  `TARGET_SETUP` (which must be given `SUITE` explicitly — the heredoc is
+  quoted). `suite=homebrew` uses this to start `brew-setup.service` and, via
+  `loginctl enable-linger` + `user@1000.service`, a real systemd user manager.
+- When a suite needs `systemctl --user`, derive `XDG_RUNTIME_DIR`,
+  `DBUS_SESSION_BUS_ADDRESS`, and `AT_SPI_BUS_ADDRESS` from one directory —
+  `loginctl show-user <user> --property=RuntimePath`. The manager is reached at
+  `${XDG_RUNTIME_DIR}/systemd/private` and ignores the bus variables; qecore and
+  dogtail do the reverse. Pinning `/run/user/1000` for one and leaving the other
+  under `/home` breaks whichever was left behind.
 - Pass test-suite inputs through a durable target file, not environment
   variables: qecore does not forward arbitrary env vars into the desktop
   session.

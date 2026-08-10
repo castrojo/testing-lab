@@ -156,6 +156,56 @@ Test runner: `run-service-tests` (see supporting templates below). Uses
 the shared helpers in `tests/service_catalog/shared/` for deployment,
 persistence, reachability, redeploy, and teardown assertions.
 
+### `run-systemd-container-tests`
+
+Runs one desktop BDD suite against a **privileged disposable Pod with systemd
+as PID 1** — not a VM. There is no KubeVirt VMI, no golden disk, no
+containerDisk, and no disk artifact: the runner creates the target Pod from a
+bootc OCI image, waits for `systemctl is-system-running` plus `dbus` and
+`systemd-logind`, runs qecore-headless + Behave inside it, and deletes the Pod
+from an EXIT trap on every outcome.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `image` | `ghcr.io/projectbluefin/bluefin` | Any bootc OCI image. |
+| `image-tag` | `testing` | Tag for that image, e.g. an `e2e-pr-<n>-<sha>` PR build. |
+| `suite` | `smoke` | One of `smoke`, `common`, `developer`, `software`, `system`, `homebrew`. Validated twice — in the runner and inside the target. |
+| `variant` | `bluefin` | Accepted for parity with the VM pipelines; the container lane does not consume it yet. |
+| `testsuite-repo` | `https://github.com/projectbluefin/testsuite` | Cloned into the target. |
+| `testsuite-branch` | `main` | Override only to validate an unmerged suite; a green run on a feature branch says nothing about `main`. |
+| `behave-tags` | empty | Replaces the default `--tags ~@wip`. |
+
+#### ChairLift / Homebrew lane
+
+`suite=homebrew` is the only suite that provisions Homebrew and a systemd user
+manager in the target — `brew-setup.service` is unmasked and started, then
+`loginctl enable-linger bluefin-test` and `user@1000.service` bring up the user
+manager whose `RuntimePath` supplies `XDG_RUNTIME_DIR`,
+`DBUS_SESSION_BUS_ADDRESS`, and `AT_SPI_BUS_ADDRESS` for that run. Every other
+suite keeps the runner-created `/home/bluefin-test/run`. This lane is not
+runnable on the QEMU `e2e.yml` path, which masks `brew-setup.service`.
+
+Submit it against a `common` PR build:
+
+```bash
+: "${COMMON_PR:?export COMMON_PR to the common pull request number}"
+IMAGE_TAG="$(gh api \
+  'orgs/projectbluefin/packages/container/common/versions?per_page=50' \
+  --jq '.[].metadata.container.tags[]?' \
+  | grep "^e2e-pr-${COMMON_PR}-" \
+  | head -1)"
+argo submit -n argo \
+  --from workflowtemplate/run-systemd-container-tests \
+  -p image=ghcr.io/projectbluefin/common \
+  -p image-tag="${IMAGE_TAG}" \
+  -p suite=homebrew \
+  -p variant=bluefin \
+  -p testsuite-branch=test/chairlift-homebrew
+```
+
+Drop `-p testsuite-branch` once the suite is on `main`. Lane internals and
+failure modes: [`docs/skills/test-authoring/systemd-container-tests.md`](../skills/test-authoring/systemd-container-tests.md).
+
 ---
 
 ## Supporting templates (called via `templateRef`)
