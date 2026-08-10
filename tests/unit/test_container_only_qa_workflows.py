@@ -1,7 +1,10 @@
 from pathlib import Path
+import json
+import os
 import re
 import shutil
 import subprocess
+import tempfile
 
 import pytest
 
@@ -32,8 +35,13 @@ def _systemd_run_tests_template():
 
 
 def _heredoc(name, text):
-    """The body of a quoted `<<'NAME'` heredoc, without its delimiters."""
-    match = re.search(r"<<'%s'\n(.*?)\n\s*%s\n" % (name, name), text, re.S)
+    """The body of a quoted `<<'NAME'` heredoc, without its delimiters.
+
+    The redirect may carry trailing tokens (`<<'PY' || RC=$?`), which bash
+    applies to the command, not the heredoc — so match to end of line rather
+    than demanding the newline immediately after the delimiter.
+    """
+    match = re.search(r"<<'%s'[^\n]*\n(.*?)\n\s*%s\n" % (name, name), text, re.S)
     assert match is not None, f"{name} heredoc not found"
     return match.group(1)
 
@@ -219,6 +227,111 @@ def _run_settle_block(
         ]
     )
     return _bash(["bash"], script)
+
+
+def _behave_summary_block():
+    """The runner's scenario-tally python heredoc, ready to execute.
+
+    Extracted from the parsed template, so this is the source that really
+    runs on the cluster — not a copy that can drift.
+    """
+    return _heredoc("PY", _systemd_run_tests_template()["script"]["source"])
+
+
+def _run_behave_summary(tmp_path, features, suite="homebrew", tags=""):
+    """Execute the tally block over a synthetic behave JSON report.
+
+    Only the hardcoded results path is rewritten, to a pytest tmp file; the
+    counting, the printed summary and the empty-run guard are the shipped
+    code. Returns the completed process.
+    """
+    results = tmp_path / "results.json"
+    results.write_text(json.dumps(features), encoding="utf-8")
+    block = _behave_summary_block().replace(
+        '"/tmp/results/results.json"', repr(str(results))
+    )
+    assert str(results) in block, "results path substitution did not apply"
+
+    if shutil.which("python3") is None:  # pragma: no cover - python3 runs this
+        pytest.skip("python3 is required to check the runner's summary block")
+    return subprocess.run(
+        ["python3", "-c", block],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "SUITE": suite, "BEHAVE_TAGS": tags},
+    )
+
+
+def _feature(*statuses):
+    return {"elements": [{"status": status} for status in statuses]}
+
+
+def test_behave_summary_reports_the_tally_for_a_real_run():
+    # Guard rail for the guard rail: the empty-run check below is only
+    # meaningful if a populated report still counts and still passes.
+    with tempfile.TemporaryDirectory(dir=ROOT / "tests") as workdir:
+        result = _run_behave_summary(
+            Path(workdir), [_feature("passed", "passed"), _feature("passed")]
+        )
+
+    assert result.returncode == 0, result.stderr
+    assert "3/3 scenarios passed" in result.stdout
+
+
+def test_behave_summary_counts_failures_without_failing_itself():
+    # behave's own exit code owns failure reporting; this block only tallies,
+    # so a failed scenario must not turn into a second, differently-worded
+    # error from the summary.
+    with tempfile.TemporaryDirectory(dir=ROOT / "tests") as workdir:
+        result = _run_behave_summary(
+            Path(workdir), [_feature("passed", "failed", "passed")]
+        )
+
+    assert result.returncode == 0, result.stderr
+    assert "2/3 scenarios passed" in result.stdout
+
+
+def test_behave_summary_refuses_a_zero_scenario_run():
+    # behave exits 0 when --tags matches nothing, so a typo'd tag used to
+    # print "0/0 scenarios passed" and report a green lane that validated
+    # nothing. Targeted tag runs are the whole point of behave-tags, so this
+    # is exactly when the false green would happen.
+    with tempfile.TemporaryDirectory(dir=ROOT / "tests") as workdir:
+        result = _run_behave_summary(
+            Path(workdir), [], suite="homebrew", tags="--tags @chairlfit"
+        )
+
+    assert result.returncode != 0, result.stdout
+    assert "no scenarios ran" in result.stderr
+    # The diagnostic has to name the suite and the tags, or the operator is
+    # left rerunning the lane to find out which typo caused it.
+    assert "homebrew" in result.stderr
+    assert "@chairlfit" in result.stderr
+
+
+def test_behave_summary_refuses_a_report_whose_features_are_all_empty():
+    # A tag can match a feature file but none of its scenarios, which yields
+    # features with empty `elements` rather than an empty report.
+    with tempfile.TemporaryDirectory(dir=ROOT / "tests") as workdir:
+        result = _run_behave_summary(Path(workdir), [_feature(), _feature()])
+
+    assert result.returncode != 0, result.stdout
+    assert "no scenarios ran" in result.stderr
+
+
+def test_runner_fails_the_lane_when_the_summary_block_refuses():
+    # The block's exit code has to reach the runner's exit status, and it has
+    # to rank below qecore's and behave's so a real failure still reports its
+    # own cause rather than "no scenarios ran".
+    runner = _systemd_run_tests_template()["script"]["source"]
+    tail = runner[runner.index("BEHAVE_RC=$(cat /tmp/results/behave-rc.txt)"):]
+
+    assert "SUMMARY_RC=0" in tail
+    assert "<<'PY' || SUMMARY_RC=$?" in tail
+    assert 'exit "${SUMMARY_RC}"' in tail
+    assert tail.index('exit "${QECORE_RC}"') < tail.index('exit "${BEHAVE_RC}"')
+    assert tail.index('exit "${BEHAVE_RC}"') < tail.index('exit "${SUMMARY_RC}"')
 
 
 def test_bluefin_image_poll_qa_is_container_only():

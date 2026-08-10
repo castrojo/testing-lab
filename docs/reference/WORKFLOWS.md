@@ -175,7 +175,7 @@ leaving it to owner-reference GC.
 | `variant` | `bluefin` | Accepted for parity with the VM pipelines; the container lane does not consume it yet. |
 | `testsuite-repo` | `https://github.com/projectbluefin/testsuite` | Cloned into the target. |
 | `testsuite-branch` | `main` | Override only to validate an unmerged suite; a green run on a feature branch says nothing about `main`. |
-| `behave-tags` | empty | Replaces the default `--tags ~@wip`. |
+| `behave-tags` | empty | Replaces the default `--tags ~@wip`. A tag that matches nothing is **not** a pass: behave exits 0, but the runner's result summary fails the lane with `no scenarios ran`, naming the suite and the tags. |
 
 #### ChairLift / Homebrew lane
 

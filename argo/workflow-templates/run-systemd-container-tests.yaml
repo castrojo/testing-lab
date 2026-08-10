@@ -578,8 +578,11 @@ spec:
           cat /workspace/results.json > /tmp/results/results.json
 
         BEHAVE_RC=$(cat /tmp/results/behave-rc.txt)
-        python3 - <<'PY'
+        SUMMARY_RC=0
+        python3 - <<'PY' || SUMMARY_RC=$?
         import json
+        import os
+        import sys
 
         with open("/tmp/results/results.json", encoding="utf-8") as result_file:
             data = json.load(result_file)
@@ -589,9 +592,30 @@ spec:
         )
         total = sum(len(feature.get("elements", [])) for feature in data)
         print(f"{total - failed}/{total} scenarios passed")
+
+        # behave exits 0 when --tags matches nothing, so a typo in behave-tags
+        # ("@chairlfit", "@chairlift_casks") produced "0/0 scenarios passed"
+        # and a green lane that validated nothing. Targeted tag runs are
+        # exactly what this lane is for, so refuse the empty result. Every
+        # other precondition in this runner fails closed; this was the last
+        # place it could still report a false green.
+        if total == 0:
+            sys.exit(
+                "no scenarios ran (suite="
+                f"{os.environ.get('SUITE', '')!r}, behave-tags="
+                f"{os.environ.get('BEHAVE_TAGS', '')!r}); behave exits 0 when "
+                "--tags matches nothing, so this is not a passing run"
+            )
         PY
 
+        # Ranked so a real failure still reports its own cause: qecore's
+        # session errors first, then behave's own verdict, and only then the
+        # empty-run refusal, which is the only one that can fire when both of
+        # those are 0.
         if [[ "${QECORE_RC}" -ne 0 ]]; then
           exit "${QECORE_RC}"
         fi
-        exit "${BEHAVE_RC}"
+        if [[ "${BEHAVE_RC}" -ne 0 ]]; then
+          exit "${BEHAVE_RC}"
+        fi
+        exit "${SUMMARY_RC}"
