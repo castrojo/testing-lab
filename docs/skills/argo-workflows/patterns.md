@@ -701,16 +701,30 @@ never directly under Argo emissary PID 1.
   failure exits with a named message plus `systemctl status` and `loginctl
   show-user` output instead of a silent abort.
 - Size `activeDeadlineSeconds` for the slowest suite the template can run, and
-  say in a comment which phases the number covers. Budget idempotent or
-  content-addressed work **once**, not once per restart attempt, and cap any
-  in-band wait the runner performs at that same number so the wait cannot
-  quietly become the deadline.
+  write the breakdown as machine-parseable comment lines (`phase: <seconds> -
+  …`, `headroom: <seconds> - …`) that a unit test sums and checks against the
+  deadline. Prose alone rots: a test asserting on sentences pins the line
+  wrapping, and one that re-adds the same literals on both sides of an `==`
+  asserts nothing. Budget idempotent or content-addressed work **once**, not
+  once per restart attempt, cap any in-band wait the runner performs at that
+  same number so the wait cannot quietly become the deadline, and name the
+  costs you are leaving to the headroom instead of pretending they do not
+  exist.
 - Settle a session-started unit before a suite starts it explicitly, and read
-  `ActiveState` *and* `SubState`: `activating (start)` is a healthy run in
-  flight to be waited out (bounded), while `activating (auto-restart)` holds a
-  queued restart that `reset-failed` does not cancel and must be `stop`ped.
-  Log `LoadState`/`ConditionResult` for settled `inactive`/`active` states so a
-  missing or `Condition*`-skipped unit cannot pass for a clean slate.
+  `ActiveState` *and* `SubState` in **one** `systemctl show`: `activating
+  (start)` is a healthy run in flight to be waited out (bounded, with periodic
+  progress in the log), while `activating (auto-restart)` holds a queued
+  restart that `reset-failed` does not cancel and must be `stop`ped. Two
+  separate reads can pair states the unit never held, and `--value` on a
+  multi-property read answers in systemd's order rather than the requested one,
+  so parse the `key=value` form. Log `LoadState`, `ConditionResult` *and*
+  `ConditionTimestamp` for settled `inactive`/`active` states — an empty
+  timestamp means the conditions were never evaluated (including a not-found
+  unit), a populated one with `ConditionResult=no` means a genuinely skipped
+  start — so neither can pass for a clean slate. If the `stop` fails, re-read
+  the state before warning: a still-running install is a different and worse
+  hazard than a queued restart, because the suite's start then runs
+  concurrently with it.
 - Delete the owner-referenced target from a `cleanup_target` function trapped on
   `EXIT`, `TERM`, **and** `INT` — deadline expiry and `argo terminate` arrive as
   signals, and an untrapped SIGTERM kills bash before the EXIT trap runs, so the

@@ -84,11 +84,18 @@ desktop limitation, not as a regression in that provisioning.
     `StartLimitBurst` may already have run — or still be running — by the time
     Behave starts them explicitly. `ActiveState` alone cannot tell those apart,
     so read `SubState` too, immediately before behave and with the lane's
-    reconciled `XDG_RUNTIME_DIR` (not a guess):
+    reconciled `XDG_RUNTIME_DIR` (not a guess). Read the pair in **one**
+    `systemctl show --property=ActiveState --property=SubState` call: two calls
+    can straddle a transition and hand the branch a pair the unit never held.
+    Use the `key=value` output, not `--value` — a multi-property `--value` read
+    prints in systemd's own property order, not the requested one, so parsing
+    it positionally is a silent mis-assignment waiting to happen.
     - `activating` + `start`: a **healthy run in flight**. Wait for it, capped
-      (`BREW_PREINSTALL_WAIT_SECONDS`), polling `ActiveState`/`SubState`.
-      Killing it discards work the deadline already budgets for and hands the
-      suite a half-applied result.
+      (`BREW_PREINSTALL_WAIT_SECONDS`), polling `ActiveState`/`SubState`, and
+      log progress on an interval — a bounded wait that prints nothing for a
+      quarter of an hour is indistinguishable from a dead runner in the Argo
+      log view. Killing it discards work the deadline already budgets for and
+      hands the suite a half-applied result.
     - `activating` + `auto-restart` (`auto-restart-queued` on systemd ≥ 254):
       the `RestartSec` gap after a failure. `is-failed` reports nothing and
       `reset-failed` cancels nothing here, and the queued restart would race
@@ -97,18 +104,29 @@ desktop limitation, not as a regression in that provisioning.
       status` before anything clears it.
     - `inactive`/`active` are the settled states, but `inactive` is also what
       a unit that is not installed, or that systemd skipped on a failed
-      `Condition*`, looks like — and starting either exits 0. Log `LoadState`
-      and `ConditionResult` so that case is visible instead of passing for a
-      clean slate.
+      `Condition*`, looks like — and starting either exits 0. Log `LoadState`,
+      `ConditionResult` **and `ConditionTimestamp`**: `ConditionResult=no` on
+      its own means either of two opposite things, and only an empty
+      `ConditionTimestamp` marks the difference (see the verified finding
+      below). Print the verdict, not just the raw properties.
+    - Any property read can come back empty (unreachable manager, unknown
+      property). Default to a non-settled sentinel such as `unknown` so an
+      empty read falls through to the diagnostic branch instead of being
+      mistaken for a clean slate — and so `set -u` does not abort the lane.
 
     Then `stop` the unit — which cancels a queued auto-restart and clears a
     latched `RemainAfterExit=true` success — and only then `reset-failed` to
     clear the start-limit counter. Capture both exit codes and warn by name;
-    `|| true` throws away the reason the next failure will be blamed on. Never
-    reset *after* the suite's start: that would hide real failures. Be honest
-    about what the suite's start then re-covers: it re-runs the unit, but if
-    the unit is idempotent or content-addressed that re-run may legitimately do
-    nothing, so it proves the start path, not the work.
+    `|| true` throws away the reason the next failure will be blamed on. If the
+    `stop` fails, **re-read the state** before warning: the pre-stop sample
+    cannot say what survived, and the three survivors are not equally bad. A
+    still-`activating` run that is not in the auto-restart gap means a live
+    install is executing and the suite's start will run concurrently against
+    the same prefix — say that specifically, not just "a queued auto-restart
+    may race". Never reset *after* the suite's start: that would hide real
+    failures. Be honest about what the suite's start then re-covers: it re-runs
+    the unit, but if the unit is idempotent or content-addressed that re-run
+    may legitimately do nothing, so it proves the start path, not the work.
 11. **Trap TERM and INT, not just EXIT:** `activeDeadlineSeconds` expiry and
     `argo terminate` reach the runner as signals, and an untrapped SIGTERM
     kills bash without running the EXIT trap — the privileged target Pod then
@@ -184,23 +202,31 @@ triple unchanged.
 
 `run-behave.sh` also settles `brew-preinstall.service` immediately before
 Behave's explicit start, with the same reconciled `XDG_RUNTIME_DIR` (rule 10):
-read `ActiveState` *and* `SubState`, wait out an in-flight `activating (start)`
-run for up to `BREW_PREINSTALL_WAIT_SECONDS` (900s, polled every 10s), dump
-`status` for `failed`, the `auto-restart` gap, or a run that outlasts that
-wait, log `LoadState`/`ConditionResult` for a settled `inactive`/`active`, then
-`stop` — cancelling a queued auto-restart and any latched `RemainAfterExit=true`
-success — and `reset-failed`, warning by name if either step fails. Behave's
-start then executes the unit rather than returning from the latch, but because
-`brew-preinstall` is content-addressed that re-run is a fast no-op after a
-successful install (unchanged Brewfile hash); it re-covers the unit's start
-path, not the install. After a *failed* run nothing was recorded, so the re-run
-does the real work and reports the real error. The runner deletes the target
-Pod from a `cleanup_target` function trapped on `EXIT`, `TERM`, and `INT`
-(rule 11). The wall-clock budget for this lane is documented on
+sample `ActiveState` *and* `SubState` in one `systemctl show`, wait out an
+in-flight `activating (start)` run for up to `BREW_PREINSTALL_WAIT_SECONDS`
+(900s, polled every 10s, progress logged every 60s), dump `status` for
+`failed`, the `auto-restart` gap, or a run that outlasts that wait, report
+`LoadState` plus a `ConditionResult`/`ConditionTimestamp` verdict for a settled
+`inactive`/`active`, then `stop` — cancelling a queued auto-restart and any
+latched `RemainAfterExit=true` success — and `reset-failed`, warning by name if
+either step fails. A failed `stop` re-reads the unit and names what survived:
+a live install still running (the suite's start would then run brew
+concurrently against the same prefix), a queued auto-restart, or a latched
+`active`. Behave's start then executes the unit rather than returning from the
+latch, but because `brew-preinstall` is content-addressed that re-run is a fast
+no-op after a successful install (unchanged Brewfile hash); it re-covers the
+unit's start path, not the install. After a *failed* run nothing was recorded,
+so the re-run does the real work and reports the real error. The runner deletes
+the target Pod from a `cleanup_target` function trapped on `EXIT`, `TERM`, and
+`INT` (rule 11). The wall-clock budget for this lane is documented on
 `activeDeadlineSeconds` (7200s) in the template and in
 [`docs/reference/WORKFLOWS.md`](../../reference/WORKFLOWS.md); it pays for the
-network cask install once, and the in-flight wait cap is deliberately that same
-900s.
+network cask install once, the in-flight wait cap is deliberately that same
+900s, and the restart attempts the session can burn before the lane ever
+samples the unit are absorbed by the headroom rather than by a budget line.
+The template's `phase:`/`headroom:` comment lines are parsed by
+`tests/unit/test_container_only_qa_workflows.py`, which re-derives the totals
+and the stated minutes — edit the numbers, not the prose.
 
 The suite itself verifies this contract in `before_all` and fails the run — it
 never skips. See `projectbluefin/testsuite`'s `tests/homebrew/README.md`.
@@ -256,6 +282,26 @@ Submission contract: [`docs/reference/WORKFLOWS.md`](../../reference/WORKFLOWS.m
   `Condition*` or an uninstalled unit looks identical to "never ran", and both
   start with exit 0. Read `ActiveState` *and* `SubState`, wait out an in-flight
   run, stop the rest, then `reset-failed` — see rule 10.
+- **`ConditionResult=no` does not mean the condition failed.** Verified on
+  systemd 260.2: `systemctl show <unit> --property=ConditionResult
+  --property=ConditionTimestamp` reports `ConditionResult=no` with an **empty**
+  `ConditionTimestamp` for any unit whose conditions have never been evaluated
+  — every loaded-but-never-started unit on the host, and also every
+  `LoadState=not-found` unit, for which `systemctl show` still exits 0 and
+  answers `inactive`/`dead`/`no`. A unit that really was condition-skipped
+  carries a **populated** `ConditionTimestamp` (e.g. `brew-setup.service` on a
+  host whose prefix already exists). So `ConditionTimestamp`, not
+  `ConditionResult`, is what separates "never evaluated" from "evaluated and
+  failed"; log both and print the verdict.
+- **`systemctl show --property=A --property=B --value` does not answer in the
+  order asked.** Verified on systemd 260.2: requesting
+  `ConditionResult,ConditionTimestamp,LoadState` with `--value` prints the
+  `LoadState` value first, because systemctl uses its own property order.
+  Positional parsing of a multi-property `--value` read therefore assigns the
+  wrong variables silently. Read the `key=value` form and match on the key —
+  which is also the only way to sample two properties **atomically**, and
+  sampling `ActiveState` and `SubState` in separate calls can pair states the
+  unit never simultaneously held.
 - `/usr/libexec/brew-preinstall` is **content-addressed**: it hashes
   `/usr/share/ublue-os/homebrew/preinstall.d/*.Brewfile` and compares that with
   `~/.local/share/ublue-os/brew-preinstall-state.json` before touching brew, so
@@ -267,8 +313,14 @@ Submission contract: [`docs/reference/WORKFLOWS.md`](../../reference/WORKFLOWS.m
 - Wall clock: `run-tests` carries `activeDeadlineSeconds: 7200`. The homebrew
   lane's own budget (pull + boot + pip + brew prefix + session + one network
   cask install + 15 Ptyxis/dogtail scenarios) is ~88 minutes with no
-  contention; the only path that pays for the install twice is an in-flight run
-  that fails after being waited out, which still lands ~17 minutes inside the
-  deadline. Every other suite finishes far inside that, and the deadline is a
-  hang guard rather than an expectation.
+  contention, leaving ~32 minutes of headroom. Two costs sit in that headroom
+  rather than in a budget line: an in-flight run that fails after being waited
+  out and is then redone by the suite (a second 900s install), and the
+  `Restart=on-failure` attempts the session burns *before* `run-behave.sh` ever
+  samples the unit — bounded by `StartLimitBurst=3` within
+  `StartLimitIntervalSec=600`, and overlapping the lane's earlier phases
+  anyway. Even a run that pays both lands ~7 minutes inside the deadline. Every
+  other suite finishes far inside that, and the deadline is a hang guard rather
+  than an expectation. The template writes those numbers as machine-checked
+  `phase:`/`headroom:` comment lines.
 

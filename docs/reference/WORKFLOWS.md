@@ -206,18 +206,26 @@ whose `RuntimePath` supplies `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, and
 to `run-behave.sh` through `/workspace/qa-suite.env` — logind is never asked
 twice. Immediately before Behave, `run-behave.sh` settles
 `brew-preinstall.service` with that same runtime directory. It reads
-`ActiveState` **and** `SubState`, because `activating` means two opposite
+`ActiveState` **and** `SubState` — in a single `systemctl show` so the pair
+cannot straddle a transition — because `activating` means two opposite
 things: `start` is the session's own install still running, which the lane
-waits out for up to 900s rather than discarding, while `auto-restart` (or
-`auto-restart-queued`) is the `RestartSec` gap holding a queued restart job
-that `reset-failed` does not cancel. `failed`, an auto-restart gap, and a run
-that outlasts the wait get a `status` dump; the settled `inactive`/`active`
-states are logged with `LoadState` and `ConditionResult`, so a unit that is
-missing or that systemd skipped on `ConditionUser`/`ConditionPathExists` is
-visible instead of passing for a clean slate. The unit is then stopped
-(cancelling a queued auto-restart and clearing a latched
-`RemainAfterExit=true` success) and `reset-failed`, so Behave's explicit start
-runs the unit instead of returning success from that latch. That re-run
+waits out for up to 900s (logging progress every 60s) rather than discarding,
+while `auto-restart` (or `auto-restart-queued`) is the `RestartSec` gap holding
+a queued restart job that `reset-failed` does not cancel. `failed`, an
+auto-restart gap, a run that outlasts the wait, and an unreadable state all get
+a `status` dump; the settled `inactive`/`active` states are logged with
+`LoadState`, `ConditionResult` **and** `ConditionTimestamp`, because
+`ConditionResult=no` alone cannot distinguish a start systemd skipped on
+`ConditionUser`/`ConditionPathExists` (populated timestamp) from a unit whose
+conditions were never evaluated at all, including one that is not installed
+(empty timestamp). The lane prints that verdict, so neither case passes for a
+clean slate. The unit is then stopped (cancelling a queued auto-restart and
+clearing a latched `RemainAfterExit=true` success) and `reset-failed`, so
+Behave's explicit start runs the unit instead of returning success from that
+latch. If the stop itself fails, the lane re-reads the unit and names what
+survived — a live install still running (the worst case: the suite's start
+would run brew concurrently against the same prefix), a queued auto-restart, or
+a latched `active`. That re-run
 re-covers the unit's start path, not the install: `brew-preinstall` is
 content-addressed, so after a successful run it exits early on the unchanged
 Brewfile hash, and only after a failed run does it redo the work and report the
@@ -225,18 +233,28 @@ real error. Every other suite keeps the runner-created
 `/home/bluefin-test/run`. This lane is not runnable on the QEMU `e2e.yml` path,
 which masks `brew-setup.service`.
 
-`activeDeadlineSeconds` on `run-tests` is **7200** (2h), sized for this lane:
-image pull and Pod readiness (≤600s), systemd start (≤120s), clone plus pip
-install (~300s), `brew-setup.service` (~300s), user manager and GDM/qecore
-session (~360s), one network-bound cask install (~900s), and 15
-Ptyxis/dogtail-driven scenarios at ~180s each (~2700s) — about 88 minutes with
-no node contention. The cask install is budgeted once, not once per restart
-attempt: whichever run does the work — the session's in-flight one that
-`run-behave.sh` waits out (capped at the same 900s) or the suite's explicit
-start — leaves the other exiting early on the unchanged Brewfile hash. Only an
-in-flight run that fails after being waited out pays the 900s twice, and that
-still lands ~17 minutes inside the deadline. Other suites finish far inside it;
+`activeDeadlineSeconds` on `run-tests` is **7200** (2h), sized for this lane.
+The template carries the breakdown as machine-checked `phase:` comment lines —
+image pull and Pod readiness (600s), systemd start (120s), clone plus pip
+install (300s), `brew-setup.service` (300s), user manager and GDM/qecore
+session (360s), one network-bound cask install (900s), and 15
+Ptyxis/dogtail-driven scenarios at ~180s each (2700s) — about 88 minutes with
+no node contention, leaving about 32 minutes of headroom. The cask install is
+budgeted once, not once per restart attempt: whichever run does the work — the
+session's in-flight one that `run-behave.sh` waits out (capped at the same
+900s) or the suite's explicit start — leaves the other exiting early on the
+unchanged Brewfile hash. Two costs are deliberately left to the headroom
+instead of a phase line, and the template records them as `headroom:` lines: a
+second 900s install when an in-flight run fails after being waited out, and the
+`Restart=on-failure` attempts the session can burn before `run-behave.sh` ever
+samples the unit, which `StartLimitBurst=3` within `StartLimitIntervalSec=600`
+bounds and which overlap the earlier phases anyway. A run that pays both still
+lands about 7 minutes inside the deadline. Other suites finish far inside it;
 the deadline is a hang guard, not a budget.
+`tests/unit/test_container_only_qa_workflows.py` parses those comment lines,
+re-derives the totals and the stated minutes, and compares them with
+`activeDeadlineSeconds` and the in-flight wait cap, so the numbers cannot drift
+apart from the prose.
 
 Submit it against a `common` PR build:
 
