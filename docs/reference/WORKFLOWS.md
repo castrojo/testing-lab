@@ -156,6 +156,127 @@ Test runner: `run-service-tests` (see supporting templates below). Uses
 the shared helpers in `tests/service_catalog/shared/` for deployment,
 persistence, reachability, redeploy, and teardown assertions.
 
+### `run-systemd-container-tests`
+
+Runs one desktop BDD suite against a **privileged disposable Pod with systemd
+as PID 1** — not a VM. There is no KubeVirt VMI, no golden disk, no
+containerDisk, and no disk artifact: the runner creates the target Pod from a
+bootc OCI image, waits for `systemctl is-system-running` plus `dbus` and
+`systemd-logind`, runs qecore-headless + Behave inside it, and deletes the Pod
+from a cleanup trap on `EXIT`, `TERM`, and `INT` — so deadline expiry and
+`argo terminate`, which arrive as signals, free the target promptly instead of
+leaving it to owner-reference GC.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `image` | `ghcr.io/projectbluefin/bluefin` | Any bootc OCI image. |
+| `image-tag` | `testing` | Tag for that image, e.g. an `e2e-pr-<n>-<sha>` PR build. |
+| `suite` | `smoke` | One of `smoke`, `common`, `developer`, `software`, `system`, `homebrew`. Validated twice — in the runner and inside the target. |
+| `variant` | `bluefin` | Accepted for parity with the VM pipelines; the container lane does not consume it yet. |
+| `testsuite-repo` | `https://github.com/projectbluefin/testsuite` | Cloned into the target. |
+| `testsuite-branch` | `main` | Override only to validate an unmerged suite; a green run on a feature branch says nothing about `main`. |
+| `behave-tags` | empty | Replaces the default `--tags ~@wip`. A tag that matches nothing is **not** a pass: behave exits 0, but the runner's result summary fails the lane with `no scenarios ran`, naming the suite and the tags. |
+
+#### ChairLift / Homebrew lane
+
+> **Status: statically validated only — never executed against the cluster.**
+> `argo lint`, the unit suite (which now pins this lane's allowlists, deadline
+> and one-install budget, single `RuntimePath` lookup,
+> `/workspace/qa-runtime-dir` contract, socket diagnostics, `brew-preinstall`
+> settling, and signal traps), `bash -n` over every extracted runner/heredoc
+> block, and mocked-`systemctl` runs of the settle block's branches all pass,
+> but no `suite=homebrew` workflow has been submitted yet. Those runs exercise
+> the lane's own branch logic against stubs; nothing here has driven a real
+> systemd, logind, or Homebrew. The live risk is the
+> **GNOME desktop session handoff** inside the container target: full desktop
+> suites are still unproven there, and this lane needs a real session for the
+> Ptyxis-driven Brew/bctl scenarios and the two `@chairlift_ui` scenarios. If
+> `qecore-headless` cannot produce a `gnome-session`, the lane fails at that
+> pre-existing boundary before Behave starts, not in the provisioning added
+> for this suite. Treat the first live run as the experiment that settles it.
+
+`suite=homebrew` is the only suite that provisions Homebrew and a systemd user
+manager in the target — `brew-setup.service` is unmasked and started (the
+`brew` binary, not the unit's exit code, is the gate), then `loginctl
+enable-linger bluefin-test` and `user@1000.service` bring up the user manager
+whose `RuntimePath` supplies `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, and
+`AT_SPI_BUS_ADDRESS` for that run. That directory is validated in the target
+(both `systemd/private` and `bus` must be live sockets) and persisted to
+`/workspace/qa-runtime-dir`; the runner reads that file and passes the value on
+to `run-behave.sh` through `/workspace/qa-suite.env` — logind is never asked
+twice. Immediately before Behave, `run-behave.sh` settles
+`brew-preinstall.service` with that same runtime directory. It reads
+`ActiveState` **and** `SubState` — in a single `systemctl show` so the pair
+cannot straddle a transition — because `activating` means two opposite
+things: `start` is the session's own install still running, which the lane
+waits out for up to 900s (logging progress every 60s) rather than discarding,
+while `auto-restart` (or `auto-restart-queued`) is the `RestartSec` gap holding
+a queued restart job that `reset-failed` does not cancel. `failed`, an
+auto-restart gap, a run that outlasts the wait, and an unreadable state all get
+a `status` dump; the settled `inactive`/`active` states are logged with
+`LoadState`, `ConditionResult` **and** `ConditionTimestamp`, because
+`ConditionResult=no` alone cannot distinguish a start systemd skipped on
+`ConditionUser`/`ConditionPathExists` (populated timestamp) from a unit whose
+conditions were never evaluated at all, including one that is not installed
+(empty timestamp). The lane prints that verdict, so neither case passes for a
+clean slate. The unit is then stopped (cancelling a queued auto-restart and
+clearing a latched `RemainAfterExit=true` success) and `reset-failed`, so
+Behave's explicit start runs the unit instead of returning success from that
+latch. If the stop itself fails, the lane re-reads the unit and names what
+survived — a live install still running (the worst case: the suite's start
+would run brew concurrently against the same prefix), a queued auto-restart, or
+a latched `active`. That re-run
+re-covers the unit's start path, not the install: `brew-preinstall` is
+content-addressed, so after a successful run it exits early on the unchanged
+Brewfile hash, and only after a failed run does it redo the work and report the
+real error. Every other suite keeps the runner-created
+`/home/bluefin-test/run`. This lane is not runnable on the QEMU `e2e.yml` path,
+which masks `brew-setup.service`.
+
+`activeDeadlineSeconds` on `run-tests` is **7200** (2h), sized for this lane.
+The template carries the breakdown as machine-checked `phase:` comment lines —
+image pull and Pod readiness (600s), systemd start (120s), clone plus pip
+install (300s), `brew-setup.service` (300s), user manager and GDM/qecore
+session (360s), one network-bound cask install (900s), and 15
+Ptyxis/dogtail-driven scenarios at ~180s each (2700s) — about 88 minutes with
+no node contention, leaving about 32 minutes of headroom. The cask install is
+budgeted once, not once per restart attempt: whichever run does the work — the
+session's in-flight one that `run-behave.sh` waits out (capped at the same
+900s) or the suite's explicit start — leaves the other exiting early on the
+unchanged Brewfile hash. Two costs are deliberately left to the headroom
+instead of a phase line, and the template records them as `headroom:` lines: a
+second 900s install when an in-flight run fails after being waited out, and the
+`Restart=on-failure` attempts the session can burn before `run-behave.sh` ever
+samples the unit, which `StartLimitBurst=3` within `StartLimitIntervalSec=600`
+bounds and which overlap the earlier phases anyway. A run that pays both still
+lands about 7 minutes inside the deadline. Other suites finish far inside it;
+the deadline is a hang guard, not a budget.
+`tests/unit/test_container_only_qa_workflows.py` parses those comment lines,
+re-derives the totals and the stated minutes, and compares them with
+`activeDeadlineSeconds` and the in-flight wait cap, so the numbers cannot drift
+apart from the prose.
+
+Submit it against a `common` PR build:
+
+```bash
+: "${COMMON_PR:?export COMMON_PR to the common pull request number}"
+IMAGE_TAG="$(gh api \
+  'orgs/projectbluefin/packages/container/common/versions?per_page=50' \
+  --jq '.[].metadata.container.tags[]?' \
+  | grep "^e2e-pr-${COMMON_PR}-" \
+  | head -1)"
+argo submit -n argo \
+  --from workflowtemplate/run-systemd-container-tests \
+  -p image=ghcr.io/projectbluefin/common \
+  -p image-tag="${IMAGE_TAG}" \
+  -p suite=homebrew \
+  -p variant=bluefin \
+  -p testsuite-branch=test/chairlift-homebrew
+```
+
+Drop `-p testsuite-branch` once the suite is on `main`. Lane internals and
+failure modes: [`docs/skills/test-authoring/systemd-container-tests.md`](../skills/test-authoring/systemd-container-tests.md).
+
 ---
 
 ## Supporting templates (called via `templateRef`)

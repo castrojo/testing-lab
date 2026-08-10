@@ -8,7 +8,8 @@ metadata:
       Runs desktop BDD suites against a scheduler-managed, privileged bootc OCI
       Pod with systemd as PID 1. The target Pod is owned by the Workflow and is
       deleted by the runner on every exit; no virtual machine or disk artifact
-      is created.
+      is created. The `homebrew` suite additionally provisions Homebrew and a
+      systemd user manager in the target before qecore starts.
   labels:
     app.kubernetes.io/component: test-runner
     app.kubernetes.io/part-of: bluefin-test-suite
@@ -118,7 +119,37 @@ spec:
             emptyDir: {}
 
   - name: run-tests
-    activeDeadlineSeconds: 3600
+    # 2h, sized for the slowest lane (suite=homebrew) rather than the fastest.
+    # The phases below are machine-checked: the unit suite parses these
+    # `phase:` and `headroom:` lines, sums them, and compares the totals
+    # against activeDeadlineSeconds and against BREW_PREINSTALL_WAIT_SECONDS in
+    # run-behave.sh. Edit the numbers here, not the derived minutes in prose.
+    #   phase: 600 - Pod Ready incl. bootc image pull (the kubectl wait timeout)
+    #   phase: 120 - systemd inside the target reaching a usable state
+    #   phase: 300 - testsuite clone + pip install
+    #   phase: 300 - brew-setup.service unpacking and chowning the Homebrew prefix
+    #   phase: 360 - user manager + GDM/qecore session handoff
+    #   phase: 900 - one network cask install via brew-preinstall.service
+    #   phase: 2700 - 15 Ptyxis/dogtail-driven scenarios at ~180s each
+    # That is ~88min with no node contention, leaving ~32min of headroom. The
+    # cask install is budgeted once, not once per restart attempt:
+    # brew-preinstall is content-addressed, so whichever run does the work —
+    # the session's own in-flight run, which run-behave.sh waits out for at
+    # most BREW_PREINSTALL_WAIT_SECONDS (the same 900s), or the suite's
+    # explicit start — leaves the other exiting early on the unchanged Brewfile
+    # hash. Two real costs are deliberately *not* phases above, because they
+    # are exceptional rather than expected; the headroom absorbs them:
+    #   headroom: 900 - a second cask install, when an in-flight run fails
+    #     after being waited out and the suite's start then redoes the work
+    #   headroom: 600 - Restart=on-failure attempts the session burns before
+    #     run-behave.sh ever samples the unit. Those attempts are already
+    #     running while the lane is in its earlier phases, and
+    #     StartLimitBurst=3 within StartLimitIntervalSec=600 caps them, so the
+    #     worst case is bounded by that interval rather than by the deadline.
+    # Even the case that hits both still lands ~7min inside the deadline. Every
+    # other suite finishes far inside it; the deadline is a hang guard, not a
+    # budget.
+    activeDeadlineSeconds: 7200
     inputs:
       parameters:
       - name: target-pod
@@ -152,14 +183,28 @@ spec:
       source: |
         set -euo pipefail
         case "${SUITE}" in
-          smoke|common|developer|software|system) ;;
+          smoke|common|developer|software|system|homebrew) ;;
           *)
             echo "Unsupported container suite: ${SUITE}" >&2
             exit 2
             ;;
         esac
 
-        trap 'kubectl delete pod "${TARGET_POD}" -n "{{workflow.namespace}}" --ignore-not-found --wait=false' EXIT
+        # activeDeadlineSeconds expiry and `argo terminate` both reach this
+        # runner as a signal, and an untrapped SIGTERM kills bash without ever
+        # running the EXIT trap — the target Pod would then survive until
+        # owner-reference GC, holding this node's 8Gi/4CPU reservation. Trap
+        # TERM and INT as well and exit from the handler so the deadline path
+        # deletes the Pod promptly. Deleting twice is harmless because
+        # --ignore-not-found makes the delete idempotent.
+        cleanup_target() {
+          kubectl delete pod "${TARGET_POD}" -n "{{workflow.namespace}}" \
+            --ignore-not-found --wait=false || true
+        }
+        trap cleanup_target EXIT
+        trap 'cleanup_target; exit 143' TERM
+        trap 'cleanup_target; exit 130' INT
+
         kubectl wait --for=condition=Ready "pod/${TARGET_POD}" \
           -n "{{workflow.namespace}}" --timeout=600s
 
@@ -188,7 +233,7 @@ spec:
           tee /workspace/resolv.conf < /etc/resolv.conf
 
         kubectl exec -i -n "{{workflow.namespace}}" "${TARGET_POD}" -- \
-          env TSREPO="${TSREPO}" TSBRANCH="${TSBRANCH}" bash -s <<'TARGET_SETUP'
+          env TSREPO="${TSREPO}" TSBRANCH="${TSBRANCH}" SUITE="${SUITE}" bash -s <<'TARGET_SETUP'
         set -euo pipefail
         rm -f /etc/resolv.conf
         install -m 0644 /workspace/resolv.conf /etc/resolv.conf
@@ -212,16 +257,106 @@ spec:
         echo "bluefin-test ALL=(ALL) NOPASSWD: ALL" >/etc/sudoers.d/bluefin-test
         chmod 0440 /etc/sudoers.d/bluefin-test
         chown -R 1000:1000 /home/bluefin-test
+
+        if [[ "${SUITE}" == "homebrew" ]]; then
+          report_user_manager_failure() {
+            echo "$1" >&2
+            systemctl status --no-pager --full user@1000.service >&2 || true
+            loginctl show-user bluefin-test >&2 || true
+          }
+
+          # brew-setup.service ships enabled and carries
+          # ConditionPathExists=!/etc/.linuxbrew, so once it has run systemd
+          # *skips* it and `start` still exits 0. Only the binary proves the
+          # prefix was provisioned, so capture the start result instead of
+          # letting `set -e` end the run before that gate can report anything.
+          systemctl unmask --runtime brew-setup.service
+          BREW_SETUP_RC=0
+          systemctl start brew-setup.service || BREW_SETUP_RC=$?
+          if [[ ! -x /var/home/linuxbrew/.linuxbrew/bin/brew ]]; then
+            echo "brew-setup.service left no brew at /var/home/linuxbrew/.linuxbrew/bin/brew (systemctl start exit ${BREW_SETUP_RC})" >&2
+            systemctl status --no-pager --full brew-setup.service >&2 || true
+            journalctl --no-pager --unit brew-setup.service >&2 || true
+            exit 1
+          fi
+          if [[ "${BREW_SETUP_RC}" -ne 0 ]]; then
+            echo "brew-setup.service start exited ${BREW_SETUP_RC} but the prefix is provisioned; continuing on the binary gate" >&2
+            systemctl status --no-pager --full brew-setup.service >&2 || true
+          fi
+
+          # brew-preinstall.service is a *user* unit, so the suite needs a live
+          # user manager. Lingering makes logind create the user object, its
+          # runtime directory, and user@1000.service; the session bus follows
+          # from that manager's dbus.socket (ListenStream=%t/bus). Each step is
+          # captured rather than fatal on its own so the sockets below stay the
+          # authoritative gate and every exit carries diagnostics.
+          LINGER_RC=0
+          loginctl enable-linger bluefin-test || LINGER_RC=$?
+          USER_MANAGER_RC=0
+          systemctl start user@1000.service || USER_MANAGER_RC=$?
+          RUNTIME_DIR=$(loginctl show-user bluefin-test --property=RuntimePath --value 2>/dev/null || true)
+          if [[ -z "${RUNTIME_DIR}" ]]; then
+            report_user_manager_failure "logind assigned no runtime directory to bluefin-test (enable-linger exit ${LINGER_RC}, user@1000.service start exit ${USER_MANAGER_RC})"
+            exit 1
+          fi
+          DBUS_SOCKET_RC=0
+          runuser -u bluefin-test -- env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+            systemctl --user start dbus.socket || DBUS_SOCKET_RC=$?
+          # The two lookups the lane owns must agree: `systemctl --user` reaches
+          # the manager over local transport at ${XDG_RUNTIME_DIR}/systemd/private,
+          # while qecore/dogtail reach the session and a11y bus over the absolute
+          # DBUS_SESSION_BUS_ADDRESS/AT_SPI_BUS_ADDRESS below. Both are derived
+          # from this directory, so assert it carries both sockets before behave.
+          if [[ ! -S "${RUNTIME_DIR}/systemd/private" ]]; then
+            report_user_manager_failure "user@1000.service exposed no control socket at ${RUNTIME_DIR}/systemd/private (start exit ${USER_MANAGER_RC}); systemctl --user cannot reach the manager"
+            exit 1
+          fi
+          if [[ ! -S "${RUNTIME_DIR}/bus" ]]; then
+            report_user_manager_failure "the bluefin-test user manager exposed no session bus at ${RUNTIME_DIR}/bus (dbus.socket start exit ${DBUS_SOCKET_RC}); qecore and dogtail would have no a11y bus"
+            exit 1
+          fi
+
+          # Hand the validated directory to the runner and the suite through the
+          # same durable /workspace contract the suite inputs already use, so
+          # nothing downstream asks logind a second time and acts on an answer
+          # that was never checked against these two sockets.
+          printf '%s\n' "${RUNTIME_DIR}" >/workspace/qa-runtime-dir
+        fi
         TARGET_SETUP
 
         kubectl exec -n "{{workflow.namespace}}" "${TARGET_POD}" -- \
           test -x /usr/libexec/gnome-ponytail-daemon
+
+        # Every suite but homebrew keeps the runner-created
+        # /home/bluefin-test/run. The homebrew lane instead uses the directory
+        # logind assigned to the user manager started above, and derives both
+        # bus addresses from it: `systemctl --user` (which the suite calls to
+        # start brew-preinstall.service) resolves the manager through
+        # XDG_RUNTIME_DIR and ignores the bus variables, while qecore/dogtail
+        # use the bus variables and ignore XDG_RUNTIME_DIR. Moving one without
+        # the other yields an unreachable manager or a dead a11y bus. Read the
+        # directory TARGET_SETUP validated and persisted; do not re-query
+        # logind, whose answer would be unvalidated and could differ.
+        RUNTIME_DIR=/home/bluefin-test/run
+        if [[ "${SUITE}" == "homebrew" ]]; then
+          RUNTIME_DIR=$(kubectl exec -n "{{workflow.namespace}}" "${TARGET_POD}" -- \
+            cat /workspace/qa-runtime-dir 2>/dev/null | tr -d '\r\n' || true)
+          if [[ -z "${RUNTIME_DIR}" ]]; then
+            echo "TARGET_SETUP persisted no user-manager runtime directory at /workspace/qa-runtime-dir" >&2
+            kubectl exec -n "{{workflow.namespace}}" "${TARGET_POD}" -- \
+              loginctl show-user bluefin-test >&2 || true
+            exit 1
+          fi
+          echo "homebrew lane: user manager and session bus rooted at ${RUNTIME_DIR}"
+        fi
+
         kubectl exec -i -n "{{workflow.namespace}}" "${TARGET_POD}" -- \
-          env SUITE="${SUITE}" BEHAVE_TAGS="${BEHAVE_TAGS}" bash -s <<'TARGET_SUITE'
+          env SUITE="${SUITE}" BEHAVE_TAGS="${BEHAVE_TAGS}" RUNTIME_DIR="${RUNTIME_DIR}" bash -s <<'TARGET_SUITE'
         set -euo pipefail
         mkdir -p /workspace/results
         chown 1000:1000 /workspace/results
-        printf 'SUITE=%q\nBEHAVE_TAGS=%q\n' "${SUITE}" "${BEHAVE_TAGS}" \
+        printf 'SUITE=%q\nBEHAVE_TAGS=%q\nRUNTIME_DIR=%q\n' \
+          "${SUITE}" "${BEHAVE_TAGS}" "${RUNTIME_DIR}" \
           >/workspace/qa-suite.env
         cat >/workspace/run-behave.sh <<'RUN_BEHAVE'
         #!/bin/bash
@@ -230,7 +365,7 @@ spec:
         export PYTHONPATH="/workspace/testsuite"
 
         case "${SUITE}" in
-          smoke|common|developer|software|system) ;;
+          smoke|common|developer|software|system|homebrew) ;;
           *)
             echo "Unsupported container suite: ${SUITE}" >&2
             exit 2
@@ -244,6 +379,167 @@ spec:
         TAGS_ARG="--tags ~@wip"
         if [[ -n "${BEHAVE_TAGS}" ]]; then
           TAGS_ARG="${BEHAVE_TAGS}"
+        fi
+
+        if [[ "${SUITE}" == "homebrew" ]]; then
+          # brew-preinstall.service is WantedBy=graphical-session.target with
+          # Type=oneshot, RemainAfterExit=true, Restart=on-failure,
+          # RestartSec=30, and StartLimitBurst=3, so the session qecore just
+          # started may already have finished it, be running it right now, or
+          # be sitting between retries. Settle whichever of those it is before
+          # behave's explicit start, using the runtime directory the lane
+          # validated: it is the manager the suite talks to, and a mismatch
+          # here is the session split rule 8 warns about, so say so out loud.
+          if [[ "${XDG_RUNTIME_DIR:-}" != "${RUNTIME_DIR}" ]]; then
+            echo "warning: session XDG_RUNTIME_DIR='${XDG_RUNTIME_DIR:-}' differs from the lane's '${RUNTIME_DIR}'" >&2
+          fi
+          # The activeDeadlineSeconds budget pays for one network cask install.
+          # Spend it waiting for an in-flight one rather than killing it and
+          # repeating the download; the cap keeps a wedged install bounded.
+          BREW_PREINSTALL_WAIT_SECONDS=900
+          BREW_PREINSTALL_POLL_SECONDS=10
+          BREW_PREINSTALL_PROGRESS_SECONDS=60
+          # One `systemctl show` per sample, setting both variables together.
+          # Two separate reads can straddle a transition and pair an
+          # ActiveState with a SubState the unit never actually held — exactly
+          # the pair this block branches on. `--value` cannot be used for a
+          # multi-property read: systemctl prints properties in its own order,
+          # not the requested one, so read the `key=value` form and parse it.
+          brew_preinstall_sample() {
+            local key value sample
+            BREW_PREINSTALL_STATE=unknown
+            BREW_PREINSTALL_SUBSTATE=unknown
+            sample=$(env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+              systemctl --user show brew-preinstall.service \
+              --property=ActiveState --property=SubState 2>/dev/null || true)
+            while IFS='=' read -r key value; do
+              case "${key}" in
+                ActiveState) BREW_PREINSTALL_STATE="${value:-unknown}" ;;
+                SubState) BREW_PREINSTALL_SUBSTATE="${value:-unknown}" ;;
+              esac
+            done <<< "${sample}"
+          }
+          # ConditionResult=no means two opposite things and only
+          # ConditionTimestamp separates them: an empty timestamp means the
+          # conditions were never evaluated at all (systemd never tried to
+          # start the unit, including the not-found case, where it also reports
+          # ConditionResult=no), while a timestamp means they were evaluated
+          # then and genuinely failed, so the start really was skipped.
+          brew_preinstall_condition_report() {
+            local key value load_state="" result="" stamp="" verdict sample
+            sample=$(env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+              systemctl --user show brew-preinstall.service \
+              --property=LoadState --property=ConditionResult \
+              --property=ConditionTimestamp 2>/dev/null || true)
+            while IFS='=' read -r key value; do
+              case "${key}" in
+                LoadState) load_state="${value}" ;;
+                ConditionResult) result="${value}" ;;
+                ConditionTimestamp) stamp="${value}" ;;
+              esac
+            done <<< "${sample}"
+            if [[ -z "${stamp}" ]]; then
+              verdict="conditions never evaluated, so systemd has not tried to start this unit"
+            elif [[ "${result}" == "no" ]]; then
+              verdict="conditions evaluated and failed, so the start was skipped"
+            else
+              verdict="conditions evaluated and passed"
+            fi
+            printf 'LoadState=%s, ConditionResult=%s, ConditionTimestamp=%s, %s' \
+              "${load_state:-unknown}" "${result:-unknown}" "${stamp:-<empty>}" "${verdict}"
+          }
+          brew_preinstall_status() {
+            env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+              systemctl --user status --no-pager --full brew-preinstall.service >&2 || true
+          }
+          brew_preinstall_sample
+          # ActiveState=activating covers two opposite situations and only
+          # SubState tells them apart. `start` is a healthy run in flight —
+          # the session's own cask install, already paying the network cost
+          # budgeted above — so killing it discards that work and hands the
+          # suite a half-applied prefix. `auto-restart` (`auto-restart-queued`
+          # on systemd >= 254) is the RestartSec gap after a failure, holding
+          # a queued restart job that reset-failed does not cancel and that
+          # would otherwise race the suite's own start. Wait out the first,
+          # cancel the second.
+          if [[ "${BREW_PREINSTALL_STATE}" == "activating" \
+            && "${BREW_PREINSTALL_SUBSTATE}" != auto-restart* ]]; then
+            echo "brew-preinstall.service is activating (${BREW_PREINSTALL_SUBSTATE}); waiting up to ${BREW_PREINSTALL_WAIT_SECONDS}s for the in-flight run instead of killing it" >&2
+            BREW_PREINSTALL_WAITED=0
+            BREW_PREINSTALL_REPORTED=0
+            while [[ "${BREW_PREINSTALL_WAITED}" -lt "${BREW_PREINSTALL_WAIT_SECONDS}" ]]; do
+              sleep "${BREW_PREINSTALL_POLL_SECONDS}"
+              BREW_PREINSTALL_WAITED=$((BREW_PREINSTALL_WAITED + BREW_PREINSTALL_POLL_SECONDS))
+              brew_preinstall_sample
+              if [[ "${BREW_PREINSTALL_STATE}" != "activating" \
+                || "${BREW_PREINSTALL_SUBSTATE}" == auto-restart* ]]; then
+                break
+              fi
+              # Argo's log view is the only window into a lane that can sit
+              # here for a quarter of an hour. Say it is still waiting on a
+              # known state, so a wedged install is visibly different from a
+              # runner that stopped producing output.
+              if [[ $((BREW_PREINSTALL_WAITED - BREW_PREINSTALL_REPORTED)) \
+                -ge "${BREW_PREINSTALL_PROGRESS_SECONDS}" ]]; then
+                BREW_PREINSTALL_REPORTED="${BREW_PREINSTALL_WAITED}"
+                echo "brew-preinstall.service is still activating (${BREW_PREINSTALL_SUBSTATE}) after ${BREW_PREINSTALL_WAITED}s of ${BREW_PREINSTALL_WAIT_SECONDS}s" >&2
+              fi
+            done
+            echo "brew-preinstall.service is ${BREW_PREINSTALL_STATE} (${BREW_PREINSTALL_SUBSTATE}) after waiting ${BREW_PREINSTALL_WAITED}s" >&2
+          fi
+          if [[ "${BREW_PREINSTALL_STATE}" == "inactive" \
+            || "${BREW_PREINSTALL_STATE}" == "active" ]]; then
+            # The two settled states, but `inactive` is also what a unit that
+            # never ran looks like: brew-preinstall.service carries
+            # ConditionUser=!@system and ConditionPathExists=<brew binary>, and
+            # a condition-skipped start exits 0, as does a start of a unit that
+            # is not installed at all. Report LoadState plus the condition
+            # verdict so a missing unit, a skipped start, and a clean slate are
+            # three distinguishable outcomes instead of one silent success.
+            echo "brew-preinstall.service is ${BREW_PREINSTALL_STATE} (${BREW_PREINSTALL_SUBSTATE}, $(brew_preinstall_condition_report)) before behave started it" >&2
+          else
+            # failed, the auto-restart gap, or an activating run that outlasted
+            # the wait above: dump the real failure before the stop clears it.
+            echo "brew-preinstall.service was ${BREW_PREINSTALL_STATE} (${BREW_PREINSTALL_SUBSTATE}) before behave started it:" >&2
+            brew_preinstall_status
+          fi
+          # Stop before reset-failed: stopping cancels a queued auto-restart
+          # job (reset-failed does not), and with RemainAfterExit=true it also
+          # clears a latched `active` so behave's start runs the unit instead
+          # of returning success from that latch. What that re-run re-covers is
+          # the unit's start path, not the install: brew-preinstall is
+          # content-addressed, so after a successful run it exits early on the
+          # unchanged Brewfile hash. After a failed run nothing was recorded,
+          # so the re-run does the real work and reports the real error.
+          BREW_PREINSTALL_STOP_RC=0
+          env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+            systemctl --user stop brew-preinstall.service || BREW_PREINSTALL_STOP_RC=$?
+          if [[ "${BREW_PREINSTALL_STOP_RC}" -ne 0 ]]; then
+            # A failed stop leaves the unit in whatever state it was really in,
+            # which decides how bad this is — so look again rather than
+            # guessing from the pre-stop sample.
+            BREW_PREINSTALL_STOPPED_FROM="${BREW_PREINSTALL_STATE}/${BREW_PREINSTALL_SUBSTATE}"
+            brew_preinstall_sample
+            echo "warning: stopping brew-preinstall.service before behave exited ${BREW_PREINSTALL_STOP_RC} (state was ${BREW_PREINSTALL_STOPPED_FROM}, now ${BREW_PREINSTALL_STATE}/${BREW_PREINSTALL_SUBSTATE})" >&2
+            if [[ "${BREW_PREINSTALL_STATE}" == "activating" \
+              && "${BREW_PREINSTALL_SUBSTATE}" != auto-restart* ]]; then
+              echo "warning: a live brew-preinstall.service install is still running; the suite's explicit start will run brew concurrently against the same Homebrew prefix" >&2
+            elif [[ "${BREW_PREINSTALL_SUBSTATE}" == auto-restart* ]]; then
+              echo "warning: brew-preinstall.service still holds a queued auto-restart that may race the suite's explicit start" >&2
+            elif [[ "${BREW_PREINSTALL_STATE}" == "active" ]]; then
+              echo "warning: brew-preinstall.service is still active, so RemainAfterExit keeps it latched and the suite's explicit start may be a no-op" >&2
+            fi
+            brew_preinstall_status
+          fi
+          # Now clear the failure state and the start-limit counter. Never
+          # after the suite's start: that would hide real failures.
+          BREW_PREINSTALL_RESET_RC=0
+          env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+            systemctl --user reset-failed brew-preinstall.service || BREW_PREINSTALL_RESET_RC=$?
+          if [[ "${BREW_PREINSTALL_RESET_RC}" -ne 0 ]]; then
+            echo "warning: reset-failed brew-preinstall.service exited ${BREW_PREINSTALL_RESET_RC} (last observed state ${BREW_PREINSTALL_STATE}/${BREW_PREINSTALL_SUBSTATE}); the suite may report a stale start limit instead of the real error" >&2
+            brew_preinstall_status
+          fi
         fi
 
         BEHAVE_RC=0
@@ -264,9 +560,9 @@ spec:
             SUITE="${SUITE}" \
             BEHAVE_TAGS="${BEHAVE_TAGS}" \
             HOME=/home/bluefin-test \
-            XDG_RUNTIME_DIR=/home/bluefin-test/run \
-            DBUS_SESSION_BUS_ADDRESS=unix:path=/home/bluefin-test/run/bus \
-            AT_SPI_BUS_ADDRESS=unix:path=/home/bluefin-test/run/bus \
+            XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=${RUNTIME_DIR}/bus" \
+            AT_SPI_BUS_ADDRESS="unix:path=${RUNTIME_DIR}/bus" \
             XDG_SESSION_TYPE=wayland \
             XDG_SESSION_DESKTOP=gnome \
             LIBGL_ALWAYS_SOFTWARE=1 \
@@ -282,8 +578,11 @@ spec:
           cat /workspace/results.json > /tmp/results/results.json
 
         BEHAVE_RC=$(cat /tmp/results/behave-rc.txt)
-        python3 - <<'PY'
+        SUMMARY_RC=0
+        python3 - <<'PY' || SUMMARY_RC=$?
         import json
+        import os
+        import sys
 
         with open("/tmp/results/results.json", encoding="utf-8") as result_file:
             data = json.load(result_file)
@@ -293,9 +592,30 @@ spec:
         )
         total = sum(len(feature.get("elements", [])) for feature in data)
         print(f"{total - failed}/{total} scenarios passed")
+
+        # behave exits 0 when --tags matches nothing, so a typo in behave-tags
+        # ("@chairlfit", "@chairlift_casks") produced "0/0 scenarios passed"
+        # and a green lane that validated nothing. Targeted tag runs are
+        # exactly what this lane is for, so refuse the empty result. Every
+        # other precondition in this runner fails closed; this was the last
+        # place it could still report a false green.
+        if total == 0:
+            sys.exit(
+                "no scenarios ran (suite="
+                f"{os.environ.get('SUITE', '')!r}, behave-tags="
+                f"{os.environ.get('BEHAVE_TAGS', '')!r}); behave exits 0 when "
+                "--tags matches nothing, so this is not a passing run"
+            )
         PY
 
+        # Ranked so a real failure still reports its own cause: qecore's
+        # session errors first, then behave's own verdict, and only then the
+        # empty-run refusal, which is the only one that can fire when both of
+        # those are 0.
         if [[ "${QECORE_RC}" -ne 0 ]]; then
           exit "${QECORE_RC}"
         fi
-        exit "${BEHAVE_RC}"
+        if [[ "${BEHAVE_RC}" -ne 0 ]]; then
+          exit "${BEHAVE_RC}"
+        fi
+        exit "${SUMMARY_RC}"

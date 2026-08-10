@@ -677,11 +677,63 @@ never directly under Argo emissary PID 1.
 - Do not overwrite qecore's desktop session environment with fake `/home`
   runtime-bus values; the real login session D-Bus socket and bus address must
   remain intact.
+- Validate `suite` in **both** guards — the runner's `case` and the second one
+  inside the heredoc that writes `/workspace/run-behave.sh`. Passing only the
+  first boots the target and then exits 2 from inside it.
+- Keep suite-specific provisioning behind `if [[ "${SUITE}" == "<suite>" ]]` in
+  `TARGET_SETUP` (which must be given `SUITE` explicitly — the heredoc is
+  quoted). `suite=homebrew` uses this to start `brew-setup.service` and, via
+  `loginctl enable-linger` + `user@1000.service`, a real systemd user manager.
+- When a suite needs `systemctl --user`, derive `XDG_RUNTIME_DIR`,
+  `DBUS_SESSION_BUS_ADDRESS`, and `AT_SPI_BUS_ADDRESS` from one directory —
+  `loginctl show-user <user> --property=RuntimePath`. The manager is reached at
+  `${XDG_RUNTIME_DIR}/systemd/private` and ignores the bus variables; qecore and
+  dogtail do the reverse. Pinning `/run/user/1000` for one and leaving the other
+  under `/home` breaks whichever was left behind.
 - Pass test-suite inputs through a durable target file, not environment
   variables: qecore does not forward arbitrary env vars into the desktop
-  session.
-- Delete the owner-referenced target in the runner's EXIT trap as a prompt
-  cleanup fallback.
+  session. Derived runtime facts belong there too: validate the user manager's
+  `RuntimePath` once in `TARGET_SETUP`, write it to `/workspace/qa-runtime-dir`,
+  and have the runner and `run-behave.sh` read that file. Re-querying logind
+  from the runner returns an answer nothing has checked.
+- Under `set -euo pipefail`, capture provisioning exit codes (`|| RC=$?`,
+  `$(cmd || true)`) so the binary/socket check stays authoritative and every
+  failure exits with a named message plus `systemctl status` and `loginctl
+  show-user` output instead of a silent abort.
+- Size `activeDeadlineSeconds` for the slowest suite the template can run, and
+  write the breakdown as machine-parseable comment lines (`phase: <seconds> -
+  …`, `headroom: <seconds> - …`) that a unit test sums and checks against the
+  deadline. Prose alone rots: a test asserting on sentences pins the line
+  wrapping, and one that re-adds the same literals on both sides of an `==`
+  asserts nothing. Budget idempotent or content-addressed work **once**, not
+  once per restart attempt, cap any in-band wait the runner performs at that
+  same number so the wait cannot quietly become the deadline, and name the
+  costs you are leaving to the headroom instead of pretending they do not
+  exist.
+- Settle a session-started unit before a suite starts it explicitly, and read
+  `ActiveState` *and* `SubState` in **one** `systemctl show`: `activating
+  (start)` is a healthy run in flight to be waited out (bounded, with periodic
+  progress in the log), while `activating (auto-restart)` holds a queued
+  restart that `reset-failed` does not cancel and must be `stop`ped. Two
+  separate reads can pair states the unit never held, and `--value` on a
+  multi-property read answers in systemd's order rather than the requested one,
+  so parse the `key=value` form. Log `LoadState`, `ConditionResult` *and*
+  `ConditionTimestamp` for settled `inactive`/`active` states — an empty
+  timestamp means the conditions were never evaluated (including a not-found
+  unit), a populated one with `ConditionResult=no` means a genuinely skipped
+  start — so neither can pass for a clean slate. If the `stop` fails, re-read
+  the state before warning: a still-running install is a different and worse
+  hazard than a queued restart, because the suite's start then runs
+  concurrently with it.
+- Delete the owner-referenced target from a `cleanup_target` function trapped on
+  `EXIT`, `TERM`, **and** `INT` — deadline expiry and `argo terminate` arrive as
+  signals, and an untrapped SIGTERM kills bash before the EXIT trap runs, so the
+  target Pod lingers until owner-reference GC. Exit from the TERM/INT handler
+  (`trap 'cleanup_target; exit 143' TERM`) so the shell does not resume;
+  `kubectl delete --ignore-not-found` makes the double delete harmless.
+- Shell that only ever runs inside the target — the runner `source` and every
+  heredoc it writes — is unreachable by CI until the lane runs, so extract each
+  block in a unit test, normalise the `{{…}}` substitutions, and `bash -n` it.
 
 This runner validates the OCI userspace, systemd/logind startup, resolver
 repair, qecore, and GDM bootstrap. Tests requiring a bootloader, kernel,
