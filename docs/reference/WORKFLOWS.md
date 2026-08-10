@@ -180,11 +180,14 @@ leaving it to owner-reference GC.
 #### ChairLift / Homebrew lane
 
 > **Status: statically validated only — never executed against the cluster.**
-> `argo lint`, the unit suite (which now pins this lane's allowlists, deadline,
-> single `RuntimePath` lookup, `/workspace/qa-runtime-dir` contract, socket
-> diagnostics, `brew-preinstall` settling, and signal traps), `bash -n`, and
-> mocked branch runs all pass, but no `suite=homebrew` workflow has been
-> submitted yet. The live risk is the
+> `argo lint`, the unit suite (which now pins this lane's allowlists, deadline
+> and one-install budget, single `RuntimePath` lookup,
+> `/workspace/qa-runtime-dir` contract, socket diagnostics, `brew-preinstall`
+> settling, and signal traps), `bash -n` over every extracted runner/heredoc
+> block, and mocked-`systemctl` runs of the settle block's branches all pass,
+> but no `suite=homebrew` workflow has been submitted yet. Those runs exercise
+> the lane's own branch logic against stubs; nothing here has driven a real
+> systemd, logind, or Homebrew. The live risk is the
 > **GNOME desktop session handoff** inside the container target: full desktop
 > suites are still unproven there, and this lane needs a real session for the
 > Ptyxis-driven Brew/bctl scenarios and the two `@chairlift_ui` scenarios. If
@@ -202,23 +205,38 @@ whose `RuntimePath` supplies `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, and
 `/workspace/qa-runtime-dir`; the runner reads that file and passes the value on
 to `run-behave.sh` through `/workspace/qa-suite.env` — logind is never asked
 twice. Immediately before Behave, `run-behave.sh` settles
-`brew-preinstall.service` with that same runtime directory: it reads
-`ActiveState`, dumps `status` for anything that is not a settled
-`inactive`/`active`, stops the unit (cancelling a queued `Restart=on-failure`
-auto-restart and any latched `RemainAfterExit=true` success), then clears the
-start-limit counter with `reset-failed`, so the suite's own explicit start
-reports the unit's real error. Every other suite keeps the runner-created
+`brew-preinstall.service` with that same runtime directory. It reads
+`ActiveState` **and** `SubState`, because `activating` means two opposite
+things: `start` is the session's own install still running, which the lane
+waits out for up to 900s rather than discarding, while `auto-restart` (or
+`auto-restart-queued`) is the `RestartSec` gap holding a queued restart job
+that `reset-failed` does not cancel. `failed`, an auto-restart gap, and a run
+that outlasts the wait get a `status` dump; the settled `inactive`/`active`
+states are logged with `LoadState` and `ConditionResult`, so a unit that is
+missing or that systemd skipped on `ConditionUser`/`ConditionPathExists` is
+visible instead of passing for a clean slate. The unit is then stopped
+(cancelling a queued auto-restart and clearing a latched
+`RemainAfterExit=true` success) and `reset-failed`, so Behave's explicit start
+runs the unit instead of returning success from that latch. That re-run
+re-covers the unit's start path, not the install: `brew-preinstall` is
+content-addressed, so after a successful run it exits early on the unchanged
+Brewfile hash, and only after a failed run does it redo the work and report the
+real error. Every other suite keeps the runner-created
 `/home/bluefin-test/run`. This lane is not runnable on the QEMU `e2e.yml` path,
 which masks `brew-setup.service`.
 
 `activeDeadlineSeconds` on `run-tests` is **7200** (2h), sized for this lane:
 image pull and Pod readiness (≤600s), systemd start (≤120s), clone plus pip
 install (~300s), `brew-setup.service` (~300s), user manager and GDM/qecore
-session (~360s), the network-bound cask install driven by
-`brew-preinstall.service` (~900s, it retries on failure), and 15
-Ptyxis/dogtail-driven scenarios at ~180s each (~2700s) — about 89 minutes with
-no node contention. Other suites finish far inside it; the deadline is a hang
-guard, not a budget.
+session (~360s), one network-bound cask install (~900s), and 15
+Ptyxis/dogtail-driven scenarios at ~180s each (~2700s) — about 88 minutes with
+no node contention. The cask install is budgeted once, not once per restart
+attempt: whichever run does the work — the session's in-flight one that
+`run-behave.sh` waits out (capped at the same 900s) or the suite's explicit
+start — leaves the other exiting early on the unchanged Brewfile hash. Only an
+in-flight run that fails after being waited out pays the 900s twice, and that
+still lands ~17 minutes inside the deadline. Other suites finish far inside it;
+the deadline is a hang guard, not a budget.
 
 Submit it against a `common` PR build:
 

@@ -21,9 +21,12 @@ The `homebrew` lane below is the one deliberate, targeted exception: it needs a
 real session (Ptyxis typing, two `@chairlift_ui` scenarios), so it is a probe of
 that unproven boundary rather than a claim that the boundary is solved. Its
 provisioning — Homebrew, the systemd user manager, the reconciled runtime
-directory — is validated statically and by mocked branch runs, and it has never
-been executed against the cluster. Read a session-handoff failure there as the
-known desktop limitation, not as a regression in that provisioning.
+directory — is validated statically (`argo lint`, unit assertions, `bash -n`
+over every extracted runner/heredoc block) and by running the
+`brew-preinstall` settle block against a stub `systemctl`. That covers the
+lane's own branch logic and nothing else: no real systemd, logind, Homebrew, or
+cluster has executed it. Read a session-handoff failure there as the known
+desktop limitation, not as a regression in that provisioning.
 
 #### Core Containerized Testing Rules:
 1. **Native systemd boundary:** Create the target with an Argo `resource`
@@ -78,21 +81,34 @@ known desktop limitation, not as a regression in that provisioning.
    friendly diagnostic instead of killing the shell.
 10. **Settle a session unit's state before a suite starts it:** units pulled in
     by `graphical-session.target` with `Restart=on-failure` and
-    `StartLimitBurst` may already have run by the time Behave starts them
-    explicitly. `failed` is only half of it: between attempts the unit sits in
-    `activating (auto-restart)`, where `is-failed` reports nothing and
-    `reset-failed` clears nothing, and the queued restart then races the
-    suite's own start; with `RemainAfterExit=true` a *successful* prior run
-    leaves it `active`, so the suite's start is a no-op that proves nothing.
-    In `run-behave.sh`, immediately before behave and with the lane's
-    reconciled `XDG_RUNTIME_DIR` (not a guess): read `ActiveState` via
-    `systemctl --user show <unit> --property=ActiveState --value`, dump
-    `systemctl --user status` for anything that is not a settled
-    `inactive`/`active`, `stop` the unit — which cancels a queued auto-restart
-    and clears a stale `active` — and only then `reset-failed` to clear the
-    start-limit counter. Capture both exit codes and warn by name; `|| true`
-    throws away the reason the next failure will be blamed on. Never reset
-    *after* the suite's start: that would hide real failures.
+    `StartLimitBurst` may already have run — or still be running — by the time
+    Behave starts them explicitly. `ActiveState` alone cannot tell those apart,
+    so read `SubState` too, immediately before behave and with the lane's
+    reconciled `XDG_RUNTIME_DIR` (not a guess):
+    - `activating` + `start`: a **healthy run in flight**. Wait for it, capped
+      (`BREW_PREINSTALL_WAIT_SECONDS`), polling `ActiveState`/`SubState`.
+      Killing it discards work the deadline already budgets for and hands the
+      suite a half-applied result.
+    - `activating` + `auto-restart` (`auto-restart-queued` on systemd ≥ 254):
+      the `RestartSec` gap after a failure. `is-failed` reports nothing and
+      `reset-failed` cancels nothing here, and the queued restart would race
+      the suite's own start — do not wait it out, diagnose and clear it.
+    - `failed`, or a run that outlasts the wait: dump `systemctl --user
+      status` before anything clears it.
+    - `inactive`/`active` are the settled states, but `inactive` is also what
+      a unit that is not installed, or that systemd skipped on a failed
+      `Condition*`, looks like — and starting either exits 0. Log `LoadState`
+      and `ConditionResult` so that case is visible instead of passing for a
+      clean slate.
+
+    Then `stop` the unit — which cancels a queued auto-restart and clears a
+    latched `RemainAfterExit=true` success — and only then `reset-failed` to
+    clear the start-limit counter. Capture both exit codes and warn by name;
+    `|| true` throws away the reason the next failure will be blamed on. Never
+    reset *after* the suite's start: that would hide real failures. Be honest
+    about what the suite's start then re-covers: it re-runs the unit, but if
+    the unit is idempotent or content-addressed that re-run may legitimately do
+    nothing, so it proves the start path, not the work.
 11. **Trap TERM and INT, not just EXIT:** `activeDeadlineSeconds` expiry and
     `argo terminate` reach the runner as signals, and an untrapped SIGTERM
     kills bash without running the EXIT trap — the privileged target Pod then
@@ -114,18 +130,38 @@ runner adds both in `TARGET_SETUP`, guarded on the suite:
 ```bash
 systemctl unmask --runtime brew-setup.service
 BREW_SETUP_RC=0
-systemctl start brew-setup.service || BREW_SETUP_RC=$?  # never fatal on its own
-test -x /var/home/linuxbrew/.linuxbrew/bin/brew          # the real gate
+systemctl start brew-setup.service || BREW_SETUP_RC=$?   # never fatal on its own
+if [[ ! -x /var/home/linuxbrew/.linuxbrew/bin/brew ]]; then          # the real gate
+  echo "brew-setup.service left no brew at … (start exit ${BREW_SETUP_RC})" >&2
+  systemctl status --no-pager --full brew-setup.service >&2 || true
+  exit 1
+fi
 
-loginctl enable-linger bluefin-test               # creates the user object …
-systemctl start user@1000.service                 # … and its manager
+LINGER_RC=0
+loginctl enable-linger bluefin-test || LINGER_RC=$?      # creates the user object …
+USER_MANAGER_RC=0
+systemctl start user@1000.service || USER_MANAGER_RC=$?  # … and its manager
 RUNTIME_DIR=$(loginctl show-user bluefin-test --property=RuntimePath --value 2>/dev/null || true)
+if [[ -z "${RUNTIME_DIR}" ]]; then
+  report_user_manager_failure "logind assigned no runtime directory to bluefin-test \
+(enable-linger exit ${LINGER_RC}, user@1000.service start exit ${USER_MANAGER_RC})"
+  exit 1
+fi
+DBUS_SOCKET_RC=0
 runuser -u bluefin-test -- env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
-  systemctl --user start dbus.socket
-# each socket check is a guard, not a bare `test`, so it can name the failure:
-#   if [[ ! -S "${RUNTIME_DIR}/systemd/private" ]]; then …; exit 1; fi
-[[ -S "${RUNTIME_DIR}/systemd/private" ]]         # manager reachable
-[[ -S "${RUNTIME_DIR}/bus" ]]                     # session bus live
+  systemctl --user start dbus.socket || DBUS_SOCKET_RC=$?
+# Both sockets are named guards, never a bare `[[ -S … ]]`: under `set -e` a
+# bare check aborts the script with no line saying which socket was missing.
+if [[ ! -S "${RUNTIME_DIR}/systemd/private" ]]; then                 # manager reachable
+  report_user_manager_failure "user@1000.service exposed no control socket at \
+${RUNTIME_DIR}/systemd/private (start exit ${USER_MANAGER_RC})"
+  exit 1
+fi
+if [[ ! -S "${RUNTIME_DIR}/bus" ]]; then                             # session bus live
+  report_user_manager_failure "the bluefin-test user manager exposed no session bus at \
+${RUNTIME_DIR}/bus (dbus.socket start exit ${DBUS_SOCKET_RC})"
+  exit 1
+fi
 printf '%s\n' "${RUNTIME_DIR}" >/workspace/qa-runtime-dir
 ```
 
@@ -148,13 +184,23 @@ triple unchanged.
 
 `run-behave.sh` also settles `brew-preinstall.service` immediately before
 Behave's explicit start, with the same reconciled `XDG_RUNTIME_DIR` (rule 10):
-read `ActiveState`, dump `status` for anything that is not a settled
-`inactive`/`active`, `stop` — cancelling a queued auto-restart and any latched
-`RemainAfterExit=true` success — then `reset-failed`, warning by name if either
-step fails. The runner deletes the target Pod from a `cleanup_target` function
-trapped on `EXIT`, `TERM`, and `INT` (rule 11). The wall-clock budget for this
-lane is documented on `activeDeadlineSeconds` (7200s) in the template and in
-[`docs/reference/WORKFLOWS.md`](../../reference/WORKFLOWS.md).
+read `ActiveState` *and* `SubState`, wait out an in-flight `activating (start)`
+run for up to `BREW_PREINSTALL_WAIT_SECONDS` (900s, polled every 10s), dump
+`status` for `failed`, the `auto-restart` gap, or a run that outlasts that
+wait, log `LoadState`/`ConditionResult` for a settled `inactive`/`active`, then
+`stop` — cancelling a queued auto-restart and any latched `RemainAfterExit=true`
+success — and `reset-failed`, warning by name if either step fails. Behave's
+start then executes the unit rather than returning from the latch, but because
+`brew-preinstall` is content-addressed that re-run is a fast no-op after a
+successful install (unchanged Brewfile hash); it re-covers the unit's start
+path, not the install. After a *failed* run nothing was recorded, so the re-run
+does the real work and reports the real error. The runner deletes the target
+Pod from a `cleanup_target` function trapped on `EXIT`, `TERM`, and `INT`
+(rule 11). The wall-clock budget for this lane is documented on
+`activeDeadlineSeconds` (7200s) in the template and in
+[`docs/reference/WORKFLOWS.md`](../../reference/WORKFLOWS.md); it pays for the
+network cask install once, and the in-flight wait cap is deliberately that same
+900s.
 
 The suite itself verifies this contract in `before_all` and fails the run — it
 never skips. See `projectbluefin/testsuite`'s `tests/homebrew/README.md`.
@@ -198,17 +244,31 @@ Submission contract: [`docs/reference/WORKFLOWS.md`](../../reference/WORKFLOWS.m
   without it there is no user manager and no `/run/user/<uid>` at all.
 - `brew-preinstall.service` is `Type=oneshot` with `RemainAfterExit=true`,
   `WantedBy=graphical-session.target`, `Restart=on-failure`, `RestartSec=30`,
-  `StartLimitIntervalSec=600`, and `StartLimitBurst=3`. The session qecore
-  starts pulls it in on its own, so by the time the suite starts it explicitly
-  it may be `failed` (suite reports the start-limit, not the cause),
-  `activating (auto-restart)` during the 30s `RestartSec` gap (a queued restart
-  job that `reset-failed` does not cancel and that then races the suite's
-  start), or `active` from a successful run that `RemainAfterExit` keeps
-  latched (the suite's start becomes a no-op). Read `ActiveState`, stop, then
-  `reset-failed` — see rule 10.
+  `StartLimitIntervalSec=600`, `StartLimitBurst=3`, `ConditionUser=!@system`,
+  and `ConditionPathExists=/var/home/linuxbrew/.linuxbrew/bin/brew`. The
+  session qecore starts pulls it in on its own, so by the time the suite starts
+  it explicitly it may be `failed` (suite reports the start-limit, not the
+  cause), `activating (auto-restart)` during the 30s `RestartSec` gap (a queued
+  restart job that `reset-failed` does not cancel and that then races the
+  suite's start), `activating (start)` with the install still running, or
+  `active` from a successful run that `RemainAfterExit` keeps latched (the
+  suite's start becomes a no-op). `inactive` is ambiguous too: a skipped
+  `Condition*` or an uninstalled unit looks identical to "never ran", and both
+  start with exit 0. Read `ActiveState` *and* `SubState`, wait out an in-flight
+  run, stop the rest, then `reset-failed` — see rule 10.
+- `/usr/libexec/brew-preinstall` is **content-addressed**: it hashes
+  `/usr/share/ublue-os/homebrew/preinstall.d/*.Brewfile` and compares that with
+  `~/.local/share/ublue-os/brew-preinstall-state.json` before touching brew, so
+  a second run after a successful one exits immediately on the unchanged hash.
+  Restarting the unit therefore costs one network cask install per *lane*, not
+  per start — which is why the wait cap and the deadline budget both spend 900s
+  on it exactly once, and why a post-stop re-run proves the unit starts, not
+  that the install happened.
 - Wall clock: `run-tests` carries `activeDeadlineSeconds: 7200`. The homebrew
-  lane's own budget (pull + boot + pip + brew prefix + session + network cask
-  install + 15 Ptyxis/dogtail scenarios) is ~89 minutes with no contention;
-  every other suite finishes far inside that, and the deadline is a hang guard
-  rather than an expectation.
+  lane's own budget (pull + boot + pip + brew prefix + session + one network
+  cask install + 15 Ptyxis/dogtail scenarios) is ~88 minutes with no
+  contention; the only path that pays for the install twice is an in-flight run
+  that fails after being waited out, which still lands ~17 minutes inside the
+  deadline. Every other suite finishes far inside that, and the deadline is a
+  hang guard rather than an expectation.
 

@@ -701,13 +701,25 @@ never directly under Argo emissary PID 1.
   failure exits with a named message plus `systemctl status` and `loginctl
   show-user` output instead of a silent abort.
 - Size `activeDeadlineSeconds` for the slowest suite the template can run, and
-  say in a comment which phases the number covers.
+  say in a comment which phases the number covers. Budget idempotent or
+  content-addressed work **once**, not once per restart attempt, and cap any
+  in-band wait the runner performs at that same number so the wait cannot
+  quietly become the deadline.
+- Settle a session-started unit before a suite starts it explicitly, and read
+  `ActiveState` *and* `SubState`: `activating (start)` is a healthy run in
+  flight to be waited out (bounded), while `activating (auto-restart)` holds a
+  queued restart that `reset-failed` does not cancel and must be `stop`ped.
+  Log `LoadState`/`ConditionResult` for settled `inactive`/`active` states so a
+  missing or `Condition*`-skipped unit cannot pass for a clean slate.
 - Delete the owner-referenced target from a `cleanup_target` function trapped on
   `EXIT`, `TERM`, **and** `INT` — deadline expiry and `argo terminate` arrive as
   signals, and an untrapped SIGTERM kills bash before the EXIT trap runs, so the
   target Pod lingers until owner-reference GC. Exit from the TERM/INT handler
   (`trap 'cleanup_target; exit 143' TERM`) so the shell does not resume;
   `kubectl delete --ignore-not-found` makes the double delete harmless.
+- Shell that only ever runs inside the target — the runner `source` and every
+  heredoc it writes — is unreachable by CI until the lane runs, so extract each
+  block in a unit test, normalise the `{{…}}` substitutions, and `bash -n` it.
 
 This runner validates the OCI userspace, systemd/logind startup, resolver
 repair, qecore, and GDM bootstrap. Tests requiring a bootloader, kernel,

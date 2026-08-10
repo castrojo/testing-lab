@@ -123,11 +123,17 @@ spec:
     # Pod Ready incl. bootc image pull <=600s (the kubectl wait timeout),
     # systemd reaching a usable state <=120s, clone + pip install ~300s,
     # brew-setup.service unpacking and chowning the Homebrew prefix ~300s,
-    # user manager + GDM/qecore session ~360s, brew-preinstall.service pulling
-    # casks over the network with Restart=on-failure/StartLimitBurst=3 ~900s,
-    # and 15 Ptyxis/dogtail-driven scenarios at ~180s each ~2700s => ~89min
-    # before any node contention. Every other suite finishes far inside this;
-    # the deadline is a hang guard, not a budget.
+    # user manager + GDM/qecore session ~360s, one network cask install ~900s,
+    # and 15 Ptyxis/dogtail-driven scenarios at ~180s each ~2700s => ~88min
+    # before any node contention. The cask install is budgeted once, not once
+    # per restart attempt: brew-preinstall is content-addressed, so whichever
+    # run does the work — the session's own in-flight run, which run-behave.sh
+    # waits out for at most BREW_PREINSTALL_WAIT_SECONDS (the same 900s),
+    # or the suite's explicit start — leaves the other exiting early on the
+    # unchanged Brewfile hash. The one path that pays the 900s twice is an
+    # in-flight run that fails after being waited out and is then redone by
+    # the suite; that still lands ~17min inside this deadline. Every other
+    # suite finishes far inside it; the deadline is a hang guard, not a budget.
     activeDeadlineSeconds: 7200
     inputs:
       parameters:
@@ -364,41 +370,89 @@ spec:
           # brew-preinstall.service is WantedBy=graphical-session.target with
           # Type=oneshot, RemainAfterExit=true, Restart=on-failure,
           # RestartSec=30, and StartLimitBurst=3, so the session qecore just
-          # started may already have run it. Report whatever state it is in
-          # first — the real failure must not be swallowed — then put the unit
-          # back to a clean inactive state so the suite's own explicit start
-          # reports the unit's actual error. Use the runtime directory the lane
-          # validated: it is the manager the suite talks to, and a mismatch here
-          # is the session split rule 8 warns about, so say so out loud.
+          # started may already have finished it, be running it right now, or
+          # be sitting between retries. Settle whichever of those it is before
+          # behave's explicit start, using the runtime directory the lane
+          # validated: it is the manager the suite talks to, and a mismatch
+          # here is the session split rule 8 warns about, so say so out loud.
           if [[ "${XDG_RUNTIME_DIR:-}" != "${RUNTIME_DIR}" ]]; then
             echo "warning: session XDG_RUNTIME_DIR='${XDG_RUNTIME_DIR:-}' differs from the lane's '${RUNTIME_DIR}'" >&2
           fi
-          BREW_PREINSTALL_STATE=$(env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
-            systemctl --user show brew-preinstall.service \
-            --property=ActiveState --value 2>/dev/null || true)
-          BREW_PREINSTALL_STATE=${BREW_PREINSTALL_STATE:-unknown}
-          # `failed` is only half the race: between attempts Restart=on-failure
-          # parks the unit in `activating (auto-restart)`, where it is neither
-          # failed nor idle, so is-failed says nothing and reset-failed clears
-          # nothing. Anything that is not a settled inactive/active is worth a
-          # status dump before it is cleared away.
-          if [[ "${BREW_PREINSTALL_STATE}" != "inactive" \
-            && "${BREW_PREINSTALL_STATE}" != "active" ]]; then
-            echo "brew-preinstall.service was ${BREW_PREINSTALL_STATE} before behave started it:" >&2
+          # The activeDeadlineSeconds budget pays for one network cask install.
+          # Spend it waiting for an in-flight one rather than killing it and
+          # repeating the download; the cap keeps a wedged install bounded.
+          BREW_PREINSTALL_WAIT_SECONDS=900
+          BREW_PREINSTALL_POLL_SECONDS=10
+          brew_preinstall_property() {
+            env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
+              systemctl --user show brew-preinstall.service \
+              --property="$1" --value 2>/dev/null || true
+          }
+          brew_preinstall_status() {
             env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
               systemctl --user status --no-pager --full brew-preinstall.service >&2 || true
+          }
+          BREW_PREINSTALL_STATE=$(brew_preinstall_property ActiveState)
+          BREW_PREINSTALL_STATE=${BREW_PREINSTALL_STATE:-unknown}
+          BREW_PREINSTALL_SUBSTATE=$(brew_preinstall_property SubState)
+          BREW_PREINSTALL_SUBSTATE=${BREW_PREINSTALL_SUBSTATE:-unknown}
+          # ActiveState=activating covers two opposite situations and only
+          # SubState tells them apart. `start` is a healthy run in flight —
+          # the session's own cask install, already paying the network cost
+          # budgeted above — so killing it discards that work and hands the
+          # suite a half-applied prefix. `auto-restart` (`auto-restart-queued`
+          # on systemd >= 254) is the RestartSec gap after a failure, holding
+          # a queued restart job that reset-failed does not cancel and that
+          # would otherwise race the suite's own start. Wait out the first,
+          # cancel the second.
+          if [[ "${BREW_PREINSTALL_STATE}" == "activating" \
+            && "${BREW_PREINSTALL_SUBSTATE}" != auto-restart* ]]; then
+            echo "brew-preinstall.service is activating (${BREW_PREINSTALL_SUBSTATE}); waiting up to ${BREW_PREINSTALL_WAIT_SECONDS}s for the in-flight run instead of killing it" >&2
+            BREW_PREINSTALL_WAITED=0
+            while [[ "${BREW_PREINSTALL_WAITED}" -lt "${BREW_PREINSTALL_WAIT_SECONDS}" ]]; do
+              sleep "${BREW_PREINSTALL_POLL_SECONDS}"
+              BREW_PREINSTALL_WAITED=$((BREW_PREINSTALL_WAITED + BREW_PREINSTALL_POLL_SECONDS))
+              BREW_PREINSTALL_STATE=$(brew_preinstall_property ActiveState)
+              BREW_PREINSTALL_STATE=${BREW_PREINSTALL_STATE:-unknown}
+              BREW_PREINSTALL_SUBSTATE=$(brew_preinstall_property SubState)
+              BREW_PREINSTALL_SUBSTATE=${BREW_PREINSTALL_SUBSTATE:-unknown}
+              if [[ "${BREW_PREINSTALL_STATE}" != "activating" \
+                || "${BREW_PREINSTALL_SUBSTATE}" == auto-restart* ]]; then
+                break
+              fi
+            done
+            echo "brew-preinstall.service is ${BREW_PREINSTALL_STATE} (${BREW_PREINSTALL_SUBSTATE}) after waiting ${BREW_PREINSTALL_WAITED}s" >&2
+          fi
+          if [[ "${BREW_PREINSTALL_STATE}" == "inactive" \
+            || "${BREW_PREINSTALL_STATE}" == "active" ]]; then
+            # The two settled states, but `inactive` is also what a unit that
+            # never ran looks like: brew-preinstall.service carries
+            # ConditionUser=!@system and ConditionPathExists=<brew binary>, and
+            # a condition-skipped start exits 0, as does a start of a unit that
+            # is not installed at all. Print LoadState and ConditionResult so a
+            # missing or skipped unit is visible instead of passing for a clean
+            # slate that the suite's start will then silently succeed against.
+            echo "brew-preinstall.service is ${BREW_PREINSTALL_STATE} (${BREW_PREINSTALL_SUBSTATE}, LoadState=$(brew_preinstall_property LoadState), ConditionResult=$(brew_preinstall_property ConditionResult)) before behave started it" >&2
+          else
+            # failed, the auto-restart gap, or an activating run that outlasted
+            # the wait above: dump the real failure before the stop clears it.
+            echo "brew-preinstall.service was ${BREW_PREINSTALL_STATE} (${BREW_PREINSTALL_SUBSTATE}) before behave started it:" >&2
+            brew_preinstall_status
           fi
           # Stop before reset-failed: stopping cancels a queued auto-restart
           # job (reset-failed does not), and with RemainAfterExit=true it also
-          # clears a stale `active` left by the session's own run so the suite's
-          # start actually executes the unit instead of being a no-op.
+          # clears a latched `active` so behave's start runs the unit instead
+          # of returning success from that latch. What that re-run re-covers is
+          # the unit's start path, not the install: brew-preinstall is
+          # content-addressed, so after a successful run it exits early on the
+          # unchanged Brewfile hash. After a failed run nothing was recorded,
+          # so the re-run does the real work and reports the real error.
           BREW_PREINSTALL_STOP_RC=0
           env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
             systemctl --user stop brew-preinstall.service || BREW_PREINSTALL_STOP_RC=$?
           if [[ "${BREW_PREINSTALL_STOP_RC}" -ne 0 ]]; then
-            echo "warning: stopping brew-preinstall.service before behave exited ${BREW_PREINSTALL_STOP_RC} (state was ${BREW_PREINSTALL_STATE}); a queued auto-restart may still race the suite's explicit start" >&2
-            env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
-              systemctl --user status --no-pager --full brew-preinstall.service >&2 || true
+            echo "warning: stopping brew-preinstall.service before behave exited ${BREW_PREINSTALL_STOP_RC} (state was ${BREW_PREINSTALL_STATE}/${BREW_PREINSTALL_SUBSTATE}); a queued auto-restart may still race the suite's explicit start" >&2
+            brew_preinstall_status
           fi
           # Now clear the failure state and the start-limit counter. Never
           # after the suite's start: that would hide real failures.
@@ -406,9 +460,8 @@ spec:
           env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
             systemctl --user reset-failed brew-preinstall.service || BREW_PREINSTALL_RESET_RC=$?
           if [[ "${BREW_PREINSTALL_RESET_RC}" -ne 0 ]]; then
-            echo "warning: reset-failed brew-preinstall.service exited ${BREW_PREINSTALL_RESET_RC} (state was ${BREW_PREINSTALL_STATE}); the suite may report a stale start limit instead of the real error" >&2
-            env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \
-              systemctl --user status --no-pager --full brew-preinstall.service >&2 || true
+            echo "warning: reset-failed brew-preinstall.service exited ${BREW_PREINSTALL_RESET_RC} (state was ${BREW_PREINSTALL_STATE}/${BREW_PREINSTALL_SUBSTATE}); the suite may report a stale start limit instead of the real error" >&2
+            brew_preinstall_status
           fi
         fi
 

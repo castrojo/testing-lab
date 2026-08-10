@@ -1,5 +1,9 @@
 from pathlib import Path
 import re
+import shutil
+import subprocess
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -44,6 +48,114 @@ def _systemd_runner_blocks():
         "TARGET_SUITE": target_suite,
         "RUN_BEHAVE": _heredoc("RUN_BEHAVE", target_suite),
     }
+
+
+def _normalize_argo_substitutions(shell):
+    """Argo `{{…}}` placeholders replaced by an inert word.
+
+    Argo expands them before bash ever sees the script. They are always
+    quoted here, so bash would parse them as literals anyway, but replacing
+    them keeps the syntax check honest about what actually runs.
+    """
+    return re.sub(r"\{\{[^{}]+\}\}", "argo-substitution", shell)
+
+
+def _bash(argv, stdin):
+    if shutil.which("bash") is None:
+        pytest.skip("bash is required to check the runner's shell blocks")
+    return subprocess.run(
+        argv, input=stdin, capture_output=True, text=True, timeout=120
+    )
+
+
+def _brew_preinstall_settle_block():
+    """The `suite=homebrew` settle block of run-behave.sh, on its own.
+
+    Sliced at the suite guard and its column-0 `fi`, so it can be executed
+    against stub `systemctl`/`sleep` without the surrounding behave run.
+    """
+    behave = _systemd_runner_blocks()["RUN_BEHAVE"]
+    guard = 'if [[ "${SUITE}" == "homebrew" ]]; then'
+    tail = behave[behave.index(guard):]
+    end = re.search(r"\nfi\n", tail)
+    assert end is not None, "the homebrew settle block has no column-0 `fi`"
+    return tail[: end.end()]
+
+
+# `systemctl` and `sleep` are shell functions so the block's own
+# `env XDG_RUNTIME_DIR=… systemctl …` calls resolve to them (`env` is stubbed
+# to drop leading assignments). `sleep` counts polls in the parent shell — the
+# property reads happen inside `$(…)` subshells, so only the stub's *input*
+# can cross that boundary, which is exactly how the state sequences advance.
+_SETTLE_STUBS = """
+set -euo pipefail
+SUITE=homebrew
+RUNTIME_DIR=/run/user/1000
+XDG_RUNTIME_DIR=/run/user/1000
+SLEEPS=0
+env() {
+  while [[ $# -gt 0 && "$1" == *=* ]]; do shift; done
+  "$@"
+}
+sleep() { SLEEPS=$((SLEEPS + 1)); }
+_seq() {
+  local -a values
+  read -r -a values <<< "$1"
+  local idx="${SLEEPS}"
+  (( idx >= ${#values[@]} )) && idx=$(( ${#values[@]} - 1 ))
+  echo "${values[idx]}"
+}
+systemctl() {
+  local verb="" property="" arg
+  for arg in "$@"; do
+    case "${arg}" in
+      --property=*) property="${arg#--property=}" ;;
+      show|status|stop|reset-failed|start) [[ -n "${verb}" ]] || verb="${arg}" ;;
+    esac
+  done
+  if [[ "${verb}" == show ]]; then
+    case "${property}" in
+      ActiveState) _seq "${ACTIVE_SEQ}" ;;
+      SubState) _seq "${SUB_SEQ}" ;;
+      LoadState) echo "${LOAD_STATE}" ;;
+      ConditionResult) echo "${CONDITION_RESULT}" ;;
+      *) echo "" ;;
+    esac
+    return 0
+  fi
+  echo "STUB systemctl ${verb}" >&2
+  return "${STUB_RC:-0}"
+}
+"""
+
+
+def _run_settle_block(
+    active_states,
+    sub_states,
+    load_state="loaded",
+    condition_result="yes",
+    stub_rc=0,
+):
+    """Run the homebrew settle block against a scripted unit state sequence.
+
+    Each entry is the state reported after that many stubbed `sleep` calls,
+    so `["activating", "active"]` is a run that is in flight on the first
+    look and settled one poll later. Returns the completed process; the
+    block's diagnostics and every non-`show` systemctl call land on stderr.
+    """
+    script = "".join(
+        [
+            _SETTLE_STUBS,
+            f'ACTIVE_SEQ="{" ".join(active_states)}"\n',
+            f'SUB_SEQ="{" ".join(sub_states)}"\n',
+            f'LOAD_STATE="{load_state}"\n',
+            f'CONDITION_RESULT="{condition_result}"\n',
+            f"STUB_RC={stub_rc}\n",
+            _brew_preinstall_settle_block(),
+            '\necho "SLEEPS=${SLEEPS}" >&2\n',
+        ]
+    )
+    return _bash(["bash"], script)
 
 
 def test_bluefin_image_poll_qa_is_container_only():
@@ -277,6 +389,34 @@ def test_native_systemd_runner_deadline_is_sized_for_the_homebrew_lane():
     assert "sized for the slowest lane (suite=homebrew)" in content
 
 
+def test_native_systemd_runner_budgets_one_cask_install_and_bounds_the_wait():
+    # brew-preinstall is content-addressed, so only one run pays the network
+    # cost: whichever of the session's in-flight run and the suite's explicit
+    # start goes first, the other exits early on the unchanged Brewfile hash.
+    # The budget must say that, and the in-flight wait must be capped at the
+    # same number the budget spends on that install — an uncapped wait would
+    # bound the lane by the deadline instead.
+    content = SYSTEMD_RUNNER.read_text(encoding="utf-8")
+    behave = _systemd_runner_blocks()["RUN_BEHAVE"]
+    budget = content.split("activeDeadlineSeconds:", 1)[0].rsplit("# 2h,", 1)[1]
+
+    assert "one network cask install ~900s" in budget
+    assert "content-addressed" in budget
+    assert "not once\n    # per restart attempt" in budget
+    assert "StartLimitBurst=3 ~900s" not in budget
+    assert "BREW_PREINSTALL_WAIT_SECONDS=900" in behave
+    assert "BREW_PREINSTALL_POLL_SECONDS=10" in behave
+    assert "BREW_PREINSTALL_WAIT_SECONDS (the same 900s)" in budget
+
+    # 600 + 120 + 300 + 300 + 360 + 900 + 2700 = 5280s, and the one path that
+    # repeats the install (an in-flight run that fails after being waited out)
+    # adds 900 more, which is still inside 7200.
+    assert 600 + 120 + 300 + 300 + 360 + 900 + 2700 == 5280
+    assert 5280 + 900 < _systemd_run_tests_template()["activeDeadlineSeconds"]
+    assert "~88min" in budget
+    assert "~17min inside this deadline" in budget
+
+
 def test_native_systemd_runner_asks_logind_for_the_runtime_path_exactly_once():
     # A second RuntimePath lookup would return an answer nothing has checked
     # against the two sockets asserted in TARGET_SETUP, and could differ.
@@ -347,26 +487,44 @@ def test_native_systemd_runner_socket_failures_carry_named_diagnostics():
 def test_native_systemd_runner_clears_the_brew_preinstall_restart_race():
     # brew-preinstall.service is Type=oneshot, RemainAfterExit=true,
     # Restart=on-failure, RestartSec=30, StartLimitBurst=3, and is pulled in by
-    # graphical-session.target. Between restart attempts it sits in
-    # `activating (auto-restart)`, where is-failed reports nothing and
-    # reset-failed clears nothing, and the queued restart then races the
-    # suite's explicit start. Inspect, diagnose, stop (which cancels the queued
-    # restart), then reset — all before behave, never after.
+    # graphical-session.target. ActiveState alone cannot tell a healthy run in
+    # flight from the auto-restart gap after a failure, so the lane reads
+    # SubState too: wait out `activating (start)`, cancel `auto-restart`.
+    # Then diagnose, stop (which cancels a queued restart and clears a latched
+    # `active`), and reset — all before behave, never after.
     behave = _systemd_runner_blocks()["RUN_BEHAVE"]
 
-    show = behave.index("--property=ActiveState --value")
+    show = behave.index("BREW_PREINSTALL_STATE=$(brew_preinstall_property ActiveState)")
+    substate = behave.index(
+        "BREW_PREINSTALL_SUBSTATE=$(brew_preinstall_property SubState)"
+    )
+    wait = behave.index("waiting up to ${BREW_PREINSTALL_WAIT_SECONDS}s")
     diagnose = behave.index("before behave started it")
     stop = behave.index("systemctl --user stop brew-preinstall.service")
     reset = behave.index("systemctl --user reset-failed brew-preinstall.service")
     run = behave.index("python3 -m behave")
 
-    assert show < diagnose < stop < reset < run
+    assert show < substate < wait < diagnose < stop < reset < run
     assert "BREW_PREINSTALL_STATE=${BREW_PREINSTALL_STATE:-unknown}" in behave
+    assert "BREW_PREINSTALL_SUBSTATE=${BREW_PREINSTALL_SUBSTATE:-unknown}" in behave
     assert (
-        'if [[ "${BREW_PREINSTALL_STATE}" != "inactive" \\\n'
-        '    && "${BREW_PREINSTALL_STATE}" != "active" ]]; then' in behave
+        'if [[ "${BREW_PREINSTALL_STATE}" == "activating" \\\n'
+        '    && "${BREW_PREINSTALL_SUBSTATE}" != auto-restart* ]]; then' in behave
     )
+    assert (
+        'if [[ "${BREW_PREINSTALL_STATE}" == "inactive" \\\n'
+        '    || "${BREW_PREINSTALL_STATE}" == "active" ]]; then' in behave
+    )
+    # `auto-restart-queued` is the systemd >= 254 spelling; the prefix glob
+    # must match both, and neither may be waited out.
+    assert behave.count('"${BREW_PREINSTALL_SUBSTATE}" != auto-restart*') == 1
+    assert behave.count('"${BREW_PREINSTALL_SUBSTATE}" == auto-restart*') == 1
     assert "systemctl --user is-failed" not in behave
+
+    # inactive/active are settled, but they are also what a unit that systemd
+    # never ran looks like — LoadState/ConditionResult make that visible.
+    assert "LoadState=$(brew_preinstall_property LoadState)" in behave
+    assert "ConditionResult=$(brew_preinstall_property ConditionResult)" in behave
 
     # Both cleanup steps capture their exit code and report it by name instead
     # of discarding it with `|| true`.
@@ -384,18 +542,173 @@ def test_native_systemd_runner_clears_the_brew_preinstall_restart_race():
     assert "a queued auto-restart may still race the suite's explicit start" in behave
     assert "the suite may report a stale start limit instead of the real error" in behave
 
-    # The whole block is guarded on the lane and uses the validated directory,
-    # and a session that disagrees with it is called out rather than silently
-    # honoured.
+    # The whole block is guarded on the lane, every manager call goes through
+    # the validated runtime directory, and a session that disagrees with it is
+    # called out rather than silently honoured.
     guarded = behave.split('if [[ "${SUITE}" == "homebrew" ]]; then', 1)[1]
     assert guarded.index("systemctl --user stop brew-preinstall.service") < guarded.index(
         "\nfi\n"
     )
-    assert behave.count('env XDG_RUNTIME_DIR="${RUNTIME_DIR}"') >= 6
+    lines = behave.splitlines()
+    user_calls = [
+        (lines[index - 1].strip(), line.strip())
+        for index, line in enumerate(lines)
+        if line.strip().startswith("systemctl --user")
+    ]
+    assert {call.split()[2] for _, call in user_calls} == {
+        "show",
+        "status",
+        "stop",
+        "reset-failed",
+    }
+    assert all(
+        previous == 'env XDG_RUNTIME_DIR="${RUNTIME_DIR}" \\'
+        for previous, _ in user_calls
+    )
     assert (
         "warning: session XDG_RUNTIME_DIR='${XDG_RUNTIME_DIR:-}' differs from"
         " the lane's '${RUNTIME_DIR}'" in behave
     )
+
+
+def test_native_systemd_runner_shell_blocks_parse_as_bash():
+    # These blocks only ever run inside the target, hours into a workflow, so a
+    # syntax error costs a full lane. `bash -n` every one of them here: the
+    # runner script, both heredocs it writes into the target, the run-behave.sh
+    # body nested inside the second, and the homebrew settle slice the mocked
+    # branch tests below execute.
+    blocks = dict(_systemd_runner_blocks())
+    blocks["brew-preinstall-settle"] = _brew_preinstall_settle_block()
+
+    for name, shell in blocks.items():
+        result = _bash(["bash", "-n"], _normalize_argo_substitutions(shell))
+        assert result.returncode == 0, f"{name} is not valid bash:\n{result.stderr}"
+
+    # The check is only worth anything if the extraction really produced the
+    # script — a silently empty block would pass `bash -n` too.
+    assert blocks["RUN_BEHAVE"].startswith("#!/bin/bash")
+    assert "python3 -m behave" in blocks["RUN_BEHAVE"]
+    assert blocks["brew-preinstall-settle"].rstrip().endswith("\nfi")
+    assert "{{" not in _normalize_argo_substitutions(blocks["runner"])
+
+
+def test_brew_preinstall_settle_waits_out_a_healthy_in_flight_run():
+    # ActiveState=activating with SubState=start is the session's own cask
+    # install still running. Killing it discards the work the deadline budgets
+    # for and leaves the suite a half-applied prefix, so the lane waits.
+    result = _run_settle_block(
+        active_states=["activating", "activating", "active"],
+        sub_states=["start", "start", "exited"],
+    )
+
+    assert result.returncode == 0, result.stderr
+    stderr = result.stderr
+    assert "waiting up to 900s for the in-flight run instead of killing it" in stderr
+    assert "is active (exited) after waiting 20s" in stderr
+    assert "SLEEPS=2" in stderr
+    # It waited first and only then settled the unit for behave.
+    assert stderr.index("waiting up to 900s") < stderr.index("STUB systemctl stop")
+    assert stderr.index("STUB systemctl stop") < stderr.index(
+        "STUB systemctl reset-failed"
+    )
+
+
+def test_brew_preinstall_settle_cancels_a_queued_auto_restart_without_waiting():
+    # The auto-restart gap is not a healthy run: there is a queued restart job
+    # that reset-failed does not cancel. Diagnose and stop it immediately —
+    # waiting out the RestartSec gap would only line the restart up against
+    # the suite's own start.
+    for substate in ("auto-restart", "auto-restart-queued"):
+        result = _run_settle_block(
+            active_states=["activating"], sub_states=[substate]
+        )
+
+        assert result.returncode == 0, result.stderr
+        stderr = result.stderr
+        assert "SLEEPS=0" in stderr
+        assert "waiting up to" not in stderr
+        assert f"was activating ({substate}) before behave started it" in stderr
+        assert stderr.index("STUB systemctl status") < stderr.index(
+            "STUB systemctl stop"
+        )
+        assert stderr.index("STUB systemctl stop") < stderr.index(
+            "STUB systemctl reset-failed"
+        )
+
+
+def test_brew_preinstall_settle_diagnoses_a_failed_unit_then_clears_it():
+    result = _run_settle_block(active_states=["failed"], sub_states=["failed"])
+
+    assert result.returncode == 0, result.stderr
+    stderr = result.stderr
+    assert "SLEEPS=0" in stderr
+    assert "was failed (failed) before behave started it" in stderr
+    assert "STUB systemctl status" in stderr
+    assert stderr.index("STUB systemctl stop") < stderr.index(
+        "STUB systemctl reset-failed"
+    )
+
+
+def test_brew_preinstall_settle_bounds_the_wait_for_a_wedged_run():
+    # A run that never leaves `activating` must not hold the lane until the
+    # workflow deadline: the wait is capped at BREW_PREINSTALL_WAIT_SECONDS
+    # (900s / 10s polls = 90 iterations), then it is diagnosed and cleared
+    # like any other unsettled state.
+    result = _run_settle_block(
+        active_states=["activating"], sub_states=["start"]
+    )
+
+    assert result.returncode == 0, result.stderr
+    stderr = result.stderr
+    assert "SLEEPS=90" in stderr
+    assert "is activating (start) after waiting 900s" in stderr
+    assert "was activating (start) before behave started it" in stderr
+    assert "STUB systemctl status" in stderr
+    assert "STUB systemctl stop" in stderr
+
+
+def test_brew_preinstall_settle_reports_load_state_for_a_settled_unit():
+    # `inactive` is indistinguishable from "unit not installed" or "systemd
+    # skipped it on ConditionUser/ConditionPathExists" — and a start of either
+    # exits 0, so the suite would pass on nothing. Say which one it is.
+    missing = _run_settle_block(
+        active_states=["inactive"],
+        sub_states=["dead"],
+        load_state="not-found",
+    )
+    skipped = _run_settle_block(
+        active_states=["inactive"],
+        sub_states=["dead"],
+        condition_result="no",
+    )
+
+    assert missing.returncode == 0, missing.stderr
+    assert (
+        "is inactive (dead, LoadState=not-found, ConditionResult=yes)"
+        " before behave started it" in missing.stderr
+    )
+    assert "STUB systemctl status" not in missing.stderr  # settled: no dump
+    assert skipped.returncode == 0, skipped.stderr
+    assert (
+        "is inactive (dead, LoadState=loaded, ConditionResult=no)"
+        " before behave started it" in skipped.stderr
+    )
+
+
+def test_brew_preinstall_settle_survives_a_failing_stop_and_reset():
+    # Neither cleanup step is allowed to abort run-behave.sh under `set -e`,
+    # and neither may swallow its exit code: behave still has to run, with the
+    # reason the next failure will be blamed on printed by name.
+    result = _run_settle_block(
+        active_states=["failed"], sub_states=["failed"], stub_rc=1
+    )
+
+    assert result.returncode == 0, result.stderr
+    stderr = result.stderr
+    assert "warning: stopping brew-preinstall.service before behave exited 1" in stderr
+    assert "(state was failed/failed)" in stderr
+    assert "warning: reset-failed brew-preinstall.service exited 1" in stderr
+    assert "SLEEPS=0" in stderr
 
 
 def test_native_systemd_runner_deletes_the_target_pod_on_termination_signals():
