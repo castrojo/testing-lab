@@ -258,6 +258,37 @@ spec:
         chmod 0440 /etc/sudoers.d/bluefin-test
         chown -R 1000:1000 /home/bluefin-test
 
+        # ROOT CAUSE FIX, and it is not suite-specific: every desktop suite this
+        # template runs starts a GNOME Shell on ghost's single physical GPU.
+        # mutter's native backend takes *exclusive* DRM master on /dev/dri/card*,
+        # so a shell here contends with every other nested QA target on the node.
+        # Live evidence, workflow chairlift-diagnose-smoke-mhkxg: qecore-headless
+        # stops and restarts GDM, org.gnome.Shell@user.service then times out on
+        #   Failed to make thread 'KMS thread' high priority scheduled: Timeout was reached
+        # gnome-shell aborts, GDM reports
+        #   GdmDisplay: Session never registered, failing
+        # and the bluefin-test session bus disappears, leaving only gdm-greeter --
+        # so every later lookup of the session or a11y bus points at a socket that
+        # only a brand new successful login could recreate. Force every shell
+        # instance (greeter and autologin session alike) into mutter's headless
+        # backend with a virtual monitor: nothing here ever renders to a physical
+        # display, and headless mutter never claims DRM master.
+        #
+        # qecore-headless enables Shell.Eval by appending `--unsafe-mode` to the
+        # *unit's* ExecStart (rewriting /etc/systemd/user/org.gnome.Shell@.service
+        # under image mode). A drop-in ExecStart= reset overrides that unit line,
+        # so `--unsafe-mode` must be repeated here or every Shell.Eval call --
+        # including wait_for_shell.py's readiness probe -- returns `(false, '')`.
+        # Keep both flags together if this line is ever edited. This is the same
+        # drop-in run-container-tests already installs; see
+        # docs/skills/test-authoring/systemd-container-tests.md rule 12.
+        mkdir -p /etc/systemd/user/org.gnome.Shell@.service.d
+        printf "%s\n" \
+          "[Service]" \
+          "ExecStart=" \
+          "ExecStart=/usr/bin/gnome-shell --mode=%i --unsafe-mode --headless --virtual-monitor 1920x1080" \
+          >/etc/systemd/user/org.gnome.Shell@.service.d/10-headless.conf
+
         if [[ "${SUITE}" == "homebrew" ]]; then
           report_user_manager_failure() {
             echo "$1" >&2

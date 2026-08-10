@@ -15,7 +15,11 @@ PID 1.
 A full desktop smoke suite is still blocked by GNOME session handoff inside the
 container target, so do not claim that all desktop suites pass there. System-level
 and headless-qecore suites are the current working target; desktop GNOME Shell
-suites remain under investigation.
+suites remain under investigation. One named cause of that handoff failure is
+now closed statically: the shell died taking exclusive DRM master on the node's
+single GPU, and rule 12 forces it headless. The drop-in is verified by unit
+assertions and `bash -n`, not yet by a green live desktop lane — so a *different*
+handoff failure is still the expected outcome until one runs.
 
 The `homebrew` lane below is the one deliberate, targeted exception: it needs a
 real session (Ptyxis typing, two `@chairlift_ui` scenarios), so it is a probe of
@@ -138,6 +142,31 @@ desktop limitation, not as a regression in that provisioning.
     current foreground command returns, so the deletion is immediate when the
     signal reaches the runner's process group (which also ends the in-flight
     `kubectl exec`) and otherwise happens as soon as that exec returns.
+12. **Nothing in the target may take DRM master — force GNOME Shell headless:**
+    the node has one physical GPU and mutter's *native* backend claims
+    **exclusive** DRM master on `/dev/dri/card*`, so a nested shell contends
+    with every other QA target on that node — and with the host. Write a user
+    drop-in **before** qecore starts, outside every suite guard (each desktop
+    suite starts a shell, so this is not per-suite provisioning):
+
+    ```bash
+    mkdir -p /etc/systemd/user/org.gnome.Shell@.service.d
+    printf "%s\n" \
+      "[Service]" \
+      "ExecStart=" \
+      "ExecStart=/usr/bin/gnome-shell --mode=%i --unsafe-mode --headless --virtual-monitor 1920x1080" \
+      >/etc/systemd/user/org.gnome.Shell@.service.d/10-headless.conf
+    ```
+
+    Nothing in a QA lane renders to a physical display, and headless mutter
+    never claims DRM master. `--unsafe-mode` is **not optional here**:
+    `qecore-headless` enables `Shell.Eval` by appending it to the *unit's*
+    `ExecStart`, and the drop-in's `ExecStart=` reset overrides that line — drop
+    the flag and every `Shell.Eval` call, starting with `wait_for_shell.py`'s
+    readiness probe, returns `(false, '')`. Keep both flags together. Write the
+    drop-in before anything can start a user manager (`user@1000.service`),
+    since a manager only reads unit files at start. `run-container-tests` and
+    `run-systemd-container-tests` both carry it, verbatim.
 
 #### The `homebrew` lane
 
@@ -234,6 +263,23 @@ Submission contract: [`docs/reference/WORKFLOWS.md`](../../reference/WORKFLOWS.m
 
 #### Verified session findings
 
+- **The native-systemd lane hit the DRM-master class too, live.** Workflow
+  `chairlift-diagnose-smoke-mhkxg` (suite=smoke, `run-systemd-container-tests`)
+  reached qecore, which stopped and restarted GDM as it always does. The
+  restarted `org.gnome.Shell@user.service` then timed out on
+  `Failed to make thread 'KMS thread' high priority scheduled: Timeout was
+  reached`, gnome-shell aborted, GDM answered `Session never registered,
+  failing`, the `bluefin-test` session bus disappeared, and only the
+  `gdm-greeter` bus was left on the target. That is the *same* root cause
+  `run-container-tests` already closed — mutter's native backend contending for
+  the node's single exclusive GPU — reproduced through a different runner, so
+  read it as one shared defect and not as two lane-specific bugs. The KMS
+  message is the tell: it only appears when the shell is driving real DRM/KMS,
+  which a headless virtual monitor never does. `run-systemd-container-tests`
+  now installs the rule 12 drop-in in `TARGET_SETUP`, before the suite guard
+  and before qecore. **Never treat a vanished session bus here as a timing
+  problem**: after the failed restart no session ever registers, so the socket
+  is absent indefinitely and no readiness budget can outlast it.
 - A privileged target Pod running systemd as PID 1 is viable for native-systemd
   E2E tests.
 - `/run` must be an `emptyDir` for systemd, but that invalidates the
