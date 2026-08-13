@@ -85,7 +85,10 @@ spec:
         git clone --depth 1 --branch "${TSBRANCH}" "${TSREPO}" /workspace/testsuite
         echo "Cloned testsuite @ ${TSBRANCH}"
     script:
-      image: quay.io/podman/stable:latest
+      # The ARC runner image is also the lab's reusable QA runner. It carries
+      # podman/skopeo/git and the pre-fetched Python wheelhouse, so every suite
+      # starts without a per-pod package-manager bootstrap.
+      image: ghcr.io/projectbluefin/arc-runner:latest
       imagePullPolicy: IfNotPresent
       securityContext:
         # Podman needs a writable cgroup hierarchy to boot the nested systemd host.
@@ -114,6 +117,8 @@ spec:
         value: "{{inputs.parameters.variant}}"
       - name: BEHAVE_TAGS
         value: "{{inputs.parameters.behave-tags}}"
+      - name: WORKFLOW_SUITES
+        value: "__auto__"
       - name: GITHUB_TOKEN
         valueFrom:
           secretKeyRef:
@@ -131,6 +136,10 @@ spec:
         name: containers-runroot
       - mountPath: /run/udev
         name: udev
+      - mountPath: /var/mnt/ghost-data/test-results
+        name: results-store
+      - mountPath: /var/cache/bluefin-qa-pip
+        name: pip-cache
       command: [bash]
       source: |
         set -euo pipefail
@@ -188,10 +197,6 @@ spec:
             ;;
         esac
         if [[ -z "${IMAGE_DIGEST:-}" ]]; then
-          if ! command -v skopeo >/dev/null 2>&1; then
-            echo "skopeo not found; installing for digest resolution..." >&2
-            dnf install -y skopeo >/dev/null 2>&1 || true
-          fi
           DIGEST=""
           if command -v skopeo >/dev/null 2>&1 && [[ "${ZOT_IMAGE_REPO}" != "${IMAGE_REPO}" ]]; then
             DIGEST=$(timeout 120 skopeo inspect --tls-verify=false --no-tags \
@@ -212,13 +217,97 @@ spec:
         runroot = "/run/containers/storage"
         EOF
         export CONTAINERS_STORAGE_CONF="${STORAGE_CONF}"
-        trap 'podman rm --force "${TARGET_NAME}" >/dev/null 2>&1 || true' EXIT
+        RESULT_STORE="/var/mnt/ghost-data/test-results/{{workflow.name}}"
+        SUITE_RESULT_DIR="${RESULT_STORE}/${SUITE}"
+        mkdir -p "${SUITE_RESULT_DIR}"
+        if [[ "${WORKFLOW_SUITES}" == "__auto__" ]]; then
+          WORKFLOW_SUITES=$(
+            kubectl get workflow "{{workflow.name}}" \
+              -n "{{workflow.namespace}}" -o json 2>/dev/null |
+              jq -r '.spec.arguments.parameters[]? | select(.name == "suites") | .value' |
+              head -n 1 || true
+          )
+          [[ -n "${WORKFLOW_SUITES}" ]] || WORKFLOW_SUITES="${SUITE}"
+        fi
+
+        persist_suite_results() {
+          # The hostPath is shared by this workflow's suite pods. Keep the
+          # complete per-suite directory for debugging and for the one
+          # aggregate publisher that wins the mkdir lock below.
+          mkdir -p "${SUITE_RESULT_DIR}"
+          if [[ -d /tmp/results ]]; then
+            cp -a /tmp/results/. "${SUITE_RESULT_DIR}/" 2>/dev/null || true
+          fi
+          touch "${SUITE_RESULT_DIR}/.complete"
+
+          # A suite must never make publication failures change its test
+          # verdict. The last suite to finish owns the single clone/commit/push
+          # for the workflow; mkdir is an atomic cross-pod lock on the shared
+          # hostPath.
+          if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+            echo "No GITHUB_TOKEN - skipping aggregate test-results publication" >&2
+            return 0
+          fi
+          local expected_suite normalized_suite all_complete=true
+          local -a expected_suites=()
+          if [[ -z "${WORKFLOW_SUITES}" ]]; then
+            expected_suites=("${SUITE}")
+          else
+            IFS=',' read -r -a expected_suites <<< "${WORKFLOW_SUITES}"
+          fi
+          for expected_suite in "${expected_suites[@]}"; do
+            normalized_suite="${expected_suite//[[:space:]]/}"
+            [[ -n "${normalized_suite}" ]] || continue
+            if [[ ! -f "${RESULT_STORE}/${normalized_suite}/.complete" ]]; then
+              all_complete=false
+              break
+            fi
+          done
+          if [[ "${all_complete}" != true ]]; then
+            return 0
+          fi
+          if ! mkdir "${RESULT_STORE}/.publish.lock" 2>/dev/null; then
+            return 0
+          fi
+
+          local publish_rc=0
+          {
+            rm -rf /tmp/lab-code
+            git clone --depth 1 \
+              "https://x-access-token:${GITHUB_TOKEN}@github.com/projectbluefin/lab.git" \
+              /tmp/lab-code
+            python3 /tmp/lab-code/scripts/publish_test_results.py \
+              --batch-dir "${RESULT_STORE}" \
+              --img-slug "${IMG_SLUG}" \
+              --workflow-name "{{workflow.name}}" \
+              --github-token "${GITHUB_TOKEN}" \
+              --digest "${DIGEST}" \
+              --repo-dir /tmp/lab-code
+          } || publish_rc=$?
+          if [[ "${publish_rc}" -ne 0 ]]; then
+            echo "Warning: failed to publish aggregate test results (rc=${publish_rc})" >&2
+            rmdir "${RESULT_STORE}/.publish.lock" 2>/dev/null || true
+          else
+            echo "Published aggregate test results for ${IMG_SLUG} in one commit" >&2
+          fi
+        }
+
+        cleanup_target() {
+          podman rm --force "${TARGET_NAME}" >/dev/null 2>&1 || true
+        }
+        on_exit() {
+          local rc=$?
+          persist_suite_results || true
+          cleanup_target
+          return "${rc}"
+        }
+        trap on_exit EXIT
 
         command -v podman >/dev/null || {
           echo "Podman is required for nested systemd QA" >&2
           exit 1
         }
-        mkdir -p /tmp/results
+        mkdir -p /tmp/results /opt/qa-wheels /var/cache/bluefin-qa-pip
         if [[ "${ZOT_IMAGE_REPO}" != "${IMAGE_REPO}" ]]; then
           if [[ -n "${DIGEST:-}" ]]; then
             TARGET_IMAGE="${ZOT_IMAGE_REPO}@${DIGEST}"
@@ -272,6 +361,8 @@ spec:
           --mount type=bind,source=/run/udev,destination=/run/udev,ro,bind-propagation=rprivate \
           --volume /workspace:/workspace:ro \
           --volume /tmp/results:/tmp/results \
+          --volume /opt/qa-wheels:/opt/qa-wheels:ro \
+          --volume /var/cache/bluefin-qa-pip:/var/cache/bluefin-qa-pip:rw \
           --volume /etc/resolv.conf:/etc/resolv.conf:ro \
           "${TARGET_IMAGE}" /sbin/init >/dev/null
 
@@ -493,10 +584,16 @@ spec:
           # Bootc/Fedora images mark the system interpreter as externally
           # managed (PEP 668); the target container is disposable, so opt out
           # when the flag is supported.
+          # The wheelhouse and shared cache reduce WAN work without changing
+          # the contract: qecore/dogtail/behave are still installed by pip
+          # inside the shipped target image under test.
+          mkdir -p /var/cache/bluefin-qa-pip
+          export PIP_CACHE_DIR=/var/cache/bluefin-qa-pip
           pip_args=(--disable-pip-version-check --no-input)
           if python3 -m pip install --help 2>/dev/null | grep -q -- --break-system-packages; then
             pip_args+=(--break-system-packages)
           fi
+          pip_args+=(--cache-dir "${PIP_CACHE_DIR}" --find-links /opt/qa-wheels)
           pip_ok=false
           for attempt in 1 2 3; do
             # setuptools is explicit and load-bearing, not incidental: qecore's
@@ -725,28 +822,6 @@ spec:
           printf 'Execution failed' >/tmp/results/result-summary.txt
         fi
 
-
-        # Publish digest-pinned test results back to the lab repo.
-        if [[ -n "${GITHUB_TOKEN:-}" && -f /tmp/results/results.json ]]; then
-          if ! command -v git >/dev/null 2>&1; then
-            echo "git not found; installing git-core before result publication..." >&2
-            dnf install -y git-core >/dev/null 2>&1 || true
-          fi
-          PUBLISH_RC=0
-          {
-            rm -rf /tmp/lab-code
-            git clone --depth 1 "https://x-access-token:${GITHUB_TOKEN}@github.com/projectbluefin/lab.git" /tmp/lab-code
-            python3 /tmp/lab-code/scripts/publish_test_results.py /tmp/results/results.json "${IMG_SLUG}" "${SUITE}" "{{workflow.name}}" "${GITHUB_TOKEN}" "${DIGEST}"
-          } || PUBLISH_RC=$?
-          if [[ "${PUBLISH_RC}" -ne 0 ]]; then
-            echo "Warning: failed to publish test results (rc=${PUBLISH_RC})" >&2
-          fi
-        elif [[ -z "${GITHUB_TOKEN:-}" ]]; then
-          echo "No GITHUB_TOKEN - skipping test results publication" >&2
-        else
-          echo "Skipping publication: /tmp/results/results.json not found" >&2
-        fi
-
         exit "${BEHAVE_RC}"
     volumes:
     - name: workspace
@@ -761,3 +836,11 @@ spec:
       hostPath:
         path: /run/udev
         type: Directory
+    - name: results-store
+      hostPath:
+        path: /var/mnt/ghost-data/test-results
+        type: DirectoryOrCreate
+    - name: pip-cache
+      hostPath:
+        path: /var/cache/bluefin-qa-pip
+        type: DirectoryOrCreate
