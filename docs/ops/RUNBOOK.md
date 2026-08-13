@@ -51,6 +51,60 @@ across KubeVirt-capable nodes. Knuckle VMs co-schedule on the node holding their
 local-path PVC. Other workflow pods may land on exo-0 according to template
 constraints.
 
+## Local-path storage paths and stale PV cleanup
+
+`manifests/local-path-config.yaml` is the source of truth for the bundled Rancher
+Local Path Provisioner. The current node-local data mounts are:
+
+| Node | Provisioner path |
+|---|---|
+| `ghost` | `/var/mnt/ghost-data/local-path` |
+| `exo-0` | `/var/mnt/exo0-data/local-path` |
+
+These names identify different physical mounts. Never apply `ghost`'s path to
+`exo-0`, and do not add `DEFAULT_PATH_FOR_NON_LISTED_NODES`: an unconfigured
+node must fail closed rather than provision PVCs on its root disk. Local-path
+stores the selected path in each PV's `spec.local.path`; changing the ConfigMap
+does not migrate or rewrite existing PVs.
+
+In the August 2026 helper-pod incident, a privileged hostPath probe found
+`/var/mnt/ghost-data` was a real directory on `ghost`, but a dangling symlink on
+`exo-0` pointing to `/var/mnt/exo0-data/ghost-data`; the valid exo-0 storage
+directory was `/var/mnt/exo0-data/local-path`. That mismatch is why kubelet
+reported `mkdir ... file exists` before the teardown container could start.
+
+### Helper-pod delete loop
+
+When `helper-pod-delete-pvc-*` pods churn in `CreateContainerError` with
+`failed to mkdir "/var/mnt/ghost-data/local-path/": mkdir /var/mnt/ghost-data:
+file exists`, inspect the helper pod's node, its hostPath, and the PV's stored
+path:
+
+```bash
+kubectl -n kube-system describe pod <helper-pod>
+kubectl -n kube-system get cm local-path-config -o yaml
+kubectl get pv <pv-name> -o yaml
+kubectl get pvc -A | grep -i terminating
+```
+
+Do not SSH to a node. To inspect the host path, run a short-lived privileged
+diagnostic pod with `/var/mnt` mounted read-only and pinned to the affected
+node. A dangling symlink or other non-directory at the parent mount produces
+the same kubelet `mkdir ... file exists` error.
+
+After the node map is corrected in Git and reconciled, clean up only PVs that
+are all of the following:
+
+1. `Released`, with `reclaimPolicy: Delete`;
+2. storing the incorrect node path and pinned to the affected node;
+3. no longer referenced by any PVC or active workload; and
+4. verified to contain no data that must be retained.
+
+Delete the explicitly identified stale PVs, then remove any remaining helper
+pods for those PVs. Never mass-delete `Bound` PVs or PVCs merely to stop the
+churn. Confirm that new helper pods are absent and that newly provisioned
+PV paths match the node map.
+
 ## GitOps ownership
 
 | Area | Source of truth | Reconciler |
