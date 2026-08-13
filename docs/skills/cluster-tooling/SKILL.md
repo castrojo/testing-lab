@@ -133,10 +133,30 @@ kubectl get nodes -o custom-columns=NAME:.metadata.name,GPU:.status.allocatable.
 ## ROCm inference pause
 
 The local `llm-d` inference workload may be intentionally paused in
-`manifests/llm-d.yaml` with `replicas: 0` and no Service. Treat that as the
-expected stopped state, not a failed deployment. Do not use `kubectl scale` for
-a durable pause because ArgoCD self-heal restores the declared state; restore
-the Deployment replica and Service in git to re-enable inference.
+`manifests/llm-d.yaml` with `replicas: 0`. Treat that as the expected stopped
+state, not a failed deployment. Do not use `kubectl scale` for a durable pause
+because ArgoCD self-heal restores the declared state; restore `replicas: 1` in
+git to re-enable inference.
+
+That self-heal is fast enough to mislead: a runtime `kubectl scale --replicas=0`
+was measured being reverted in **~1 second**, with a replacement pod already
+Running. An operator who scales and then checks `kubectl get deploy` sees
+`0/1` and concludes it worked.
+
+**The PVC caveat, and when it actually applies.** `manifests/llm-d.yaml` long
+carried the opposite advice — scale at runtime, never commit `replicas: 0` —
+on the grounds that `llm-d-model-cache` is `local-path`, which is
+`WaitForFirstConsumer`, so a PVC with no pod never binds, ArgoCD blocks on it,
+and the Deployment is never created. **That deadlock is real but applies only
+at first creation.** Once the PVC is `Bound` it stays bound;
+`WaitForFirstConsumer` gates the first binding, not the lifetime. So:
+
+| State of `llm-d-model-cache` | Pausing with `replicas: 0` in git |
+|---|---|
+| `Bound` | Safe — this is the durable pause |
+| `Pending` / not yet created | Deadlocks; bring it up at `replicas: 1` first |
+
+Check with `kubectl get pvc -n llm-d` before committing a pause.
 
 If an old ArgoCD operation is still waiting for the pre-pause Deployment,
 terminate only that stale operation before syncing the current revision. Remove
