@@ -101,14 +101,14 @@ spec:
           # since #612 each QA pipeline template carries `parallelism: 2`, so one
           # workflow holds at most 2 of the 6 `ghost-container-qa` slots and the
           # runner executes 6 / 2 = 3 workflows concurrently. Admitting more than
-          # that per 5-minute poll cannot make anything finish sooner; it only
+          # that per poll cannot make anything finish sooner; it only
           # deepens the queue. Keep this <= ghost-container-qa / pipeline
           # parallelism (asserted in tests/unit/test_pr_poller_reaper.py).
           MAX_DISPATCH=3
           DISPATCHED=0
 
           # Open PRs seen this run, keyed "<product>/<number>". Populated from
-          # the GitHub search results and used by the reaper below.
+          # the GitHub pull listing and used by the reaper below.
           declare -A OPEN_PRS=()
           # Products whose open-PR enumeration completed with zero API errors.
           # The reaper only acts on these, so a transient GitHub outage can
@@ -234,6 +234,10 @@ spec:
            "projectbluefin/bluefin-lts"
            "projectbluefin/dakota"
           )
+          declare -A AUTO_REPO_SET=()
+          for AUTO_REPO in "${AUTO_REPOS[@]}"; do
+            AUTO_REPO_SET["${AUTO_REPO}"]=1
+          done
 
           dispatch_pr() {
            local PR="$1"
@@ -643,7 +647,6 @@ spec:
 
           # --- Pass 1: every open PR in auto-test repos ---
           for REPO in "${AUTO_REPOS[@]}"; do
-           REPO_QUERY=$(jq -rn --arg q "repo:${REPO} is:pr is:open" '$q|@uri')
            REPO_PRODUCT="${REPO##*/}"
            PAGE=1
            # Every GitHub call for this repo must succeed before the reaper is
@@ -654,34 +657,25 @@ spec:
              RESULTS=$(curl -sf \
                -H "Authorization: token ${GITHUB_TOKEN}" \
                -H "Accept: application/vnd.github+json" \
-               "${API}/search/issues?q=${REPO_QUERY}&per_page=30&page=${PAGE}") || {
-                 echo "Repo ${REPO}: open-PR search failed on page ${PAGE}; skipping reap this run" >&2
+               "${API}/repos/${REPO}/pulls?state=open&per_page=100&page=${PAGE}") || {
+                 echo "Repo ${REPO}: open-PR pull listing failed on page ${PAGE}; skipping reap this run" >&2
                  SCAN_OK=0
                  break
                }
-             COUNT=$(echo "$RESULTS" | jq '.total_count // 0')
-             ITEMS=$(echo "$RESULTS" | jq '.items | length')
+             if ! ITEMS=$(echo "$RESULTS" | jq -e 'if type == "array" then length else error("expected pull array") end'); then
+               echo "Repo ${REPO}: invalid open-PR pull response on page ${PAGE}; skipping reap this run" >&2
+               SCAN_OK=0
+               break
+             fi
              [[ "$ITEMS" -eq 0 ]] && break
-             echo "Repo ${REPO}: ${COUNT} open PR(s), page ${PAGE}, ${ITEMS} items" >&2
-             # Record the open set from the search payload itself, so a failed
-             # per-PR detail fetch can never make a live PR look closed.
-             while read -r open_num; do
-               OPEN_PRS["${REPO_PRODUCT}/${open_num}"]=1
+             echo "Repo ${REPO}: ${ITEMS} open PR(s) on page ${PAGE}" >&2
+             while read -r PR; do
+               PR_NUM=$(echo "$PR" | jq -r '.number')
+               OPEN_PRS["${REPO_PRODUCT}/${PR_NUM}"]=1
                SEEN_OPEN=1
-             done < <(echo "$RESULTS" | jq -r '.items[].number')
-             while read -r item; do
-               PR_URL=$(echo "$item" | jq -r '.pull_request.url')
-               PR=$(curl -sf \
-                 -H "Authorization: token ${GITHUB_TOKEN}" \
-                 -H "Accept: application/vnd.github+json" \
-                 "$PR_URL") || {
-                   echo "Repo ${REPO}: PR detail fetch failed for ${PR_URL}; skipping reap this run" >&2
-                   SCAN_OK=0
-                   continue
-                 }
                dispatch_pr "$PR"
-             done < <(echo "$RESULTS" | jq -c '.items[]')
-             [[ "$ITEMS" -lt 30 ]] && break
+             done < <(echo "$RESULTS" | jq -c '.[]')
+             [[ "$ITEMS" -lt 100 ]] && break
              (( PAGE++ ))
            done
            # Require at least one observed open PR. A repo that suddenly reports
@@ -693,23 +687,54 @@ spec:
           done
 
           # --- Pass 2: label-based catch-all for projectbluefin repos ---
+          # Search only discovers the repositories. Pull listings provide the
+          # complete PR objects, including labels, without one detail request
+          # per matching PR.
           LABEL_QUERY=$(jq -rn --arg q "org:projectbluefin is:pr is:open label:test-on-lab" '$q|@uri')
           LABEL_RESULTS=$(curl -sf \
            -H "Authorization: token ${GITHUB_TOKEN}" \
            -H "Accept: application/vnd.github+json" \
-           "${API}/search/issues?q=${LABEL_QUERY}")
+           "${API}/search/issues?q=${LABEL_QUERY}&per_page=100&page=1") || {
+             echo "Label search failed; skipping label-based dispatch this run" >&2
+             LABEL_RESULTS='{"total_count":0,"items":[]}'
+           }
           LABEL_COUNT=$(echo "$LABEL_RESULTS" | jq '.total_count // 0')
           echo "Found ${LABEL_COUNT} PR(s) with test-on-lab label" >&2
-          if [[ "$LABEL_COUNT" -gt 0 ]]; then
-           while read -r item; do
-             PR_URL=$(echo "$item" | jq -r '.pull_request.url')
-             PR=$(curl -sf \
+          declare -A LABEL_REPOS=()
+          while read -r LABEL_REPO; do
+           [[ -z "${LABEL_REPO}" ]] && continue
+           LABEL_REPOS["${LABEL_REPO}"]=1
+          done < <(
+           echo "$LABEL_RESULTS" \
+             | jq -r '.items[]?.repository_url // empty
+                 | sub("^https://api.github.com/repos/"; "")'
+          )
+          for REPO in "${!LABEL_REPOS[@]}"; do
+           # Pass 1 already handled every open PR in these repositories.
+           [[ -n "${AUTO_REPO_SET[${REPO}]:-}" ]] && continue
+           PAGE=1
+           while true; do
+             LABEL_PRS=$(curl -sf \
                -H "Authorization: token ${GITHUB_TOKEN}" \
                -H "Accept: application/vnd.github+json" \
-               "$PR_URL")
-             dispatch_pr "$PR"
-           done < <(echo "$LABEL_RESULTS" | jq -c '.items[]')
-          fi
+               "${API}/repos/${REPO}/pulls?state=open&per_page=100&page=${PAGE}") || {
+                 echo "Label repo ${REPO}: open-PR pull listing failed on page ${PAGE}; skipping label dispatch this run" >&2
+                 break
+               }
+             if ! ITEMS=$(echo "$LABEL_PRS" | jq -e 'if type == "array" then length else error("expected pull array") end'); then
+               echo "Label repo ${REPO}: invalid open-PR pull response on page ${PAGE}; skipping label dispatch this run" >&2
+               break
+             fi
+             [[ "$ITEMS" -eq 0 ]] && break
+             while read -r PR; do
+               if echo "$PR" | jq -e '([.labels[]?.name] | index("test-on-lab")) != null' >/dev/null; then
+                 dispatch_pr "$PR"
+               fi
+             done < <(echo "$LABEL_PRS" | jq -c '.[]')
+             [[ "$ITEMS" -lt 100 ]] && break
+             (( PAGE++ ))
+           done
+          done
 
           # --- Pass 3: reap workflows whose PR is no longer open ---
           # A merged or closed PR keeps its workflow running for the full ~20
@@ -720,7 +745,7 @@ spec:
           # Safety: only products whose open-PR enumeration completed with zero
           # API errors AND returned at least one open PR are eligible, and only
           # workflows carrying a bluefin.io/repository label are considered.
-          # Re-running this every 5 minutes is a no-op once a workflow has
+          # Re-running this every 15 minutes is a no-op once a workflow has
           # spec.shutdown set.
           for REPO in "${AUTO_REPOS[@]}"; do
            REPO_PRODUCT="${REPO##*/}"

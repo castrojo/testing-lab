@@ -1,4 +1,4 @@
-# CronWorkflow: polls configured projectbluefin repositories every five minutes.
+# CronWorkflow: polls configured projectbluefin repositories every fifteen minutes.
 # Dispatches at most one workflow per PR head SHA through the matching template.
 # Requires: github-token secret in argo namespace (already present).
 apiVersion: argoproj.io/v1alpha1
@@ -12,7 +12,7 @@ metadata:
 spec:
   suspend: false
   schedules:
-    - "*/5 * * * *"
+    - "*/15 * * * *"
   timezone: "UTC"
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 60
