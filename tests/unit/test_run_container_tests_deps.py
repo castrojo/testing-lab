@@ -35,6 +35,12 @@ def test_container_runner_uses_baked_runner_tools_without_dnf_bootstrap():
     assert "--volume /opt/qa-wheels:/opt/qa-wheels:ro" in source
     assert "--cache-dir" in source
     assert "PIP_CACHE_DIR=/var/cache/bluefin-qa-pip" in source
+    assert "--no-index --find-links /opt/qa-wheels" in source
+    assert "falling back to the configured package index" in source
+    container_text = CONTAINER_RUNNER.read_text(encoding="utf-8")
+    assert "kubernetes.io/hostname: ghost" in container_text
+    assert "path: /var/mnt/ghost-data/local-path" in container_text
+    assert "type: Directory" in container_text
 
 
 def test_target_python_dependencies_remain_target_installs_with_load_bearing_pin():
@@ -50,6 +56,8 @@ def test_target_python_dependencies_remain_target_installs_with_load_bearing_pin
         assert "behave" in source
         assert '"setuptools<81"' in source
         assert "--find-links" in source
+        assert "--no-index" in source
+        assert "falling back to the configured package index" in source
         assert "bluefin-qa-pip" in source
 
     assert "Sandbox._attach_version_status_to_report()" in container_source
@@ -63,6 +71,8 @@ def test_aggregate_publication_has_one_lab_clone_and_one_batch_push():
     assert runner_source.count("github.com/projectbluefin/lab.git") == 1
     assert "--batch-dir" in runner_source
     assert ".publish.lock" in runner_source
+    assert "all ${expected_count} suite nodes are terminal" in runner_source
+    assert "persist_suite_results || persist_rc=$?" in runner_source
     assert "results-store" in CONTAINER_RUNNER.read_text(encoding="utf-8")
     assert "def publish_batch_results(" in publisher_source
     assert publisher_source.count('["git", "push", "origin", "HEAD:main"]') == 1

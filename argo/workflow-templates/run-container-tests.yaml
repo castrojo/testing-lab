@@ -17,8 +17,12 @@ spec:
   - name: run-container-tests
     # GNOME/DRM tests need the physical desktop host. exo-0 is headless and
     # cannot provide a graphical seat even when /sys and /run/udev are mounted.
+    # Keep every suite pod on ghost as well: the result store is node-local,
+    # and ghost is the only node whose canonical local-path mount is
+    # /var/mnt/ghost-data/local-path. exo-0 uses a different physical mount.
     nodeSelector:
       node-role.kubernetes.io/control-plane: "true"
+      kubernetes.io/hostname: ghost
     activeDeadlineSeconds: 3600
     # Cross-workflow backpressure: this template is referenced by every
     # container-only QA pipeline, so a template-level semaphore caps total
@@ -231,39 +235,75 @@ spec:
         fi
 
         persist_suite_results() {
-          # The hostPath is shared by this workflow's suite pods. Keep the
-          # complete per-suite directory for debugging and for the one
-          # aggregate publisher that wins the mkdir lock below.
+          # The hostPath is shared by this workflow's suite pods, which are
+          # explicitly pinned to ghost above. Keep the complete per-suite
+          # directory for debugging and for the one aggregate publisher that
+          # wins the mkdir lock below.
           mkdir -p "${SUITE_RESULT_DIR}"
-          if [[ -d /tmp/results ]]; then
-            cp -a /tmp/results/. "${SUITE_RESULT_DIR}/" 2>/dev/null || true
+          if ! cp -a /tmp/results/. "${SUITE_RESULT_DIR}/"; then
+            echo "ERROR: failed to persist suite results to ${SUITE_RESULT_DIR}" >&2
+            return 1
           fi
           touch "${SUITE_RESULT_DIR}/.complete"
 
           # A suite must never make publication failures change its test
           # verdict. The last suite to finish owns the single clone/commit/push
           # for the workflow; mkdir is an atomic cross-pod lock on the shared
-          # hostPath.
+          # hostPath. If all suite nodes are terminal but a result directory is
+          # missing, fail loudly instead of publishing incomplete evidence.
           if [[ -z "${GITHUB_TOKEN:-}" ]]; then
             echo "No GITHUB_TOKEN - skipping aggregate test-results publication" >&2
             return 0
           fi
-          local expected_suite normalized_suite all_complete=true
+          local expected_suite normalized_suite
           local -a expected_suites=()
           if [[ -z "${WORKFLOW_SUITES}" ]]; then
             expected_suites=("${SUITE}")
           else
             IFS=',' read -r -a expected_suites <<< "${WORKFLOW_SUITES}"
           fi
+          local -a missing_suites=()
           for expected_suite in "${expected_suites[@]}"; do
             normalized_suite="${expected_suite//[[:space:]]/}"
             [[ -n "${normalized_suite}" ]] || continue
             if [[ ! -f "${RESULT_STORE}/${normalized_suite}/.complete" ]]; then
-              all_complete=false
-              break
+              missing_suites+=("${normalized_suite}")
             fi
           done
-          if [[ "${all_complete}" != true ]]; then
+          if ((${#missing_suites[@]} > 0)); then
+            local workflow_json lane_count terminal_count expected_count
+            workflow_json=$(
+              kubectl get workflow "{{workflow.name}}" \
+                -n "{{workflow.namespace}}" -o json 2>/dev/null || true
+            )
+            expected_count=0
+            for expected_suite in "${expected_suites[@]}"; do
+              normalized_suite="${expected_suite//[[:space:]]/}"
+              [[ -n "${normalized_suite}" ]] || continue
+              expected_count=$((expected_count + 1))
+            done
+            lane_count=0
+            terminal_count=0
+            if [[ -n "${workflow_json}" && "${expected_count}" -gt 0 ]]; then
+              lane_count=$(
+                jq '[.status.nodes[]?
+                  | select(.type == "Pod" and .templateName == "run-container-tests")]
+                  | length' <<<"${workflow_json}" 2>/dev/null || printf '0'
+              )
+              terminal_count=$(
+                jq '[.status.nodes[]?
+                  | select(.type == "Pod" and .templateName == "run-container-tests")
+                  | select(.phase == "Succeeded" or .phase == "Failed" or
+                           .phase == "Error" or .phase == "Skipped" or
+                           .phase == "Omitted" or .phase == "Daemoned")]
+                  | length' <<<"${workflow_json}" 2>/dev/null || printf '0'
+              )
+            fi
+            if [[ "${lane_count}" -ge "${expected_count}" &&
+                  "${terminal_count}" -ge "${expected_count}" ]]; then
+              echo "ERROR: all ${expected_count} suite nodes are terminal but result directories are missing: ${missing_suites[*]}" >&2
+              return 1
+            fi
             return 0
           fi
           if ! mkdir "${RESULT_STORE}/.publish.lock" 2>/dev/null; then
@@ -290,6 +330,7 @@ spec:
           else
             echo "Published aggregate test results for ${IMG_SLUG} in one commit" >&2
           fi
+          return 0
         }
 
         cleanup_target() {
@@ -297,8 +338,13 @@ spec:
         }
         on_exit() {
           local rc=$?
-          persist_suite_results || true
+          local persist_rc=0
+          persist_suite_results || persist_rc=$?
           cleanup_target
+          if [[ "${persist_rc}" -ne 0 ]]; then
+            echo "ERROR: suite result persistence/aggregation failed (rc=${persist_rc})" >&2
+            [[ "${rc}" -ne 0 ]] || rc="${persist_rc}"
+          fi
           return "${rc}"
         }
         trap on_exit EXIT
@@ -593,7 +639,8 @@ spec:
           if python3 -m pip install --help 2>/dev/null | grep -q -- --break-system-packages; then
             pip_args+=(--break-system-packages)
           fi
-          pip_args+=(--cache-dir "${PIP_CACHE_DIR}" --find-links /opt/qa-wheels)
+          pip_args+=(--cache-dir "${PIP_CACHE_DIR}")
+          qa_dependencies=("setuptools<81" qecore dogtail behave)
           pip_ok=false
           for attempt in 1 2 3; do
             # setuptools is explicit and load-bearing, not incidental: qecore's
@@ -604,7 +651,16 @@ spec:
             # so without this pin every after_scenario hook raises
             # ModuleNotFoundError. Keep it pinned below 81 for as long as qecore
             # imports pkg_resources.
-            if python3 -m pip install "${pip_args[@]}" "setuptools<81" qecore dogtail behave >/tmp/pip-install.log 2>&1; then
+            if python3 -m pip install "${pip_args[@]}" \
+                --no-index --find-links /opt/qa-wheels \
+                "${qa_dependencies[@]}" >/tmp/pip-install.log 2>&1; then
+              pip_ok=true
+              break
+            fi
+            echo "Local QA wheelhouse did not satisfy this target interpreter; falling back to the configured package index." >&2
+            if python3 -m pip install "${pip_args[@]}" \
+                --find-links /opt/qa-wheels \
+                "${qa_dependencies[@]}" >/tmp/pip-install.log 2>&1; then
               pip_ok=true
               break
             fi
@@ -838,8 +894,8 @@ spec:
         type: Directory
     - name: results-store
       hostPath:
-        path: /var/mnt/ghost-data/test-results
-        type: DirectoryOrCreate
+        path: /var/mnt/ghost-data/local-path
+        type: Directory
     - name: pip-cache
       hostPath:
         path: /var/cache/bluefin-qa-pip
