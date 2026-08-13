@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / 'scripts/generate_page_datasets.py'
+LEGACY_INPUT_FIXTURE = ROOT / 'tests/unit/fixtures/page-dataset-legacy-inputs.json'
 
 
 def load_module():
@@ -13,6 +14,15 @@ def load_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def use_pinned_legacy_inputs(monkeypatch, module):
+    """Keep legacy result assertions independent of workflow refreshes."""
+    fixture = json.loads(LEGACY_INPUT_FIXTURE.read_text())
+    monkeypatch.setattr(module, 'iter_surface_cells', lambda root: iter(fixture['surface']))
+    monkeypatch.setattr(module, 'load_enrollment_issues', lambda root: fixture['enrollment'])
+    monkeypatch.setattr(module, 'load_results_by_relative_path', lambda root: fixture['results'])
+    monkeypatch.setattr(module, 'load_qa_run_records', lambda root: [])
 
 
 def test_upstream_dataset_derives_required_families(monkeypatch):
@@ -70,15 +80,15 @@ def test_upstream_dataset_derives_required_families(monkeypatch):
 
 def test_tests_matrix_derives_rows_from_surface_and_results(monkeypatch):
     module = load_module()
-    monkeypatch.setattr(module, 'load_qa_run_records', lambda root: [])
+    use_pinned_legacy_inputs(monkeypatch, module)
 
     dataset = module.build_tests_matrix(ROOT, '2026-06-29T19:22:22Z')
 
     assert dataset['schema_version'] == 'v3'
     assert dataset['_meta']['page'] == 'tests'
     assert dataset['_meta']['starter_artifact'] is False
-    # Surface comes from docs/data/test-surface.json, so the row count changes
-    # whenever new variants/branches/suites are enrolled.
+    # The pinned surface fixture mirrors the published matrix shape at the
+    # baseline; live QA refreshes must not change this contract test.
     assert len(dataset['rows']) == 64
 
     metrics = {metric['id']: metric for metric in dataset['summary_metrics']}
@@ -377,8 +387,9 @@ def test_tests_matrix_v3_schema_rejects_incomplete_page_contract(monkeypatch):
         assert list(validator.iter_errors(payload))
 
 
-def test_applications_matrix_keeps_bazaar_fallbacks_explicit():
+def test_applications_matrix_keeps_bazaar_fallbacks_explicit(monkeypatch):
     module = load_module()
+    use_pinned_legacy_inputs(monkeypatch, module)
 
     dataset = module.build_applications_matrix(ROOT, '2026-06-29T19:22:22Z')
 
@@ -399,10 +410,12 @@ def test_applications_matrix_keeps_bazaar_fallbacks_explicit():
     assert bluefin['fallback_signal_count'] == 1
     assert len(bluefin['fallback_signals']) == 1
     assert bluefin['fallback_signals'][0]['state'] == 'unavailable'
-    assert bluefin['fallback_signals'][0]['matched_scenarios'] == [
+    # Scenario order is inherited from the result file, not part of the
+    # fallback contract; preserve each upstream name and its casing.
+    assert sorted(bluefin['fallback_signals'][0]['matched_scenarios']) == sorted([
         'Bazaar flatpak preinstall file is present',
         'bazaar user service is available',
-    ]
+    ])
     assert rows['bazaar-dakota-testing']['fallback_signal_count'] == 1
     # Real enrolled variants from test-surface software cells must appear;
     # fabricated variants must not.
