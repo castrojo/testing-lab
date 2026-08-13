@@ -20,6 +20,7 @@ import ipaddress
 HISTORY_PATH = Path("docs/data/history/qa-runs.ndjson")
 REPO_URL = "https://github.com/projectbluefin/lab.git"
 SCHEMA_VERSION = "1.0"
+PUBLICATION_STATE_VERSION = 1
 PUBLIC_HISTORY_URL = (
     "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
 )
@@ -686,6 +687,70 @@ def append_records(path: Path, records: list[dict[str, object]]) -> int:
     return len(additions)
 
 
+def publication_key(record: dict[str, object]) -> str:
+    lane = record.get("lane")
+    suite = lane.get("suite") if isinstance(lane, dict) else None
+    return f"{record['workflow_uid']}::{suite or '<none>'}"
+
+
+def publication_state(records: list[dict[str, object]]) -> dict[str, object]:
+    """Return the latest published snapshot for each current workflow lane."""
+    published: dict[str, str] = {}
+    for record in records:
+        validate_record(record)
+        key = publication_key(record)
+        snapshot_id = str(record["snapshot_id"])
+        previous = published.get(key)
+        if previous is not None and previous != snapshot_id:
+            raise RecordError("workflow lane has conflicting current snapshots")
+        published[key] = snapshot_id
+    return {"version": PUBLICATION_STATE_VERSION, "records": published}
+
+
+def read_publication_state(path: Path) -> dict[str, str] | None:
+    """Read a valid state cache, treating missing or malformed state as unknown."""
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(document, dict)
+        or set(document) != {"version", "records"}
+        or document["version"] != PUBLICATION_STATE_VERSION
+        or not isinstance(document["records"], dict)
+    ):
+        return None
+    records = document["records"]
+    if not all(isinstance(key, str) and isinstance(value, str) for key, value in records.items()):
+        return None
+    if not all(re.fullmatch(r"[0-9a-f]{64}", value) for value in records.values()):
+        return None
+    return records
+
+
+def write_publication_state(path: Path, records: list[dict[str, object]]) -> None:
+    """Persist state atomically after the corresponding history is published."""
+    document = publication_state(records)
+    temporary = path.with_name(f".{path.name}.new")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        temporary.write_text(
+            json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def state_covers(records: list[dict[str, object]], state: dict[str, str] | None) -> bool:
+    """Return whether every current candidate is known to be published."""
+    if state is None:
+        return False
+    expected = publication_state(records)["records"]
+    return all(state.get(key) == snapshot_id for key, snapshot_id in expected.items())
+
+
 def git_env(auth_dir: Path) -> dict[str, str]:
     askpass = auth_dir / "git-askpass"
     askpass.write_text(
@@ -706,20 +771,49 @@ def run_git(args: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.Co
     )
 
 
-def publish(records: list[dict[str, object]], work_dir: Path) -> int:
+def publish(
+    records: list[dict[str, object]],
+    work_dir: Path,
+    *,
+    state_file: Path | None = None,
+) -> int:
     if not os.environ.get("GITHUB_TOKEN"):
         raise RecordError("GITHUB_TOKEN is required for authorized publication")
+    if not records:
+        return 0
+    if state_file is not None and state_covers(records, read_publication_state(state_file)):
+        return 0
     auth_dir = work_dir / ".qa-run-auth"
     clone_dir = work_dir / ".qa-run-history"
     shutil.rmtree(auth_dir, ignore_errors=True)
     shutil.rmtree(clone_dir, ignore_errors=True)
     auth_dir.mkdir(parents=True)
     env = git_env(auth_dir)
-    if run_git(["clone", "--depth", "1", REPO_URL, str(clone_dir)], cwd=work_dir, env=env).returncode:
+    if run_git(
+        [
+            "clone",
+            "--depth",
+            "1",
+            "--filter=blob:none",
+            "--sparse",
+            REPO_URL,
+            str(clone_dir),
+        ],
+        cwd=work_dir,
+        env=env,
+    ).returncode:
         raise RecordError("git clone failed")
+    if run_git(
+        ["sparse-checkout", "set", str(HISTORY_PATH.parent)],
+        cwd=clone_dir,
+        env=env,
+    ).returncode:
+        raise RecordError("git sparse checkout failed")
     for attempt in range(2):
         added = append_records(clone_dir / HISTORY_PATH, records)
         if not added:
+            if state_file is not None:
+                write_publication_state(state_file, records)
             return 0
         run_git(["config", "user.name", "github-actions[bot]"], cwd=clone_dir, env=env)
         run_git(["config", "user.email", "github-actions[bot]@users.noreply.github.com"], cwd=clone_dir, env=env)
@@ -728,6 +822,8 @@ def publish(records: list[dict[str, object]], work_dir: Path) -> int:
         if run_git(["commit", "-m", "chore(qa): append workflow evidence"], cwd=clone_dir, env=env).returncode:
             raise RecordError("git commit failed")
         if run_git(["push", "origin", "HEAD:main"], cwd=clone_dir, env=env).returncode == 0:
+            if state_file is not None:
+                write_publication_state(state_file, records)
             return added
         if attempt == 0:
             if run_git(["fetch", "origin", "main"], cwd=clone_dir, env=env).returncode:
@@ -757,11 +853,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--observed-at", default=utc_now())
     parser.add_argument("--publish", action="store_true")
     parser.add_argument("--work-dir", type=Path, default=Path("."))
+    parser.add_argument("--state-file", type=Path)
     args = parser.parse_args(argv)
     try:
         records = reconcile(Path(args.workflow_list), args.observed_at)
         if args.publish:
-            print(f"published {publish(records, args.work_dir)} QA evidence snapshots")
+            print(
+                f"published {publish(records, args.work_dir, state_file=args.state_file)} "
+                "QA evidence snapshots"
+            )
         else:
             print(json.dumps(records, sort_keys=True))
     except RecordError as exc:
