@@ -69,10 +69,13 @@ data:
                 { "prefix": "flatcar/*", "destination": "/ghcr" },
                 { "prefix": "frostyard/*", "destination": "/ghcr" },
                 { "prefix": "ggml-org/*", "destination": "/ghcr" },
+                { "prefix": "jrottenberg/*", "destination": "/ghcr" },
                 { "prefix": "kagent-dev/**", "destination": "/ghcr" },
-                { "prefix": "kubestellar/*", "destination": "/ghcr" },
+                { "prefix": "kubestellar/**", "destination": "/ghcr" },
+                { "prefix": "oras-project/*", "destination": "/ghcr" },
                 { "prefix": "project-zot/*", "destination": "/ghcr" },
                 { "prefix": "projectbluefin/*", "destination": "/ghcr" },
+                { "prefix": "razorfinos-org/*", "destination": "/ghcr" },
                 { "prefix": "ublue-os/*", "destination": "/ghcr" }
               ]
             },
@@ -85,6 +88,7 @@ data:
               "content": [
                 { "prefix": "bitnami/*", "destination": "/docker" },
                 { "prefix": "curlimages/*", "destination": "/docker" },
+                { "prefix": "jrottenberg/*", "destination": "/docker" },
                 { "prefix": "library/*", "destination": "/docker" },
                 { "prefix": "linuxserver/*", "destination": "/docker" },
                 { "prefix": "rancher/*", "destination": "/docker" },
@@ -103,6 +107,7 @@ data:
                 { "prefix": "brancz/*", "destination": "/quay" },
                 { "prefix": "buildah/*", "destination": "/quay" },
                 { "prefix": "fedora/*", "destination": "/quay" },
+                { "prefix": "fedora-ostree-desktops/*", "destination": "/quay" },
                 { "prefix": "kubestellar/*", "destination": "/quay" },
                 { "prefix": "kubevirt/*", "destination": "/quay" },
                 { "prefix": "open-cluster-management/*", "destination": "/quay" },
@@ -117,7 +122,7 @@ data:
               "tlsVerify": true,
               "maxRetries": 1,
               "retryDelay": "2m",
-              "content": [{ "prefix": "**", "destination": "/fedora" }]
+              "content": [{ "prefix": "fedora*", "destination": "/fedora" }]
             },
             {
               "urls": ["https://registry.k8s.io"],
@@ -125,7 +130,13 @@ data:
               "tlsVerify": true,
               "maxRetries": 1,
               "retryDelay": "2m",
-              "content": [{ "prefix": "**", "destination": "/k8s" }]
+              "content": [
+                { "prefix": "kube-apiserver", "destination": "/k8s" },
+                { "prefix": "kube-controller-manager", "destination": "/k8s" },
+                { "prefix": "metrics-server/*", "destination": "/k8s" },
+                { "prefix": "nfd/*", "destination": "/k8s" },
+                { "prefix": "pause", "destination": "/k8s" }
+              ]
             },
             {
               "urls": ["https://cgr.dev"],
@@ -141,7 +152,9 @@ data:
               "tlsVerify": true,
               "maxRetries": 1,
               "retryDelay": "2m",
-              "content": [{ "prefix": "**", "destination": "/ecr" }]
+              "content": [
+                { "prefix": "docker/library/*", "destination": "/ecr" }
+              ]
             },
             {
               "urls": ["https://lscr.io"],
@@ -149,7 +162,7 @@ data:
               "tlsVerify": true,
               "maxRetries": 1,
               "retryDelay": "2m",
-              "content": [{ "prefix": "**", "destination": "/lscr" }]
+              "content": [{ "prefix": "linuxserver/*", "destination": "/lscr" }]
             }
           ]
         }
@@ -174,7 +187,7 @@ spec:
         app: zot-cache
         app.kubernetes.io/part-of: lab
       annotations:
-        lab.projectbluefin.io/config-version: sync-policy-v4
+        lab.projectbluefin.io/config-version: sync-policy-v5
     spec:
       automountServiceAccountToken: false
       priorityClassName: system-cluster-critical
