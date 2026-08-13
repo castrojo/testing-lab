@@ -46,14 +46,24 @@ metadata:
     app.kubernetes.io/name: llm-d-modelserver
     app.kubernetes.io/part-of: testing-lab
 spec:
-  # Enabled. Note this cannot be staged at replicas: 0 while the cache PVC uses
-  # local-path: local-path is WaitForFirstConsumer, so the PVC only binds once a
-  # pod consumes it, and ArgoCD blocks its sync waiting for the PVC to become
-  # healthy — which never happens without a pod. replicas: 0 plus this PVC is a
-  # circular deadlock that also prevents the Deployment itself from being
-  # created. To take the server down, scale it to 0 at runtime rather than
-  # committing replicas: 0.
-  replicas: 1
+  # PAUSED. The GPU and its GTT budget are wanted for video transcoding on the
+  # Wolves cut; restore `replicas: 1` here to re-enable inference.
+  #
+  # The deadlock this comment used to warn about is real but applies ONLY at
+  # first creation. local-path is WaitForFirstConsumer, so `llm-d-model-cache`
+  # binds only once a pod consumes it: staging a NEW deployment at replicas: 0
+  # leaves the PVC Pending, ArgoCD blocks its sync waiting for it to go healthy,
+  # and the Deployment is never created. Once the PVC is Bound it STAYS bound --
+  # WaitForFirstConsumer gates the first binding, not the lifetime -- so pausing
+  # an already-running server here is safe. Verified before committing: the PVC
+  # is Bound to pvc-8cd401e5 (100Gi, RWO, local-path), age 6d19h.
+  #
+  # This is the durable pause. Do NOT use `kubectl scale`: `testing-lab-infra`
+  # runs with selfHeal, and a runtime scale-to-0 was measured being reverted in
+  # ~1 second, a replacement pod spawning immediately. That matches
+  # docs/skills/cluster-tooling/SKILL.md and contradicts this comment's previous
+  # advice, which is why the advice is corrected rather than left standing.
+  replicas: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: llm-d-modelserver
