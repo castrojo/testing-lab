@@ -169,20 +169,39 @@ to zero.
 service. Keep it as a single `ClusterIP` deployment: do not add an ingress,
 Grafana, Prometheus Operator, or another cluster dashboard.
 
-### External traffic report
+### Uplink traffic report (LAN + WAN)
 
-For a rolling boundary-traffic view, port-forward Prometheus and run:
+For a rolling uplink view, port-forward Prometheus and run:
 
 ```bash
 kubectl -n kube-system port-forward svc/prometheus 9090:9090
 just traffic-report
 ```
 
-The report uses cAdvisor's node-root counters on the physical `enp191s0`
-uplink. It intentionally excludes pod interfaces, `cni0`, USB4, and Tailscale
-traffic. Zot pull counters are included as a ranked image-repository activity
-signal, but Zot does not expose per-repository byte totals; do not present
-those counts as bandwidth.
+The report calls cAdvisor's node-root counters on the physical `enp191s0`
+**uplink interface totals (LAN + WAN)**. `enp191s0` is the lab LAN NIC, not a
+clean internet boundary: its counters include node-to-node traffic, LAN
+clients, and in-cluster hairpin traffic. Do not present those totals as
+external bandwidth.
+
+The report includes a deliberately partial WAN estimate. Zot cache pod RX is
+shown as estimated upstream image-pull ingress, and a node's uplink TX minus
+the other visible node(s)' RX is shown as estimated non-node egress. These
+subtractions are assumptions, not flow data; a missing or negative component
+is rendered as unavailable. Other WAN/LAN traffic cannot be separated because
+cAdvisor has no remote-address or port labels. Destination-level telemetry
+would require a bounded eBPF/flow exporter, which this report does not invent.
+
+The report also compares Zot upstream RX with Zot TX (cache serving) and shows
+an approximate byte cache-hit ratio under the assumption that upstream RX is
+miss traffic. Its workload sections exclude the known
+`hostNetwork: true` `usb4-link-monitor-*` node mirrors, which otherwise just
+duplicate node counters. Treat any remaining cAdvisor workload rows as
+attribution only, not destination-level internet flow data.
+
+Zot pull counters are included as a ranked image-repository activity signal,
+but Zot does not expose per-repository byte totals; do not present those
+counts as bandwidth.
 
 **Zot on-demand sync pulls blobs on tag reads.** Any `skopeo inspect` or pull
 of a *tag* through the cache (`192.168.1.102:30501/...`) copies the manifest

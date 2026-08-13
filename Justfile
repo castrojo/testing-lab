@@ -163,6 +163,25 @@ list-workflows:
 logs:
     argo logs -n {{ argo_ns }} @latest
 
+# Report rolling uplink, WAN-estimate, workload, and Zot cache traffic.
+# Usage: just traffic-report
+# Usage: just traffic-report window=1h interface=enp191s0 limit=10
+traffic-report *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    translated=()
+    for arg in {{ args }}; do
+        case "${arg}" in
+            window=*) translated+=(--window "${arg#window=}") ;;
+            prometheus-url=*) translated+=(--prometheus-url "${arg#prometheus-url=}") ;;
+            prometheus_url=*) translated+=(--prometheus-url "${arg#prometheus_url=}") ;;
+            interface=*) translated+=(--interface "${arg#interface=}") ;;
+            limit=*) translated+=(--limit "${arg#limit=}") ;;
+            *) translated+=("${arg}") ;;
+        esac
+    done
+    exec python3 scripts/traffic_report.py "${translated[@]}"
+
 # List VMs in all test namespaces
 list-vms:
     @echo "=== bluefin-test ===" && kubectl get vm -n bluefin-test 2>/dev/null || true
