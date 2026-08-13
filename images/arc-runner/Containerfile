@@ -6,15 +6,35 @@ FROM ghcr.io/actions/actions-runner:latest@sha256:0cfdcc701ce933c6d243c6b0b2da76
 
 USER root
 
-# Install bluefin CI toolchain: buildah, skopeo, cosign, oras, argo CLI, kubectl, jq
+# Install bluefin CI toolchain and the tools used by container QA runners:
+# buildah, podman, skopeo, git-core (the Ubuntu package is `git`), cosign,
+# oras, argo CLI, kubectl, jq.
 # Using apt (actions-runner base is Ubuntu); these are the tools currently installed per-job.
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
       buildah \
+      podman \
       skopeo \
+      git \
       curl \
       jq \
+      python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+# Keep the target image under test authoritative for the installed Python
+# environment. This wheelhouse only moves the download once into the runner
+# image; the disposable target still performs the real installation, including
+# its load-bearing setuptools<81 pin.
+RUN mkdir -p /opt/qa-wheels && \
+    python3 -m pip download \
+      --disable-pip-version-check \
+      --no-cache-dir \
+      --dest /opt/qa-wheels \
+      "setuptools<81" \
+      qecore \
+      dogtail \
+      behave && \
+    chmod -R a+rX /opt/qa-wheels
 
 # kubectl (for cluster operations and debugging from ARC jobs)
 RUN curl -sSfL \

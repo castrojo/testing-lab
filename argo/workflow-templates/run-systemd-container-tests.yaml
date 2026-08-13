@@ -85,6 +85,31 @@ spec:
           restartPolicy: Never
           terminationGracePeriodSeconds: 30
           automountServiceAccountToken: false
+          initContainers:
+          - name: qa-wheelhouse
+            image: ghcr.io/projectbluefin/arc-runner:latest
+            imagePullPolicy: IfNotPresent
+            command: [bash, -c]
+            args:
+            - |
+              set -euo pipefail
+              if [[ -d /opt/qa-wheels ]]; then
+                mkdir -p /workspace/qa-wheels
+                cp -a /opt/qa-wheels/. /workspace/qa-wheels/
+              fi
+            securityContext:
+              runAsUser: 0
+              runAsGroup: 0
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+            volumeMounts:
+            - name: workspace
+              mountPath: /workspace
           containers:
           - name: target
             image: "{{inputs.parameters.image}}:{{inputs.parameters.image-tag}}"
@@ -111,12 +136,18 @@ spec:
               mountPath: /run
             - name: workspace
               mountPath: /workspace
+            - name: pip-cache
+              mountPath: /var/cache/bluefin-qa-pip
           volumes:
           - name: run
             emptyDir:
               medium: Memory
           - name: workspace
             emptyDir: {}
+          - name: pip-cache
+            hostPath:
+              path: /var/cache/bluefin-qa-pip
+              type: DirectoryOrCreate
 
   - name: run-tests
     # 2h, sized for the slowest lane (suite=homebrew) rather than the fastest.
@@ -158,8 +189,11 @@ spec:
       - name: testsuite-branch
       - name: behave-tags
     script:
-      image: ghcr.io/projectbluefin/lab-runner:latest
+      image: ghcr.io/projectbluefin/arc-runner:latest
       command: [bash]
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
       resources:
         requests:
           cpu: 100m
@@ -242,7 +276,31 @@ spec:
         if ! python3 -m pip --version >/dev/null 2>&1; then
           python3 -m ensurepip --default-pip
         fi
-        python3 -m pip install --quiet qecore dogtail behave
+        # The wheelhouse and shared cache reduce WAN work without changing
+        # the contract: these packages are still installed by pip inside the
+        # shipped target image under test.
+        mkdir -p /var/cache/bluefin-qa-pip
+        pip_args=(--disable-pip-version-check --no-input
+          --cache-dir /var/cache/bluefin-qa-pip)
+        if python3 -m pip install --help 2>/dev/null | grep -q -- --break-system-packages; then
+          pip_args+=(--break-system-packages)
+        fi
+        # setuptools is explicit and load-bearing, not incidental: qecore's
+        # Sandbox._attach_version_status_to_report() does `import
+        # pkg_resources` to build the per-scenario version table. That module
+        # ships only with setuptools and was dropped from setuptools 81+, and
+        # Python 3.12+ no longer seeds it into fresh environments, so without
+        # this pin every after_scenario hook raises ModuleNotFoundError. Keep it
+        # pinned below 81 for as long as qecore imports pkg_resources.
+        qa_dependencies=("setuptools<81" qecore dogtail behave)
+        if ! python3 -m pip install --quiet "${pip_args[@]}" \
+          --no-index --find-links /workspace/qa-wheels \
+          "${qa_dependencies[@]}"; then
+          echo "Local QA wheelhouse did not satisfy this target interpreter; falling back to the configured package index." >&2
+          python3 -m pip install --quiet "${pip_args[@]}" \
+            --find-links /workspace/qa-wheels \
+            "${qa_dependencies[@]}"
+        fi
         if ! grep -q "^bluefin-test:" /etc/passwd; then
           echo "bluefin-test:x:1000:1000:Bluefin QA:/home/bluefin-test:/bin/bash" >>/etc/passwd
         fi

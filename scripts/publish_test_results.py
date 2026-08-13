@@ -6,6 +6,8 @@ import re
 import subprocess
 import shutil
 import urllib.request
+from pathlib import Path
+import argparse
 from datetime import datetime, timezone
 
 from evaluate_kde_soak import evaluate_kde_soak, is_trusted_github_issue_url
@@ -190,73 +192,60 @@ def parse_results_and_build_update(
         updated_data["digest"] = digest
     return updated_data
 
-def main():
-    if len(sys.argv) < 6:
-        print("Usage: publish_test_results.py <results_json_path> <img_slug> <suite> <workflow_name> <github_token> [digest] [failure_class] [failure_issue_url]")
-        sys.exit(1)
-
-    results_json_path = sys.argv[1]
-    img_slug = sys.argv[2]
-    suite = sys.argv[3]
-    workflow_name = sys.argv[4]
-    github_token = sys.argv[5]
-    digest = sys.argv[6] if len(sys.argv) > 6 else None
-    failure_class = sys.argv[7] if len(sys.argv) > 7 else "test"
-    failure_issue_url = sys.argv[8] if len(sys.argv) > 8 else None
-
-    if not digest:
-        print(f"No digest provided. Attempting anonymous resolution for slug {img_slug}...")
-        digest = resolve_digest_for_slug(img_slug)
-        if digest:
-            print(f"Successfully resolved digest: {digest}")
-        else:
-            print("Digest resolution skipped or failed.")
-
-    if not github_token:
-        print("ERROR: github_token is empty.", file=sys.stderr)
-        sys.exit(2)
-
-    if not os.path.exists(results_json_path):
-        print(f"ERROR: {results_json_path} not found.", file=sys.stderr)
-        sys.exit(2)
-
-    # 1. Parse behave results.json
+def _load_json(path, description):
     try:
-        with open(results_json_path, 'r') as f:
-            data = json.load(f)
-    except Exception as e:
-        print(f"ERROR: Failed to parse {results_json_path}: {e}")
+        with open(path, "r", encoding="utf-8") as result_file:
+            return json.load(result_file)
+    except Exception as exc:
+        print(f"ERROR: Failed to parse {description} {path}: {exc}", file=sys.stderr)
         sys.exit(2)
 
-    current_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # 2. Clone projectbluefin/lab to a temporary directory
-    temp_dir = os.path.join(os.getcwd(), ".lab-repo-clone")
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir)
+def _resolve_digest(img_slug, digest):
+    if digest:
+        return digest
+    print(f"No digest provided. Attempting anonymous resolution for slug {img_slug}...")
+    resolved = resolve_digest_for_slug(img_slug)
+    if resolved:
+        print(f"Successfully resolved digest: {resolved}")
+    else:
+        print("Digest resolution skipped or failed.")
+    return resolved
 
+
+def _clone_repo(github_token, repo_dir):
+    repo_dir = os.path.abspath(repo_dir)
+    if os.path.exists(repo_dir):
+        shutil.rmtree(repo_dir)
     repo_url = f"https://x-access-token:{github_token}@github.com/projectbluefin/lab.git"
-    run_cmd(["git", "clone", "--depth", "1", repo_url, temp_dir])
+    run_cmd(["git", "clone", "--depth", "1", repo_url, repo_dir])
+    return repo_dir
 
-    # 3. Locate or create docs/results/<img_slug>-<suite>.json
-    results_dir = os.path.join(temp_dir, "docs", "results")
+
+def _write_updated_result(
+    results_json_path,
+    repo_dir,
+    img_slug,
+    suite,
+    workflow_name,
+    digest,
+    failure_class="test",
+    failure_issue_url=None,
+):
+    data = _load_json(results_json_path, "behave results")
+    results_dir = os.path.join(repo_dir, "docs", "results")
     os.makedirs(results_dir, exist_ok=True)
     result_filename = f"{img_slug}-{suite}.json"
     result_filepath = os.path.join(results_dir, result_filename)
 
     existing_data = None
     if os.path.exists(result_filepath):
-        try:
-            with open(result_filepath, 'r') as f:
-                existing_data = json.load(f)
-        except Exception as e:
-            print(f"ERROR: Failed to parse existing results file {result_filepath}: {e}", file=sys.stderr)
-            sys.exit(2)
+        existing_data = _load_json(result_filepath, "existing result")
 
     updated_data = parse_results_and_build_update(
         data=data,
         existing_data=existing_data,
-        current_utc=current_utc,
+        current_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         workflow_name=workflow_name,
         img_slug=img_slug,
         suite=suite,
@@ -264,35 +253,181 @@ def main():
         failure_class=failure_class,
         failure_issue_url=failure_issue_url,
     )
+    with open(result_filepath, "w", encoding="utf-8") as result_file:
+        json.dump(updated_data, result_file)
+    return f"docs/results/{result_filename}"
 
-    with open(result_filepath, 'w') as f:
-        json.dump(updated_data, f)
 
-    # 4. Commit and push back to git
-    # Set config
-    run_cmd(["git", "config", "user.name", "github-actions[bot]"], cwd=temp_dir)
-    run_cmd(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], cwd=temp_dir)
-
-    # Git add and commit
-    run_cmd(["git", "add", f"docs/results/{result_filename}"], cwd=temp_dir)
-
-    # Check if there are changes before committing
-    diff_check = run_cmd(["git", "diff", "--cached", "--quiet"], cwd=temp_dir, check=False)
+def _commit_and_push(repo_dir, paths, workflow_name, description):
+    run_cmd(["git", "config", "user.name", "github-actions[bot]"], cwd=repo_dir)
+    run_cmd(
+        [
+            "git",
+            "config",
+            "user.email",
+            "github-actions[bot]@users.noreply.github.com",
+        ],
+        cwd=repo_dir,
+    )
+    run_cmd(["git", "add", *paths], cwd=repo_dir)
+    diff_check = run_cmd(["git", "diff", "--cached", "--quiet"], cwd=repo_dir, check=False)
     if diff_check.returncode == 0:
         print("No changes to test results. Skipping push.")
-        # Clean up
-        shutil.rmtree(temp_dir)
-        sys.exit(0)
+        return False
 
-    commit_msg = f"chore: update test results for {img_slug}-{suite} ({workflow_name})\n\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
-    run_cmd(["git", "commit", "-m", commit_msg], cwd=temp_dir)
+    commit_msg = (
+        f"chore: update test results for {description} ({workflow_name})\n\n"
+        "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+    )
+    run_cmd(["git", "commit", "-m", commit_msg], cwd=repo_dir)
+    run_cmd(["git", "push", "origin", "HEAD:main"], cwd=repo_dir)
+    return True
 
-    # Git push back to main
-    run_cmd(["git", "push", "origin", "HEAD:main"], cwd=temp_dir)
-    print(f"SUCCESS: Pushed updated test results for {img_slug}-{suite} back to repository!")
 
-    # Clean up
-    shutil.rmtree(temp_dir)
+def publish_batch_results(
+    batch_dir,
+    img_slug,
+    workflow_name,
+    github_token,
+    digest=None,
+    repo_dir=None,
+):
+    """Publish all suite JSON files from one QA workflow in one git transaction.
+
+    Each suite writes ``<batch_dir>/<suite>/results.json``. The caller may
+    supply an already-cloned repository so the workflow performs exactly one
+    clone and this function performs exactly one push.
+    """
+    if not github_token:
+        raise ValueError("github_token is empty")
+
+    result_paths = sorted(Path(batch_dir).glob("*/results.json"))
+    if not result_paths:
+        raise FileNotFoundError(f"no suite results found below {batch_dir}")
+
+    digest = _resolve_digest(img_slug, digest)
+    temporary_repo = repo_dir is None
+    if temporary_repo:
+        repo_dir = os.path.join(os.getcwd(), ".lab-repo-clone")
+        _clone_repo(github_token, repo_dir)
+
+    try:
+        published_paths = []
+        suites = []
+        for result_path in result_paths:
+            suite = result_path.parent.name
+            published_paths.append(
+                _write_updated_result(
+                    str(result_path),
+                    repo_dir,
+                    img_slug,
+                    suite,
+                    workflow_name,
+                    digest,
+                )
+            )
+            suites.append(suite)
+        pushed = _commit_and_push(
+            repo_dir,
+            published_paths,
+            workflow_name,
+            f"{img_slug} suites {','.join(suites)}",
+        )
+        if pushed:
+            print(
+                "SUCCESS: Pushed aggregated test results for "
+                f"{img_slug} ({', '.join(suites)}) back to repository!"
+            )
+        return pushed
+    finally:
+        if temporary_repo:
+            shutil.rmtree(repo_dir, ignore_errors=True)
+
+
+def _publish_single(
+    results_json_path,
+    img_slug,
+    suite,
+    workflow_name,
+    github_token,
+    digest=None,
+    failure_class="test",
+    failure_issue_url=None,
+    repo_dir=None,
+):
+    if not github_token:
+        print("ERROR: github_token is empty.", file=sys.stderr)
+        sys.exit(2)
+    if not os.path.exists(results_json_path):
+        print(f"ERROR: {results_json_path} not found.", file=sys.stderr)
+        sys.exit(2)
+
+    digest = _resolve_digest(img_slug, digest)
+    temporary_repo = repo_dir is None
+    if temporary_repo:
+        repo_dir = os.path.join(os.getcwd(), ".lab-repo-clone")
+        _clone_repo(github_token, repo_dir)
+    try:
+        path = _write_updated_result(
+            results_json_path,
+            repo_dir,
+            img_slug,
+            suite,
+            workflow_name,
+            digest,
+            failure_class,
+            failure_issue_url,
+        )
+        pushed = _commit_and_push(repo_dir, [path], workflow_name, f"{img_slug}-{suite}")
+        if pushed:
+            print(f"SUCCESS: Pushed updated test results for {img_slug}-{suite} back to repository!")
+    finally:
+        if temporary_repo:
+            shutil.rmtree(repo_dir, ignore_errors=True)
+
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--batch-dir":
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument("--batch-dir", required=True)
+        parser.add_argument("--img-slug", required=True)
+        parser.add_argument("--workflow-name", required=True)
+        parser.add_argument("--github-token", required=True)
+        parser.add_argument("--digest", default=None)
+        parser.add_argument("--repo-dir", default=None)
+        args = parser.parse_args()
+        try:
+            publish_batch_results(
+                batch_dir=args.batch_dir,
+                img_slug=args.img_slug,
+                workflow_name=args.workflow_name,
+                github_token=args.github_token,
+                digest=args.digest,
+                repo_dir=args.repo_dir,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(2)
+        return
+
+    if len(sys.argv) < 6:
+        print(
+            "Usage: publish_test_results.py <results_json_path> <img_slug> "
+            "<suite> <workflow_name> <github_token> [digest] [failure_class] "
+            "[failure_issue_url]"
+        )
+        sys.exit(1)
+
+    _publish_single(
+        results_json_path=sys.argv[1],
+        img_slug=sys.argv[2],
+        suite=sys.argv[3],
+        workflow_name=sys.argv[4],
+        github_token=sys.argv[5],
+        digest=sys.argv[6] if len(sys.argv) > 6 else None,
+        failure_class=sys.argv[7] if len(sys.argv) > 7 else "test",
+        failure_issue_url=sys.argv[8] if len(sys.argv) > 8 else None,
+    )
 
 if __name__ == "__main__":
     main()
