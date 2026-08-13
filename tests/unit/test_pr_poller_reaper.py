@@ -128,6 +128,18 @@ if "/search/issues" in url:
     print(json.dumps({"total_count": len(prs), "items": items}))
     sys.exit(0)
 
+if "/repos/" in url and "/pulls" in url:
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+    path = urllib.parse.urlparse(url).path
+    repo = path.split("/repos/", 1)[1].split("/pulls", 1)[0]
+    page = int(query.get("page", ["1"])[0])
+    if repo in state.get("search_fails", []):
+        log.write("pulls-fail %s\\n" % repo)
+        sys.exit(22)
+    prs = [p for p in state["open_prs"] if p["base"]["repo"]["full_name"] == repo]
+    print(json.dumps([] if page > 1 else prs))
+    sys.exit(0)
+
 if "/pr/" in url:
     _, repo_owner, repo_name, number = url.rsplit("/", 3)
     repo = "%s/%s" % (repo_owner.rsplit("/", 1)[-1], repo_name)
@@ -344,7 +356,7 @@ def test_dispatch_cap_is_aligned_with_the_execution_capacity():
     ]
     assert int(line.split("=")[1]) <= limit // parallelism, textwrap.dedent(
         """
-        Admitting more workflows per 5-minute poll than the runner can execute
+        Admitting more workflows per poll than the runner can execute
         concurrently (ghost-container-qa limit // pipeline parallelism) only
         deepens the queue.
         """
