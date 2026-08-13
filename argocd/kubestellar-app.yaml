@@ -34,8 +34,9 @@ spec:
         # DNS suffices until external WECs exist. KubeFlex-generated nginx
         # Ingress objects are inert (no controller claims them).
         #
-        # 0.30.0 is the first core-chart release in this app to carry the
-        # KubeFlex status-update fixes needed by the lab's post-create hooks.
+        # 0.30.0 carries KubeFlex v0.9.3. Verify the controller's status-update
+        # behavior after rollout; if conflicts persist, escalate the upstream
+        # KubeFlex controller rather than installing an unrelated ingress.
   destination:
     server: https://kubernetes.default.svc
     namespace: kubestellar
