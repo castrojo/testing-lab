@@ -251,10 +251,6 @@ spec:
           # for the workflow; mkdir is an atomic cross-pod lock on the shared
           # hostPath. If all suite nodes are terminal but a result directory is
           # missing, fail loudly instead of publishing incomplete evidence.
-          if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-            echo "No GITHUB_TOKEN - skipping aggregate test-results publication" >&2
-            return 0
-          fi
           local expected_suite normalized_suite
           local -a expected_suites=()
           if [[ -z "${WORKFLOW_SUITES}" ]]; then
@@ -304,6 +300,10 @@ spec:
               echo "ERROR: all ${expected_count} suite nodes are terminal but result directories are missing: ${missing_suites[*]}" >&2
               return 1
             fi
+            return 0
+          fi
+          if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+            echo "No GITHUB_TOKEN - skipping aggregate test-results publication" >&2
             return 0
           fi
           if ! mkdir "${RESULT_STORE}/.publish.lock" 2>/dev/null; then
