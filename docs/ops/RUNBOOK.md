@@ -36,6 +36,30 @@ their QA trigger is disabled. Daily testing-lane coverage comes from
 `nightly-smoke` at 02:00 UTC, `nightly-smoke-lts` at 02:30 UTC, and
 `nightly-dakota` at 03:00 UTC.
 
+### Poller operating policy
+
+The testing and Dakota pollers stay enabled at their staggered ten-minute
+cadence because those lanes are actively used and the check is a cheap,
+manifest-only upstream digest lookup. Their manifests set `run-qa: "false"`,
+so a poll does not fan out a full QA run; the nightly workflows provide the
+daily suite coverage and are not duplicate triggers.
+
+The stable pollers (`image-poll-bluefin-stable` and
+`image-poll-lts-stable`) are suspended in git by default. Stable images change
+roughly weekly, and the active bluefin-stable poller was measured repeating a
+failing full-suite run about hourly. To validate a stable lane once, submit it
+directly:
+
+```bash
+argo submit --from cronworkflow/image-poll-bluefin-stable -n argo --wait --log
+argo submit --from cronworkflow/image-poll-lts-stable -n argo --wait --log
+```
+
+For a scheduled validation window, change that manifest's `spec.suspend` to
+`false`, commit and push, then restore `true` afterward. Direct `kubectl patch`
+or `argo resume` changes are temporary because ArgoCD reconciles the
+git-tracked value.
+
 ## Cluster topology
 
 | Host | Role | IP | Notes |
