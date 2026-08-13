@@ -1,6 +1,7 @@
 # CronWorkflow: polls ghcr.io/projectbluefin/bluefin-lts:testing every 10 minutes.
-# Tracks OCI digest changes without launching frequent QA; daily QA is scheduled
-# by nightly-smoke-lts.
+# This remains enabled for the actively used testing lane: the direct registry
+# digest check is manifest-only, and run-qa=false prevents a QA fan-out here.
+# Daily QA is scheduled by nightly-smoke-lts.
 apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow
 metadata:

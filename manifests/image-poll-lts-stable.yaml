@@ -1,5 +1,9 @@
-# CronWorkflow: polls ghcr.io/projectbluefin/bluefin-lts:stable every 10 minutes.
-# Triggers bluefin-qa-pipeline only when OCI digest changes vs ConfigMap state.
+# CronWorkflow: polls ghcr.io/projectbluefin/bluefin-lts:stable every 10 minutes
+# when deliberately enabled.
+# Stable images change roughly weekly; keep this off by default so an active
+# poller cannot repeat a failing full-suite run without an explicit decision.
+# Run once with `argo submit --from cronworkflow/image-poll-lts-stable -n argo`
+# or set `suspend: false` in git for a reviewed scheduled validation window.
 apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow
 metadata:
@@ -9,7 +13,7 @@ metadata:
     app.kubernetes.io/part-of: lab
     bluefin.io/trigger: digest-poll
 spec:
-  suspend: false
+  suspend: true
   schedules:
     - "6/10 * * * *"
   timezone: "UTC"
