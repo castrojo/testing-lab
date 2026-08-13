@@ -9,8 +9,11 @@ metadata:
     app.kubernetes.io/part-of: lab
 data:
   # Rancher Local Path Provisioner creates data beneath the selected node path.
-  # Omitting a default entry makes PVC provisioning fail on unlisted nodes rather
-  # than silently creating storage on their root filesystem.
+  # These paths are node-local identities, not interchangeable cluster paths:
+  # never reuse ghost's mount name on another node. Omitting a default entry makes
+  # PVC provisioning fail on unlisted nodes rather than using a root-disk fallback.
+  # A PV stores the selected path, so correcting this map does not rewrite older
+  # PVs; stale Released PVs must be checked and cleaned up separately.
   config.json: |-
     {
       "nodePathMap": [
