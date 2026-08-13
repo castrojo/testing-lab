@@ -136,48 +136,30 @@ def test_all_buildstream_pipelines_mount_the_shared_recc_contract():
         assert "path: recc-environment.conf" in pipeline
 
 
-def test_every_lane_applies_the_shared_recc_overlay_with_no_mode_flags():
-    """RECC overlay application is mandatory and fail-closed in every lane.
+def test_production_lanes_keep_the_overlay_mounted_but_do_not_invoke_it():
+    """The documented rollback keeps nested RECC out of production lanes.
 
-    ``apply_recc_overlay.py`` refuses every mandatory-RECC lane while no
-    BuildBarn runner honors ``remoteApisSocketPath``. The templates must still
-    invoke it, with no mode flags, so the lane fails closed instead of
-    building with outer remote execution only. ``--runner-capability`` may not
-    appear until that runner is proven, and ``--pilot-cache-only`` is
-    operator-only for the documented prototype baseline.
+    The helper remains mounted as part of the shared config contract for the
+    operator-only baseline and a future runner-capability rollout, but the
+    production lanes must not invoke it while the deployed runner lacks
+    ``remoteApisSocketPath`` support.
     """
 
-    kinds = {
-        "dakota-build-pipeline.yaml": "dakota",
-        "cosmic-build-pipeline.yaml": "cosmic",
-        "bluefin-server-build-pipeline.yaml": "bluefin-server",
-        "bst-qa-pipeline.yaml": "bst-qa",
-    }
-
-    for filename, project_kind in kinds.items():
+    for filename in (
+        "dakota-build-pipeline.yaml",
+        "cosmic-build-pipeline.yaml",
+        "bluefin-server-build-pipeline.yaml",
+        "bst-qa-pipeline.yaml",
+    ):
         pipeline = (
             ROOT / "argo/workflow-templates" / filename
         ).read_text(encoding="utf-8")
-        checkout = pipeline.index("git clone")
-        overlay = pipeline.index("python3 /etc/buildstream/apply_recc_overlay.py")
-        first_bst_command = min(
-            index
-            for index in (
-                pipeline.find("bst --config"),
-                pipeline.find("bst --no-interactive"),
-            )
-            if index >= 0
-        )
 
         assert "- key: apply_recc_overlay.py" in pipeline
         assert "path: apply_recc_overlay.py" in pipeline
-        assert "key: recc-endpoint" in pipeline
-        assert f"--project-kind {project_kind}" in pipeline
-        assert '--endpoint "${RECC_ENDPOINT}"' in pipeline
-        assert checkout < overlay < first_bst_command
-        assert not re.search(
-            r"(?m)^\s*--(runner-capability|pilot-cache-only)\b", pipeline
-        )
+        assert "python3 /etc/buildstream/apply_recc_overlay.py" not in pipeline
+        assert "kubectl get configmap buildbarn-config -n buildbarn" not in pipeline
+        assert "RECC admission rejected" not in pipeline
         assert "remote-apis-socket" not in pipeline
 
 
@@ -195,14 +177,15 @@ def test_every_mandatory_recc_lane_is_refused_by_the_shared_overlay():
     assert not adapters["bst-prototype"].production
 
 
-def test_gates_fail_admission_when_no_runner_consumes_the_nested_socket():
+def test_outer_admission_does_not_probe_the_unavailable_nested_runner():
     config = yaml.safe_load(
         (ROOT / "manifests/buildbarn-config.yaml").read_text(encoding="utf-8")
     )
     runner_jsonnet = config["data"]["runner.jsonnet"]
     probe = re.compile(r"^[ \t]*remoteApisSocketPath[ \t]*:", re.MULTILINE)
 
-    # The deployed runner has no such field, so every gate must reject today.
+    # The deployed runner has no such field, so production lanes use the
+    # documented outer-remote-execution rollback until a capable runner lands.
     assert not probe.search(runner_jsonnet)
     assert probe.search(runner_jsonnet.rstrip() + "\n  remoteApisSocketPath: 'x',")
 
@@ -210,12 +193,12 @@ def test_gates_fail_admission_when_no_runner_consumes_the_nested_socket():
         text = (ROOT / "argo/workflow-templates" / template).read_text(
             encoding="utf-8"
         )
-        assert "kubectl get configmap buildbarn-config -n buildbarn" in text
-        assert "remoteApisSocketPath[[:space:]]*:" in text
-        assert "RECC admission rejected" in text
+        assert "kubectl get configmap buildbarn-config -n buildbarn" not in text
+        assert "remoteApisSocketPath[[:space:]]*:" not in text
+        assert "RECC admission rejected" not in text
 
 
-def test_cache_warmup_reuses_the_shared_overlayed_build_templates():
+def test_cache_warmup_reuses_the_outer_remote_build_templates():
     for filename in (
         "dakota-build-pipeline.yaml",
         "cosmic-build-pipeline.yaml",
@@ -226,7 +209,6 @@ def test_cache_warmup_reuses_the_shared_overlayed_build_templates():
         ).read_text(encoding="utf-8")
         warmup = pipeline.index("name: build-warmup")
         assert pipeline.index("template: build-core", warmup) > warmup
-        assert "python3 /etc/buildstream/apply_recc_overlay.py" in pipeline
 
     cache_warm = (
         ROOT / "argo/workflow-templates/bst-cache-warm.yaml"

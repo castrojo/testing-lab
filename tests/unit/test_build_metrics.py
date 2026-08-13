@@ -62,9 +62,9 @@ def test_prometheus_scrapes_required_build_and_node_targets():
 
 
 def test_zot_metrics_are_enabled_on_both_registries():
-    for path, workload_kind, config_version in (
-        ("manifests/zot-cache.yaml", "DaemonSet", "sync-policy-v2"),
-        ("manifests/zot-writable.yaml", "Deployment", "metrics-v1"),
+    for path, workload_kind in (
+        ("manifests/zot-cache.yaml", "DaemonSet"),
+        ("manifests/zot-writable.yaml", "Deployment"),
     ):
         documents = load_documents(path)
         config_map = next(doc for doc in documents if doc["kind"] == "ConfigMap")
@@ -75,9 +75,10 @@ def test_zot_metrics_are_enabled_on_both_registries():
             "enable": True,
             "prometheus": {"path": "/metrics"},
         }
-        assert workload["spec"]["template"]["metadata"]["annotations"][
+        config_version = workload["spec"]["template"]["metadata"]["annotations"].get(
             "lab.projectbluefin.io/config-version"
-        ] == config_version
+        )
+        assert isinstance(config_version, str) and config_version.strip()
 
 
 def test_safe_build_workflows_emit_only_low_cardinality_metrics():

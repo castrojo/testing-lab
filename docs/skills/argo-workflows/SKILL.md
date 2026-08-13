@@ -103,6 +103,10 @@ The workflow authoring guidance is split by topic:
   every contract parameter through the call-site arguments.
 - Any `script:` template without `resources:` limits
 - Templates in `argo/workflow-templates/` applied with `kubectl apply` (not via git)
+- Re-enabling a mandatory nested-RECC overlay or `remoteApisSocketPath` admission
+  probe before the pinned BuildBarn runner consumes that socket. Keep production
+  lanes on outer BuildStream remote execution until runner capability is proven;
+  the shared helper may remain mounted for the operator-only baseline.
 - A PR-dispatching poller that dedups on `pr-number` + `pr-sha` but never
   cancels the superseded run, or that leaves workflows running after their PR
   merges — both drain the `ghost-container-qa` semaphore for ~20 minutes per
