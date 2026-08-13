@@ -12,7 +12,7 @@ spec:
   source:
     repoURL: ghcr.io/kubestellar/kubestellar
     chart: core-chart
-    targetRevision: 0.29.0
+    targetRevision: 0.30.0
     helm:
       valuesObject:
         # its1 type host reuses ghost's API server (OCM hub in-cluster).
@@ -33,6 +33,9 @@ spec:
         # External reachability deferred per ADR-0004: in-cluster Service
         # DNS suffices until external WECs exist. KubeFlex-generated nginx
         # Ingress objects are inert (no controller claims them).
+        #
+        # 0.30.0 is the first core-chart release in this app to carry the
+        # KubeFlex status-update fixes needed by the lab's post-create hooks.
   destination:
     server: https://kubernetes.default.svc
     namespace: kubestellar

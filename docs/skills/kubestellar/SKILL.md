@@ -172,6 +172,7 @@ instance.
 | Prometheus cAdvisor targets stay `unknown` and the pod restarts | check for `OOMKilled`; WAL replay plus the controller and cAdvisor scrape set needs the committed 512 MiB request and 2 GiB limit, not the original demo sizing |
 | Prometheus reaches its memory limit after NFD labels appear | never `labelmap` all `__meta_kubernetes_node_label_*` values onto cAdvisor series; map only `__meta_kubernetes_node_name` to `node`, or NFD's 100+ labels multiply across every container metric |
 | Prometheus ConfigMap is Synced but scrape behavior does not change | bump `lab.projectbluefin.io/config-version` on the Deployment pod template with every scrape-config change; Prometheus has no config reloader sidecar |
+| `kubeflex-controller-manager` sustains a roughly 1 Hz ControlPlane loop, reports `failed to update final status ... object has been modified`, and looks like external bandwidth | KubeFlex v0.9.1 writes ControlPlane status during infrastructure, post-create-hook, and final readiness phases; the resulting status-update race requeues the controller. The generated `wds1` Ingress is not the cause: KubeFlex creates it outside the PostCreateHooks, does not inspect its load-balancer readiness, and the ControlPlane can still be `Ready=True` while the Ingress has an empty status | Upgrade the core chart to 0.30.0, which carries KubeFlex v0.9.3, and let ArgoCD roll the operator. Keep external reachability off by default; do not install nginx or add a class solely to silence k8sgpt. Verify `kubectl -n kubeflex-system logs deploy/kubeflex-controller-manager --tail=50` has no status-conflict loop and compare the `container_network_receive_bytes_total` rate before/after |
 | `clusteradm get token` forbidden | workflow ran as `argo` SA; needs `serviceAccountName: kubestellar-bootstrap` |
 | Workflow pod rejected "failed quota: argo-quota" | missing resources requests/limits on the template |
 | Downsynced namespace exists but is empty | objectSelectors don't match the inner objects' labels |
@@ -204,3 +205,4 @@ every core upgrade.
 - [ ] `its1` and `wds1` report Ready
 - [ ] The target ManagedCluster reports Joined and Available
 - [ ] `kubestellar-smoke-test` passes after a core upgrade
+- [ ] KubeFlex logs remain free of the ControlPlane status-conflict loop after a core-chart upgrade
