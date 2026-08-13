@@ -3,19 +3,19 @@
   "_meta": {
     "page": "compliance",
     "description": "GitOps and running cluster compliance scorecard.",
-    "generated_at": "2026-08-13T23:02:22Z",
+    "generated_at": "2026-08-13T23:19:21Z",
     "live_snapshot_ok": false,
     "git_manifests_scanned": 155,
     "live_pods_scanned": 0
   },
-  "score": 80.4,
+  "score": 79.8,
   "rules": [
     {
       "id": "registry_allowlist_git",
       "name": "Git Manifest Registry Allowlist",
       "description": "All container images in git-tracked manifests must reside on allowed registries.",
       "status": "failed",
-      "total_checked": 159,
+      "total_checked": 160,
       "violations_count": 7,
       "violations": [
         {
@@ -62,8 +62,8 @@
       "name": "No Root Disk Storage Allocations",
       "description": "No hard hostPath volume mounts on root disks (must use PVCs or approved storage).",
       "status": "failed",
-      "total_checked": 29,
-      "violations_count": 22,
+      "total_checked": 32,
+      "violations_count": 24,
       "violations": [
         {
           "source": "git:manifests/amdgpu-device-plugin.yaml",
@@ -110,8 +110,16 @@
           "detail": "Potentially unauthorized hostPath allocation on root disk: '/etc/ca-certificates'"
         },
         {
+          "source": "git:argo/workflow-templates/run-systemd-container-tests.yaml",
+          "detail": "Potentially unauthorized hostPath allocation on root disk: '/var/cache/bluefin-qa-pip'"
+        },
+        {
           "source": "git:argo/workflow-templates/run-container-tests.yaml",
           "detail": "Potentially unauthorized hostPath allocation on root disk: '/run/udev'"
+        },
+        {
+          "source": "git:argo/workflow-templates/run-container-tests.yaml",
+          "detail": "Potentially unauthorized hostPath allocation on root disk: '/var/cache/bluefin-qa-pip'"
         },
         {
           "source": "git:argo/workflow-templates/iso-e2e-pipeline.yaml",
