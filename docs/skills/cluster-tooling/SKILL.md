@@ -276,6 +276,7 @@ The custom series are exposed as
 - [BuildStream distributed builds and Buildbarn](buildstream.md)
 - [Node storage maintenance and migration](storage.md)
 - [Node recovery without SSH](node-recovery.md)
+- [Changing Zot sync prefixes safely](zot-sync.md)
 
 ## Mandatory first step
 
@@ -328,6 +329,11 @@ Do not guess flags, chart schema, or MCP method names. The K8sGPT MCP server exp
 - Two BST build pods are `Running` at the same time with 14 GiB requests each.
 - Builds repeatedly fail fast (seconds to a few minutes) without a build error
   in the container logs.
+- A Zot sync-prefix change is called verified because `skopeo inspect` timed
+  out, or because ArgoCD reports `Synced`, without any
+  `zot_repo_downloads_total` evidence.
+- A pull failure against the Zot NodePort is reported as a cluster outage
+  without first checking whether the workstation is on Tailscale.
 
 ## Verification
 
@@ -349,6 +355,10 @@ Do not guess flags, chart schema, or MCP method names. The K8sGPT MCP server exp
       writes, admit the configured writer, and keep the authenticated metrics
       scrape healthy.
 - [ ] Build workflow metric labels remain limited to `pipeline` and `status`.
+- [ ] After a Zot sync-prefix change, the live DaemonSet shows the new
+      `lab.projectbluefin.io/config-version`, and every repository in the
+      pre-change `zot_repo_downloads_total` inventory still reports a non-zero
+      counter with no error series present.
 
 ## GPU inference on Strix Halo (`exo-0`)
 
@@ -403,6 +413,25 @@ See `docs/adr/0007-local-inference-runtime.md`.
 - Narrow with `--filter=Pod`, `--filter=Deployment`, or `--namespace=<ns>`.
 - For assistant integration, prefer the MCP server mode (`k8sgpt serve --mcp`) and register it in Copilot/Claude-style MCP configs.
 - For this repo's `k8sgpt-on-demand` Argo template, keep intentionally-idle services in `ignored-services` to avoid known false-positive "Service has no endpoints" noise during stabilization. Remove services from the list once they are expected to have endpoints.
+- **K8sGPT reports symptoms, not causes. Correlate before you treat a finding
+  as the explanation.** It surfaces every unhealthy object, and the most
+  eye-catching one is often unrelated to the behaviour being investigated. A
+  finding is a lead, not a diagnosis. Confirm causation against the controller's
+  own logs and the object's status before acting:
+
+  ```bash
+  kubectl -n <ns> logs deploy/<controller> --tail=400 | grep -ciE 'error|conflict|has been modified'
+  kubectl get <kind> <name> -o jsonpath='{.status.conditions}'
+  ```
+
+  A worked example: a controller burning sustained network throughput was
+  reported alongside a broken Ingress on the same resource. The Ingress was
+  genuinely misconfigured but entirely inert; the throughput came from an
+  optimistic-concurrency requeue loop (`object has been modified`) in the
+  controller, on a resource that reported `Ready=True` throughout. Fixing the
+  Ingress would have changed nothing. Two signals distinguish these cases: a
+  resource that is `Ready=True` is not the thing failing, and a genuine cause
+  produces a matching error frequency in the logs.
 - Verified source: `/k8sgpt-ai/k8sgpt`
 
 ## Common Rationalizations

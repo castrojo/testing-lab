@@ -105,6 +105,39 @@ configuration change that must land before the queue can validate itself.
   [Automated data pushes](#automated-data-pushes).
 - Never remove the required check just to make the queue advance.
 
+### Baseline test failures deadlock every open PR
+
+If `test-validation` fails on **every** open PR with an identical set of
+failures, suspect a broken baseline on `main` rather than the PRs. Confirm it
+against a clean checkout before investigating any individual branch:
+
+```bash
+git worktree add /tmp/wt-baseline origin/main --detach
+cd /tmp/wt-baseline && python3 -m pytest -q tests/unit
+```
+
+Pre-existing failures on `main` create a deadlock that no single PR can escape:
+each fix-PR clears only a subset, so its own required check still fails, so it
+cannot merge, so the baseline is never repaired. Splitting the fixes across
+separate PRs makes this worse, not better.
+
+Resolve it by landing **one** PR that greens the whole suite. Keep it
+test-only — no manifests, no production code — so it can be reviewed quickly
+and carries no cluster risk. Where an assertion encodes a policy that was never
+actually implemented, mark it `xfail(strict=False)` with a reason naming the PR
+that implements it, rather than deleting the assertion or weakening it to pass:
+
+```python
+@pytest.mark.xfail(strict=False, reason="Policy unimplemented; see PR #NNN")
+```
+
+`strict=False` matters — the implementing PR will make the test pass, and a
+strict marker would then fail the suite it was meant to protect. Remove the
+marker in that PR.
+
+Do not reach for `--admin` to break the deadlock; bypassing the queue is
+prohibited, and the underlying red baseline would survive the merge.
+
 The Ruleset is configured in GitHub repository settings rather than in ArgoCD;
 validate it with:
 
