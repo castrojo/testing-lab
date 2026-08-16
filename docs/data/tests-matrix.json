@@ -3,7 +3,7 @@
   "_meta": {
     "page": "tests",
     "description": "Collector-derived contract for the multipage tests matrix view. Schema v3 derives branch-safe current and historical lifecycle evidence from immutable qa-run-v1 snapshots, with a deliberate legacy result compatibility projection.",
-    "generated_at": "2026-08-16T02:32:39Z",
+    "generated_at": "2026-08-16T03:23:33Z",
     "starter_artifact": false,
     "status": "partial"
   },
@@ -16,18 +16,18 @@
       "state": "available",
       "state_reason": null,
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/test-surface.json",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Count rows emitted by the collector for the tests matrix."
     },
     {
       "id": "rows_with_completed_runs",
       "label": "Rows with completed runs",
-      "value": 10,
+      "value": 11,
       "unit": "count",
       "state": "available",
       "state_reason": null,
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Count fresh terminal qa-run-v1 rows and legacy rows with a completed passed/failed result; exclude running and stale evidence."
     },
     {
@@ -38,7 +38,7 @@
       "state": "available",
       "state_reason": null,
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/test-surface.json",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Count matrix rows still marked unavailable after joining published results and enrollment issues."
     },
     {
@@ -49,7 +49,7 @@
       "state": "available",
       "state_reason": null,
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/test-runs.ndjson",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Count matrix rows with at least two pass/fail status flips in their recorded run history."
     },
     {
@@ -60,7 +60,7 @@
       "state": "available",
       "state_reason": null,
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/reference/qa-run-evidence-contract.md",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Count rows derived from exact single-suite immutable qa-run-v1 snapshots."
     }
   ],
@@ -110,24 +110,24 @@
       "state": "available",
       "state_reason": null,
       "result_status": "failed",
-      "last_run": "2026-08-15T02:32:27Z",
-      "workflow_name": "nightly-smoke-lts-1786761000",
+      "last_run": "2026-08-16T02:32:28Z",
+      "workflow_name": "nightly-smoke-lts-1786847400",
       "scenarios_total": null,
       "scenarios_failed": null,
       "pass_rate": null,
-      "history_points": 14,
+      "history_points": 15,
       "results_path": null,
       "screenshot_path": null,
       "screenshot_url": null,
       "enrollment_issue_url": null,
       "flake_flips": 2,
-      "runs_recorded": 14,
-      "evidence_state": "stale",
-      "evidence_state_reason": "Latest terminal QA evidence is older than the 24-hour freshness threshold.",
-      "started_at": "2026-08-15T02:30:21Z",
-      "finished_at": "2026-08-15T02:32:27Z",
-      "observed_at": "2026-08-15T03:00:19Z",
-      "workflow_uid": "7fce0d7a-1a84-439e-852d-6920705d5596",
+      "runs_recorded": 15,
+      "evidence_state": "failed",
+      "evidence_state_reason": null,
+      "started_at": "2026-08-16T02:30:21Z",
+      "finished_at": "2026-08-16T02:32:28Z",
+      "observed_at": "2026-08-16T03:00:08Z",
+      "workflow_uid": "c6ccc824-2238-4b7c-9437-5b83c2abb3ad",
       "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
       "digest": null,
       "image_state": "unavailable",
@@ -139,7 +139,7 @@
         "state": "not_applicable",
         "state_reason": "This QA workflow did not invoke the KDE screenshot-producing runner."
       },
-      "terminal_failure_streak": 2,
+      "terminal_failure_streak": 3,
       "repeated_failed_scenarios": [],
       "repeated_failed_scenarios_state": "available",
       "repeated_failed_scenarios_reason": null,
@@ -311,6 +311,18 @@
           "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
           "digest": null,
           "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "c6ccc824-2238-4b7c-9437-5b83c2abb3ad",
+          "workflow_name": "nightly-smoke-lts-1786847400",
+          "state": "failed",
+          "phase": "Failed",
+          "started_at": "2026-08-16T02:30:21Z",
+          "finished_at": "2026-08-16T02:32:28Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
         }
       ],
       "evidence_source": "qa-run-v1",
@@ -320,7 +332,7 @@
         "legacy_results_path": "results/bluefin-lts-testing-developer.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), collapse lifecycle snapshots by workflow_uid, then derive current state from the latest run and the 24-hour freshness threshold."
     },
     {
@@ -332,24 +344,24 @@
       "state": "available",
       "state_reason": null,
       "result_status": "passed",
-      "last_run": "2026-08-16T01:52:20Z",
-      "workflow_name": "image-poll-lts-testing-1786845120",
+      "last_run": "2026-08-16T02:52:20Z",
+      "workflow_name": "image-poll-lts-testing-1786848720",
       "scenarios_total": null,
       "scenarios_failed": null,
       "pass_rate": null,
-      "history_points": 1641,
+      "history_points": 1645,
       "results_path": null,
       "screenshot_path": null,
       "screenshot_url": null,
       "enrollment_issue_url": null,
-      "flake_flips": 29,
-      "runs_recorded": 1641,
+      "flake_flips": 31,
+      "runs_recorded": 1645,
       "evidence_state": "passed",
       "evidence_state_reason": null,
-      "started_at": "2026-08-16T01:52:00Z",
-      "finished_at": "2026-08-16T01:52:20Z",
-      "observed_at": "2026-08-16T02:00:13Z",
-      "workflow_uid": "ed7b4785-edff-4b72-b9aa-bf477d8781dc",
+      "started_at": "2026-08-16T02:52:00Z",
+      "finished_at": "2026-08-16T02:52:20Z",
+      "observed_at": "2026-08-16T03:00:08Z",
+      "workflow_uid": "c6b26d8d-f104-455a-8661-93495a3eff3d",
       "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
       "digest": null,
       "image_state": "unavailable",
@@ -20138,6 +20150,54 @@
           "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
           "digest": null,
           "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "0d4575bb-b239-4623-a8ca-fbba77561cfe",
+          "workflow_name": "image-poll-lts-testing-1786847520",
+          "state": "passed",
+          "phase": "Succeeded",
+          "started_at": "2026-08-16T02:32:00Z",
+          "finished_at": "2026-08-16T02:32:20Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "c6ccc824-2238-4b7c-9437-5b83c2abb3ad",
+          "workflow_name": "nightly-smoke-lts-1786847400",
+          "state": "failed",
+          "phase": "Failed",
+          "started_at": "2026-08-16T02:30:21Z",
+          "finished_at": "2026-08-16T02:32:28Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "7e27aeea-4bfb-4ff7-bc6b-7015c7aef939",
+          "workflow_name": "image-poll-lts-testing-1786848120",
+          "state": "passed",
+          "phase": "Succeeded",
+          "started_at": "2026-08-16T02:42:00Z",
+          "finished_at": "2026-08-16T02:42:20Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "c6b26d8d-f104-455a-8661-93495a3eff3d",
+          "workflow_name": "image-poll-lts-testing-1786848720",
+          "state": "passed",
+          "phase": "Succeeded",
+          "started_at": "2026-08-16T02:52:00Z",
+          "finished_at": "2026-08-16T02:52:20Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
         }
       ],
       "evidence_source": "qa-run-v1",
@@ -20147,7 +20207,7 @@
         "legacy_results_path": "results/bluefin-lts-testing-smoke.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), collapse lifecycle snapshots by workflow_uid, then derive current state from the latest run and the 24-hour freshness threshold."
     },
     {
@@ -20197,7 +20257,7 @@
         "legacy_results_path": "results/bluefin-lts-testing-software.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-lts-testing-software.json",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Compatibility projection from docs/results/bluefin-lts-testing-software.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
@@ -20209,24 +20269,24 @@
       "state": "available",
       "state_reason": null,
       "result_status": "failed",
-      "last_run": "2026-08-15T02:34:45Z",
-      "workflow_name": "nightly-smoke-lts-1786761000",
+      "last_run": "2026-08-16T02:34:44Z",
+      "workflow_name": "nightly-smoke-lts-1786847400",
       "scenarios_total": null,
       "scenarios_failed": null,
       "pass_rate": null,
-      "history_points": 14,
+      "history_points": 15,
       "results_path": null,
       "screenshot_path": null,
       "screenshot_url": null,
       "enrollment_issue_url": null,
       "flake_flips": 0,
-      "runs_recorded": 14,
+      "runs_recorded": 15,
       "evidence_state": "failed",
       "evidence_state_reason": null,
-      "started_at": "2026-08-15T02:32:36Z",
-      "finished_at": "2026-08-15T02:34:45Z",
-      "observed_at": "2026-08-15T03:00:19Z",
-      "workflow_uid": "7fce0d7a-1a84-439e-852d-6920705d5596",
+      "started_at": "2026-08-16T02:32:37Z",
+      "finished_at": "2026-08-16T02:34:44Z",
+      "observed_at": "2026-08-16T03:00:08Z",
+      "workflow_uid": "c6ccc824-2238-4b7c-9437-5b83c2abb3ad",
       "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
       "digest": null,
       "image_state": "unavailable",
@@ -20238,7 +20298,7 @@
         "state": "not_applicable",
         "state_reason": "This QA workflow did not invoke the KDE screenshot-producing runner."
       },
-      "terminal_failure_streak": 14,
+      "terminal_failure_streak": 15,
       "repeated_failed_scenarios": [],
       "repeated_failed_scenarios_state": "unavailable",
       "repeated_failed_scenarios_reason": "Canonical QA snapshots do not publish scenario-level failure names for these runs.",
@@ -20410,6 +20470,18 @@
           "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
           "digest": null,
           "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "c6ccc824-2238-4b7c-9437-5b83c2abb3ad",
+          "workflow_name": "nightly-smoke-lts-1786847400",
+          "state": "failed",
+          "phase": "Failed",
+          "started_at": "2026-08-16T02:32:37Z",
+          "finished_at": "2026-08-16T02:34:44Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
         }
       ],
       "evidence_source": "qa-run-v1",
@@ -20419,7 +20491,7 @@
         "legacy_results_path": "results/bluefin-lts-testing-system.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), collapse lifecycle snapshots by workflow_uid, then derive current state from the latest run and the 24-hour freshness threshold."
     },
     {
@@ -20469,7 +20541,7 @@
         "legacy_results_path": "results/bluefin-testing-common.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-testing-common.json",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Compatibility projection from docs/results/bluefin-testing-common.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
@@ -20481,24 +20553,24 @@
       "state": "available",
       "state_reason": null,
       "result_status": "failed",
-      "last_run": "2026-08-15T02:00:31Z",
-      "workflow_name": "nightly-smoke-1786759200",
+      "last_run": "2026-08-16T02:00:31Z",
+      "workflow_name": "nightly-smoke-1786845600",
       "scenarios_total": null,
       "scenarios_failed": null,
       "pass_rate": null,
-      "history_points": 14,
+      "history_points": 15,
       "results_path": null,
       "screenshot_path": null,
       "screenshot_url": null,
       "enrollment_issue_url": null,
       "flake_flips": 0,
-      "runs_recorded": 14,
-      "evidence_state": "stale",
-      "evidence_state_reason": "Latest terminal QA evidence is older than the 24-hour freshness threshold.",
-      "started_at": "2026-08-15T02:00:21Z",
-      "finished_at": "2026-08-15T02:00:31Z",
-      "observed_at": "2026-08-15T03:00:19Z",
-      "workflow_uid": "65b66b7b-cd55-4400-8181-a1ddb21e0d33",
+      "runs_recorded": 15,
+      "evidence_state": "failed",
+      "evidence_state_reason": null,
+      "started_at": "2026-08-16T02:00:22Z",
+      "finished_at": "2026-08-16T02:00:31Z",
+      "observed_at": "2026-08-16T03:00:08Z",
+      "workflow_uid": "7ac678d8-ef36-445a-af2a-a01eadb10b15",
       "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
       "digest": null,
       "image_state": "unavailable",
@@ -20510,7 +20582,7 @@
         "state": "not_applicable",
         "state_reason": "This QA workflow did not invoke the KDE screenshot-producing runner."
       },
-      "terminal_failure_streak": 14,
+      "terminal_failure_streak": 15,
       "repeated_failed_scenarios": [
         {
           "scenario": "Ptyxis launches and window is accessible",
@@ -20687,6 +20759,18 @@
           "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
           "digest": null,
           "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "7ac678d8-ef36-445a-af2a-a01eadb10b15",
+          "workflow_name": "nightly-smoke-1786845600",
+          "state": "failed",
+          "phase": "Failed",
+          "started_at": "2026-08-16T02:00:22Z",
+          "finished_at": "2026-08-16T02:00:31Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
         }
       ],
       "evidence_source": "qa-run-v1",
@@ -20696,7 +20780,7 @@
         "legacy_results_path": "results/bluefin-testing-developer.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), collapse lifecycle snapshots by workflow_uid, then derive current state from the latest run and the 24-hour freshness threshold."
     },
     {
@@ -20709,23 +20793,23 @@
       "state_reason": "Workflow is still running; terminal result evidence is not published.",
       "result_status": "pending",
       "last_run": null,
-      "workflow_name": "image-poll-bluefin-testing-1786845600",
+      "workflow_name": "image-poll-bluefin-testing-1786849200",
       "scenarios_total": null,
       "scenarios_failed": null,
       "pass_rate": null,
-      "history_points": 1697,
+      "history_points": 1702,
       "results_path": null,
       "screenshot_path": null,
       "screenshot_url": null,
       "enrollment_issue_url": null,
-      "flake_flips": 27,
-      "runs_recorded": 1697,
+      "flake_flips": 29,
+      "runs_recorded": 1702,
       "evidence_state": "running",
       "evidence_state_reason": "Workflow is still running; terminal result evidence is not published.",
-      "started_at": "2026-08-16T02:00:01Z",
+      "started_at": "2026-08-16T03:00:01Z",
       "finished_at": null,
-      "observed_at": "2026-08-16T02:00:13Z",
-      "workflow_uid": "d4db6cf4-be73-4c0e-83e1-b839f6466e63",
+      "observed_at": "2026-08-16T03:00:08Z",
+      "workflow_uid": "4a9926dd-6dd8-44bd-927b-4b45d0968e1d",
       "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
       "digest": null,
       "image_state": "unavailable",
@@ -41186,6 +41270,66 @@
           "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
           "digest": null,
           "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "7ac678d8-ef36-445a-af2a-a01eadb10b15",
+          "workflow_name": "nightly-smoke-1786845600",
+          "state": "failed",
+          "phase": "Failed",
+          "started_at": "2026-08-16T02:00:22Z",
+          "finished_at": "2026-08-16T02:00:31Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "a3dcd7bc-c511-4e36-b3f4-85715dc01159",
+          "workflow_name": "image-poll-bluefin-testing-1786847400",
+          "state": "passed",
+          "phase": "Succeeded",
+          "started_at": "2026-08-16T02:30:01Z",
+          "finished_at": "2026-08-16T02:30:31Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "54f00eaf-787b-43be-bb9c-a4c5c43561c3",
+          "workflow_name": "image-poll-bluefin-testing-1786848000",
+          "state": "passed",
+          "phase": "Succeeded",
+          "started_at": "2026-08-16T02:40:00Z",
+          "finished_at": "2026-08-16T02:40:20Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "7e22617d-d346-457e-8c15-f9bbaf967434",
+          "workflow_name": "image-poll-bluefin-testing-1786848600",
+          "state": "passed",
+          "phase": "Succeeded",
+          "started_at": "2026-08-16T02:50:00Z",
+          "finished_at": "2026-08-16T02:50:20Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "4a9926dd-6dd8-44bd-927b-4b45d0968e1d",
+          "workflow_name": "image-poll-bluefin-testing-1786849200",
+          "state": "running",
+          "phase": "Running",
+          "started_at": "2026-08-16T03:00:01Z",
+          "finished_at": null,
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
         }
       ],
       "evidence_source": "qa-run-v1",
@@ -41195,7 +41339,7 @@
         "legacy_results_path": "results/bluefin-testing-smoke.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), collapse lifecycle snapshots by workflow_uid, then derive current state from the latest run and the 24-hour freshness threshold."
     },
     {
@@ -41245,7 +41389,7 @@
         "legacy_results_path": "results/bluefin-testing-software.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-testing-software.json",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Compatibility projection from docs/results/bluefin-testing-software.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
@@ -41257,24 +41401,24 @@
       "state": "available",
       "state_reason": null,
       "result_status": "failed",
-      "last_run": "2026-08-15T02:00:50Z",
-      "workflow_name": "nightly-smoke-1786759200",
+      "last_run": "2026-08-16T02:00:51Z",
+      "workflow_name": "nightly-smoke-1786845600",
       "scenarios_total": null,
       "scenarios_failed": null,
       "pass_rate": null,
-      "history_points": 14,
+      "history_points": 15,
       "results_path": null,
       "screenshot_path": null,
       "screenshot_url": null,
       "enrollment_issue_url": null,
       "flake_flips": 0,
-      "runs_recorded": 14,
-      "evidence_state": "stale",
-      "evidence_state_reason": "Latest terminal QA evidence is older than the 24-hour freshness threshold.",
-      "started_at": "2026-08-15T02:00:42Z",
-      "finished_at": "2026-08-15T02:00:50Z",
-      "observed_at": "2026-08-15T03:00:19Z",
-      "workflow_uid": "65b66b7b-cd55-4400-8181-a1ddb21e0d33",
+      "runs_recorded": 15,
+      "evidence_state": "failed",
+      "evidence_state_reason": null,
+      "started_at": "2026-08-16T02:00:42Z",
+      "finished_at": "2026-08-16T02:00:51Z",
+      "observed_at": "2026-08-16T03:00:08Z",
+      "workflow_uid": "7ac678d8-ef36-445a-af2a-a01eadb10b15",
       "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
       "digest": null,
       "image_state": "unavailable",
@@ -41286,7 +41430,7 @@
         "state": "not_applicable",
         "state_reason": "This QA workflow did not invoke the KDE screenshot-producing runner."
       },
-      "terminal_failure_streak": 14,
+      "terminal_failure_streak": 15,
       "repeated_failed_scenarios": [],
       "repeated_failed_scenarios_state": "unavailable",
       "repeated_failed_scenarios_reason": "Canonical QA snapshots do not publish scenario-level failure names for these runs.",
@@ -41458,6 +41602,18 @@
           "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
           "digest": null,
           "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "7ac678d8-ef36-445a-af2a-a01eadb10b15",
+          "workflow_name": "nightly-smoke-1786845600",
+          "state": "failed",
+          "phase": "Failed",
+          "started_at": "2026-08-16T02:00:42Z",
+          "finished_at": "2026-08-16T02:00:51Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
         }
       ],
       "evidence_source": "qa-run-v1",
@@ -41467,7 +41623,7 @@
         "legacy_results_path": "results/bluefin-testing-system.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), collapse lifecycle snapshots by workflow_uid, then derive current state from the latest run and the 24-hour freshness threshold."
     },
     {
@@ -41491,8 +41647,8 @@
       "enrollment_issue_url": null,
       "flake_flips": 0,
       "runs_recorded": 12,
-      "evidence_state": "failed",
-      "evidence_state_reason": null,
+      "evidence_state": "stale",
+      "evidence_state_reason": "Latest terminal QA evidence is older than the 24-hour freshness threshold.",
       "started_at": "2026-08-15T03:00:28Z",
       "finished_at": "2026-08-15T03:02:35Z",
       "observed_at": "2026-08-15T04:00:26Z",
@@ -41665,7 +41821,7 @@
         "legacy_results_path": "results/dakota-testing-developer.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), collapse lifecycle snapshots by workflow_uid, then derive current state from the latest run and the 24-hour freshness threshold."
     },
     {
@@ -41677,24 +41833,24 @@
       "state": "available",
       "state_reason": null,
       "result_status": "passed",
-      "last_run": "2026-08-16T01:58:20Z",
-      "workflow_name": "image-poll-dakota-1786845480",
+      "last_run": "2026-08-16T02:58:20Z",
+      "workflow_name": "image-poll-dakota-1786849080",
       "scenarios_total": null,
       "scenarios_failed": null,
       "pass_rate": null,
-      "history_points": 1628,
+      "history_points": 1631,
       "results_path": null,
       "screenshot_path": null,
       "screenshot_url": null,
       "enrollment_issue_url": null,
       "flake_flips": 24,
-      "runs_recorded": 1628,
+      "runs_recorded": 1631,
       "evidence_state": "passed",
       "evidence_state_reason": null,
-      "started_at": "2026-08-16T01:58:00Z",
-      "finished_at": "2026-08-16T01:58:20Z",
-      "observed_at": "2026-08-16T02:00:13Z",
-      "workflow_uid": "25ce0038-896a-4036-a587-d58fec25e58d",
+      "started_at": "2026-08-16T02:58:00Z",
+      "finished_at": "2026-08-16T02:58:20Z",
+      "observed_at": "2026-08-16T03:00:08Z",
+      "workflow_uid": "08aabf7b-df23-4342-8f36-1e3833e33194",
       "image_ref": "ghcr.io/projectbluefin/dakota:testing",
       "digest": null,
       "image_state": "unavailable",
@@ -61327,6 +61483,42 @@
           "image_ref": "ghcr.io/projectbluefin/dakota:testing",
           "digest": null,
           "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "177962c9-e519-4b3c-97a9-8953fb83d432",
+          "workflow_name": "image-poll-dakota-1786847880",
+          "state": "passed",
+          "phase": "Succeeded",
+          "started_at": "2026-08-16T02:38:00Z",
+          "finished_at": "2026-08-16T02:38:20Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/dakota:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "b53133bd-8379-469f-85bf-6a9663b15288",
+          "workflow_name": "image-poll-dakota-1786848480",
+          "state": "passed",
+          "phase": "Succeeded",
+          "started_at": "2026-08-16T02:48:00Z",
+          "finished_at": "2026-08-16T02:48:20Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/dakota:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+        },
+        {
+          "workflow_uid": "08aabf7b-df23-4342-8f36-1e3833e33194",
+          "workflow_name": "image-poll-dakota-1786849080",
+          "state": "passed",
+          "phase": "Succeeded",
+          "started_at": "2026-08-16T02:58:00Z",
+          "finished_at": "2026-08-16T02:58:20Z",
+          "observed_at": "2026-08-16T03:00:08Z",
+          "image_ref": "ghcr.io/projectbluefin/dakota:testing",
+          "digest": null,
+          "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
         }
       ],
       "evidence_source": "qa-run-v1",
@@ -61336,7 +61528,7 @@
         "legacy_results_path": "results/dakota-testing-smoke.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), collapse lifecycle snapshots by workflow_uid, then derive current state from the latest run and the 24-hour freshness threshold."
     },
     {
@@ -61386,7 +61578,7 @@
         "legacy_results_path": "results/dakota-testing-software.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/dakota-testing-software.json",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Compatibility projection from docs/results/dakota-testing-software.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
@@ -61410,8 +61602,8 @@
       "enrollment_issue_url": null,
       "flake_flips": 0,
       "runs_recorded": 12,
-      "evidence_state": "failed",
-      "evidence_state_reason": null,
+      "evidence_state": "stale",
+      "evidence_state_reason": "Latest terminal QA evidence is older than the 24-hour freshness threshold.",
       "started_at": "2026-08-15T03:02:45Z",
       "finished_at": "2026-08-15T03:04:53Z",
       "observed_at": "2026-08-15T04:00:26Z",
@@ -61584,7 +61776,7 @@
         "legacy_results_path": "results/dakota-testing-system.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), collapse lifecycle snapshots by workflow_uid, then derive current state from the latest run and the 24-hour freshness threshold."
     },
     {
@@ -61634,7 +61826,7 @@
         "legacy_results_path": "results/flatcar-testing-flatcar.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/flatcar-testing-flatcar.json",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Compatibility projection from docs/results/flatcar-testing-flatcar.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
     },
     {
@@ -70629,7 +70821,7 @@
         "legacy_results_path": "results/bluefin-stable-smoke.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), collapse lifecycle snapshots by workflow_uid, then derive current state from the latest run and the 24-hour freshness threshold."
     },
     {
@@ -77484,7 +77676,7 @@
         "legacy_results_path": "results/bluefin-lts-stable-smoke.json"
       },
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), collapse lifecycle snapshots by workflow_uid, then derive current state from the latest run and the 24-hour freshness threshold."
     },
     {
@@ -77534,7 +77726,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/278",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -77584,7 +77776,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/278",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -77634,7 +77826,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/278",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -77684,7 +77876,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/278",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -77734,7 +77926,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/278",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -77784,7 +77976,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/278",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -77834,7 +78026,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/284",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -77884,7 +78076,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/284",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -77934,7 +78126,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/284",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -77984,7 +78176,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/284",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78034,7 +78226,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/284",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78084,7 +78276,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/284",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78134,7 +78326,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/285",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78184,7 +78376,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/285",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78234,7 +78426,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/285",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78284,7 +78476,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/285",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78334,7 +78526,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/285",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78384,7 +78576,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/285",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78434,7 +78626,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/283",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78484,7 +78676,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/283",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78534,7 +78726,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/283",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78584,7 +78776,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/283",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78634,7 +78826,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/283",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78684,7 +78876,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/283",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78734,7 +78926,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/280",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78784,7 +78976,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/280",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78834,7 +79026,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/280",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78884,7 +79076,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/280",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78934,7 +79126,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/280",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -78984,7 +79176,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/280",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79034,7 +79226,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/279",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79084,7 +79276,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/279",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79134,7 +79326,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/279",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79184,7 +79376,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/279",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79234,7 +79426,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/279",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79284,7 +79476,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/279",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79334,7 +79526,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/281",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79384,7 +79576,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/281",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79434,7 +79626,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/281",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79484,7 +79676,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/281",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79534,7 +79726,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/281",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79584,7 +79776,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/281",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79634,7 +79826,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/282",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79684,7 +79876,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/282",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79734,7 +79926,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/282",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79784,7 +79976,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/282",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79834,7 +80026,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/282",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     },
     {
@@ -79884,7 +80076,7 @@
         "legacy_results_path": null
       },
       "source_url": "https://github.com/projectbluefin/lab/issues/282",
-      "collected_at": "2026-08-16T02:32:39Z",
+      "collected_at": "2026-08-16T03:23:33Z",
       "derivation": "Unenrolled variant row derived from docs/data/enrollment-issues.json; no QA results are collected yet."
     }
   ]
