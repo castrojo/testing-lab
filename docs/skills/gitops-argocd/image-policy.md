@@ -64,7 +64,7 @@ upstream-native and reproducible; it is not distribution tooling.
 | `skopeo` | skopeo 1.23.0 at `/usr/bin/skopeo` | any shell (distroless, no entrypoint) |
 | `bluefin` | full ffmpeg (libx265, libsvtav1, ffv1, prores_ks), Mesa RADV, git, curl, tar, xz, python3 | — |
 
-`bluefin` is an ostree/bootc image: `/opt` → `/var/opt` and `/usr/local` → `/var/usrlocal`, and `/var` is empty at build time. Install into `/usr/lib`.
+`bluefin` is an ostree/bootc image: `/opt` → `/var/opt`, `/usr/local` → `/var/usrlocal` and `/root` → `/var/roothome`, and `/var` is empty at build time. Install into `/usr/lib`, and set `HOME` to a real in-image path or anything writing to it fails with `FileExistsError`/`NotDir`.
 
 **Zot pull-through cache — 6 upstreams (as of 2026):**
 

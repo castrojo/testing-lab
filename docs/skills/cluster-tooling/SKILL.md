@@ -397,6 +397,19 @@ Two cluster-specific traps that cost real time:
   cannot bind without a pod, ArgoCD blocks its sync waiting for PVC health, and
   so the Deployment is never created at all. Scale at runtime instead of
   committing `replicas: 0`.
+- **The pod network cannot carry bulk data across nodes.** Measured 2026-08-21:
+  pod->pod `10.42.x` throughput is **235 KB/s** while the same file over the raw
+  USB4 host addresses (`10.99.0.x`) does **1.10 GB/s** and Ethernet does
+  294 MB/s. That is a ~4,600x degradation in the CNI path, and it is not
+  routing — rule 5209 correctly sends pod-CIDR traffic via `thunderbolt0` even
+  for a pod source IP, and MTU is a uniform 1500. Do not design a workflow that
+  ships large intermediates between pods on different nodes; render/compute
+  single-node, or use `hostNetwork: true`, which reaches the full link speed.
+  Tracked in issue #662.
+- **`ip route get <peer-pod-ip>` must run in the host netns** (a
+  `hostNetwork: true` pod). Inside a pod it always answers
+  `via <cni0 gateway> dev eth0`, because interface selection happens on the
+  host — so the in-pod check "confirms" USB4 while proving nothing.
 
 See `docs/adr/0007-local-inference-runtime.md`.
 
