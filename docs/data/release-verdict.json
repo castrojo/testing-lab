@@ -3,7 +3,7 @@
   "_meta": {
     "page": "index",
     "description": "Per-lane release verdict (ADR 0002): build + lab QA + cosign signature per latest published digest",
-    "generated_at": "2026-08-21T03:25:40Z",
+    "generated_at": "2026-08-21T03:49:58Z",
     "starter_artifact": false,
     "status": "live"
   },
@@ -14,7 +14,7 @@
       "value": 0,
       "total": 5,
       "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/adr/0002-release-verdict-definition.md",
-      "collected_at": "2026-08-21T03:25:40Z",
+      "collected_at": "2026-08-21T03:49:58Z",
       "derivation": "count of lanes whose verdict is good under ADR 0002"
     }
   ],
@@ -54,7 +54,7 @@
         "reason": "publisher-side CVE summary export not yet wired (phase 3); displayed alongside, never gating (ADR 0002)"
       },
       "source_url": "https://github.com/projectbluefin/bluefin",
-      "collected_at": "2026-08-21T03:25:40Z",
+      "collected_at": "2026-08-21T03:49:58Z",
       "derivation": "ADR 0002: build (factory-stats image_builds) + lab QA gating suites only (smoke/system gate; flatcar gate for the flatcar lane; developer/software/common informational) + cosign keyless verify per digest; QA evidence older than the current build renders pending.",
       "state": "available",
       "state_reason": null
@@ -75,12 +75,12 @@
       },
       "qa": {
         "status": "pending",
-        "reason": "gate QA evidence pending for suite(s): smoke, system against digest sha256:bf615",
-        "last_run": "2026-08-20T02:05:06Z",
+        "reason": "gate QA evidence pending for suite(s): smoke against digest sha256:bf615",
+        "last_run": "2026-08-21T02:00:55Z",
         "lab_sourced": true,
         "informational": {
-          "status": "pending",
-          "reason": "informational QA evidence pending for suite(s): developer against digest sha256:bf615",
+          "status": "failed",
+          "reason": "informational QA suite(s) failing: common, developer",
           "rows": [
             {
               "id": "bluefin-testing-common",
@@ -129,7 +129,7 @@
                 "legacy_results_path": "results/bluefin-testing-common.json"
               },
               "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-testing-common.json",
-              "collected_at": "2026-08-21T02:34:27Z",
+              "collected_at": "2026-08-21T03:25:42Z",
               "derivation": "Compatibility projection from docs/results/bluefin-testing-common.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
             },
             {
@@ -141,24 +141,24 @@
               "state": "available",
               "state_reason": null,
               "result_status": "failed",
-              "last_run": "2026-08-20T02:00:57Z",
-              "workflow_name": "nightly-smoke-1787191200",
+              "last_run": "2026-08-21T02:00:34Z",
+              "workflow_name": "nightly-smoke-1787277600",
               "scenarios_total": null,
               "scenarios_failed": null,
               "pass_rate": null,
-              "history_points": 19,
+              "history_points": 20,
               "results_path": null,
               "screenshot_path": null,
               "screenshot_url": null,
               "enrollment_issue_url": null,
               "flake_flips": 0,
-              "runs_recorded": 19,
-              "evidence_state": "stale",
-              "evidence_state_reason": "Latest terminal QA evidence is older than the 24-hour freshness threshold.",
-              "started_at": "2026-08-20T02:00:32Z",
-              "finished_at": "2026-08-20T02:00:57Z",
-              "observed_at": "2026-08-20T03:00:14Z",
-              "workflow_uid": "3ee39180-30a0-41e8-af99-0eb3b52e2358",
+              "runs_recorded": 20,
+              "evidence_state": "failed",
+              "evidence_state_reason": null,
+              "started_at": "2026-08-21T02:00:24Z",
+              "finished_at": "2026-08-21T02:00:34Z",
+              "observed_at": "2026-08-21T03:00:07Z",
+              "workflow_uid": "4e21d4c3-4fd7-4d38-a354-864657f366dd",
               "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
               "digest": null,
               "image_state": "unavailable",
@@ -170,7 +170,7 @@
                 "state": "not_applicable",
                 "state_reason": "This QA workflow did not invoke the KDE screenshot-producing runner."
               },
-              "terminal_failure_streak": 19,
+              "terminal_failure_streak": 20,
               "repeated_failed_scenarios": [
                 {
                   "scenario": "Ptyxis launches and window is accessible",
@@ -407,6 +407,18 @@
                   "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
                   "digest": null,
                   "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+                },
+                {
+                  "workflow_uid": "4e21d4c3-4fd7-4d38-a354-864657f366dd",
+                  "workflow_name": "nightly-smoke-1787277600",
+                  "state": "failed",
+                  "phase": "Failed",
+                  "started_at": "2026-08-21T02:00:24Z",
+                  "finished_at": "2026-08-21T02:00:34Z",
+                  "observed_at": "2026-08-21T03:00:07Z",
+                  "image_ref": "ghcr.io/projectbluefin/bluefin:testing",
+                  "digest": null,
+                  "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
                 }
               ],
               "evidence_source": "qa-run-v1",
@@ -416,7 +428,7 @@
                 "legacy_results_path": "results/bluefin-testing-developer.json"
               },
               "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson",
-              "collected_at": "2026-08-21T02:34:27Z",
+              "collected_at": "2026-08-21T03:25:42Z",
               "derivation": "Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), collapse lifecycle snapshots by workflow_uid, then derive current state from the latest run and the 24-hour freshness threshold."
             },
             {
@@ -466,11 +478,11 @@
                 "legacy_results_path": "results/bluefin-testing-software.json"
               },
               "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-testing-software.json",
-              "collected_at": "2026-08-21T02:34:27Z",
+              "collected_at": "2026-08-21T03:25:42Z",
               "derivation": "Compatibility projection from docs/results/bluefin-testing-software.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
             }
           ],
-          "last_run": "2026-08-20T02:00:57Z"
+          "last_run": "2026-08-21T02:00:34Z"
         }
       },
       "signature": {
@@ -483,7 +495,7 @@
         "reason": "publisher-side CVE summary export not yet wired (phase 3); displayed alongside, never gating (ADR 0002)"
       },
       "source_url": "https://github.com/projectbluefin/bluefin",
-      "collected_at": "2026-08-21T03:25:40Z",
+      "collected_at": "2026-08-21T03:49:58Z",
       "derivation": "ADR 0002: build (factory-stats image_builds) + lab QA gating suites only (smoke/system gate; flatcar gate for the flatcar lane; developer/software/common informational) + cosign keyless verify per digest; QA evidence older than the current build renders pending.",
       "state": "available",
       "state_reason": null
@@ -523,7 +535,7 @@
         "reason": "publisher-side CVE summary export not yet wired (phase 3); displayed alongside, never gating (ADR 0002)"
       },
       "source_url": "https://github.com/projectbluefin/bluefin-lts",
-      "collected_at": "2026-08-21T03:25:40Z",
+      "collected_at": "2026-08-21T03:49:58Z",
       "derivation": "ADR 0002: build (factory-stats image_builds) + lab QA gating suites only (smoke/system gate; flatcar gate for the flatcar lane; developer/software/common informational) + cosign keyless verify per digest; QA evidence older than the current build renders pending.",
       "state": "available",
       "state_reason": null
@@ -545,7 +557,7 @@
       "qa": {
         "status": "failed",
         "reason": "gate QA suite(s) failing: system",
-        "last_run": "2026-08-21T01:52:20Z",
+        "last_run": "2026-08-21T02:52:20Z",
         "lab_sourced": true,
         "informational": {
           "status": "pending",
@@ -560,24 +572,24 @@
               "state": "available",
               "state_reason": null,
               "result_status": "failed",
-              "last_run": "2026-08-20T02:32:20Z",
-              "workflow_name": "nightly-smoke-lts-1787193000",
+              "last_run": "2026-08-21T02:32:19Z",
+              "workflow_name": "nightly-smoke-lts-1787279400",
               "scenarios_total": null,
               "scenarios_failed": null,
               "pass_rate": null,
-              "history_points": 19,
+              "history_points": 20,
               "results_path": null,
               "screenshot_path": null,
               "screenshot_url": null,
               "enrollment_issue_url": null,
               "flake_flips": 2,
-              "runs_recorded": 19,
-              "evidence_state": "stale",
-              "evidence_state_reason": "Latest terminal QA evidence is older than the 24-hour freshness threshold.",
-              "started_at": "2026-08-20T02:30:11Z",
-              "finished_at": "2026-08-20T02:32:20Z",
-              "observed_at": "2026-08-20T03:00:14Z",
-              "workflow_uid": "1c0cf1a0-8a5f-471c-99f4-3bf8774c0018",
+              "runs_recorded": 20,
+              "evidence_state": "failed",
+              "evidence_state_reason": null,
+              "started_at": "2026-08-21T02:30:11Z",
+              "finished_at": "2026-08-21T02:32:19Z",
+              "observed_at": "2026-08-21T03:00:07Z",
+              "workflow_uid": "69909d95-b9d2-49d4-83cd-13a0b7bfe20b",
               "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
               "digest": null,
               "image_state": "unavailable",
@@ -589,7 +601,7 @@
                 "state": "not_applicable",
                 "state_reason": "This QA workflow did not invoke the KDE screenshot-producing runner."
               },
-              "terminal_failure_streak": 7,
+              "terminal_failure_streak": 8,
               "repeated_failed_scenarios": [],
               "repeated_failed_scenarios_state": "available",
               "repeated_failed_scenarios_reason": null,
@@ -821,6 +833,18 @@
                   "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
                   "digest": null,
                   "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
+                },
+                {
+                  "workflow_uid": "69909d95-b9d2-49d4-83cd-13a0b7bfe20b",
+                  "workflow_name": "nightly-smoke-lts-1787279400",
+                  "state": "failed",
+                  "phase": "Failed",
+                  "started_at": "2026-08-21T02:30:11Z",
+                  "finished_at": "2026-08-21T02:32:19Z",
+                  "observed_at": "2026-08-21T03:00:07Z",
+                  "image_ref": "ghcr.io/projectbluefin/bluefin-lts:testing",
+                  "digest": null,
+                  "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson"
                 }
               ],
               "evidence_source": "qa-run-v1",
@@ -830,7 +854,7 @@
                 "legacy_results_path": "results/bluefin-lts-testing-developer.json"
               },
               "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson",
-              "collected_at": "2026-08-21T02:34:27Z",
+              "collected_at": "2026-08-21T03:25:42Z",
               "derivation": "Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), collapse lifecycle snapshots by workflow_uid, then derive current state from the latest run and the 24-hour freshness threshold."
             },
             {
@@ -880,11 +904,11 @@
                 "legacy_results_path": "results/bluefin-lts-testing-software.json"
               },
               "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/bluefin-lts-testing-software.json",
-              "collected_at": "2026-08-21T02:34:27Z",
+              "collected_at": "2026-08-21T03:25:42Z",
               "derivation": "Compatibility projection from docs/results/bluefin-lts-testing-software.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
             }
           ],
-          "last_run": "2026-08-20T02:32:20Z"
+          "last_run": "2026-08-21T02:32:19Z"
         }
       },
       "signature": {
@@ -897,7 +921,7 @@
         "reason": "publisher-side CVE summary export not yet wired (phase 3); displayed alongside, never gating (ADR 0002)"
       },
       "source_url": "https://github.com/projectbluefin/bluefin-lts",
-      "collected_at": "2026-08-21T03:25:40Z",
+      "collected_at": "2026-08-21T03:49:58Z",
       "derivation": "ADR 0002: build (factory-stats image_builds) + lab QA gating suites only (smoke/system gate; flatcar gate for the flatcar lane; developer/software/common informational) + cosign keyless verify per digest; QA evidence older than the current build renders pending.",
       "state": "available",
       "state_reason": null
@@ -919,7 +943,7 @@
       "qa": {
         "status": "pending",
         "reason": "gate QA evidence pending for suite(s): system against digest sha256:b13ac",
-        "last_run": "2026-08-21T01:58:20Z",
+        "last_run": "2026-08-21T02:58:20Z",
         "lab_sourced": true,
         "informational": {
           "status": "pending",
@@ -946,8 +970,8 @@
               "enrollment_issue_url": null,
               "flake_flips": 0,
               "runs_recorded": 17,
-              "evidence_state": "failed",
-              "evidence_state_reason": null,
+              "evidence_state": "stale",
+              "evidence_state_reason": "Latest terminal QA evidence is older than the 24-hour freshness threshold.",
               "started_at": "2026-08-20T03:00:23Z",
               "finished_at": "2026-08-20T03:02:31Z",
               "observed_at": "2026-08-20T04:00:06Z",
@@ -1180,7 +1204,7 @@
                 "legacy_results_path": "results/dakota-testing-developer.json"
               },
               "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/data/history/qa-runs.ndjson",
-              "collected_at": "2026-08-21T02:34:27Z",
+              "collected_at": "2026-08-21T03:25:42Z",
               "derivation": "Select immutable qa-run-v1 snapshots by exact (variant, branch, suite), collapse lifecycle snapshots by workflow_uid, then derive current state from the latest run and the 24-hour freshness threshold."
             },
             {
@@ -1230,7 +1254,7 @@
                 "legacy_results_path": "results/dakota-testing-software.json"
               },
               "source_url": "https://github.com/projectbluefin/lab/blob/main/docs/results/dakota-testing-software.json",
-              "collected_at": "2026-08-21T02:34:27Z",
+              "collected_at": "2026-08-21T03:25:42Z",
               "derivation": "Compatibility projection from docs/results/dakota-testing-software.json; it is not immutable qa-run-v1 evidence and therefore does not populate exact lifecycle fields."
             }
           ],
@@ -1247,7 +1271,7 @@
         "reason": "publisher-side CVE summary export not yet wired (phase 3); displayed alongside, never gating (ADR 0002)"
       },
       "source_url": "https://github.com/projectbluefin/dakota",
-      "collected_at": "2026-08-21T03:25:40Z",
+      "collected_at": "2026-08-21T03:49:58Z",
       "derivation": "ADR 0002: build (factory-stats image_builds) + lab QA gating suites only (smoke/system gate; flatcar gate for the flatcar lane; developer/software/common informational) + cosign keyless verify per digest; QA evidence older than the current build renders pending.",
       "state": "available",
       "state_reason": null
