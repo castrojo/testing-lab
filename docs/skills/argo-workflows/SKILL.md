@@ -34,7 +34,7 @@ metadata:
 The workflow authoring guidance is split by topic:
 
 - [Authoring rules](authoring.md) — template structure, parameters, outputs, hooks, linting, ArgoCD ownership.
-- [Common patterns](patterns.md) — image-sync, VM concurrency, result publishing, CronWorkflow traps, Dakota lanes.
+- [Common patterns](patterns.md) — topic-grouped reference: image sync and pollers, concurrency and semaphores, publishing results to GitHub, `when` traps, CronWorkflows, storage and node safety, desktop QA probes, BuildStream sizing.
 
 ## Common Rationalizations
 
@@ -70,7 +70,7 @@ The workflow authoring guidance is split by topic:
   so one workflow can hold every slot and starve every other run. Put
   `parallelism` on the fan-out template and keep it below the semaphore limit.
   Enforced by `scripts/check_semaphore_topology.py` in `just lint`; see
-  [patterns §15b](patterns.md).
+  [patterns: semaphore topology](patterns.md#semaphore-topology-hold-the-key-at-one-level-cap-every-fan-out).
 - A `spec.synchronization` semaphore on a pipeline whose children need the same
   key — the parent holds the slot for the whole run and deadlocks its own
   children. Declare the key only on the leaf template that consumes the
@@ -111,7 +111,7 @@ The workflow authoring guidance is split by topic:
   cancels the superseded run, or that leaves workflows running after their PR
   merges — both drain the `ghost-container-qa` semaphore for ~20 minutes per
   stale run. Supersede on every poll and reap closed PRs; see
-  [patterns §20ac](patterns.md).
+  [patterns: PR reaping](patterns.md#reap-superseded-and-closed-pr-workflows-in-the-poller).
 - Cancelling a PR workflow with `kubectl delete` — that skips `onExit`, so
   `report-final` never runs and the commit is stuck on `pending` forever. Use
   `spec.shutdown: Stop` (what `argo stop` sets).
@@ -124,7 +124,7 @@ The workflow authoring guidance is split by topic:
 - A VM or build pipeline that uses a node selector to reach local storage. Use
   scheduler-selected `WaitForFirstConsumer` PVC placement on an explicitly
   configured non-root data mount instead.
-- Python inside bash inside YAML (colons + quotes cause parse errors — use `curl`+`jq` instead; never `python3 -c` or heredoc Python; see §16 GitHub Contents API pattern)
+- Python inside bash inside YAML (colons + quotes cause parse errors — use `curl`+`jq` instead; never `python3 -c` or heredoc Python; see [patterns: Contents API vs standalone git push-back](patterns.md#contents-api-vs-standalone-git-push-back))
 - Heredoc `<< 'EOF'` inside a YAML block scalar — indentation breaks the YAML parser. ArgoCD returns `ManifestGenerationError: yaml: could not find expected ':'`. Write scripts to files in initContainers or use inline jq instead.
 - **Exclusive GPU contention in nested GNOME QA**: any nested QA target that lets
   GNOME Shell run with mutter's *native* backend takes exclusive DRM master on the
@@ -181,8 +181,20 @@ The workflow authoring guidance is split by topic:
   `@non_critical_execution` swallows it, so this is report loss and log noise —
   not scenario failures — but it buries real errors. Install `setuptools<81`
   alongside qecore.
+- **Installing packages at container runtime** (`dnf install`, `apt-get
+  install`, `pip install`, `curl | sh`, or enabling a third-party repo from
+  inside a pod) — banned by
+  [`gitops-argocd/image-policy.md`](../gitops-argocd/image-policy.md): it
+  bypasses the registry allowlist, destroys reproducibility, and breaks
+  offline resilience. Use an org-published image that already carries the
+  tool: `ghcr.io/projectbluefin/lab-runner` (bash, curl, git, jq, python3,
+  kubectl), `ghcr.io/projectbluefin/skopeo` (distroless skopeo, no shell), or
+  `ghcr.io/projectbluefin/arc-runner` (podman, buildah, skopeo, git, oras,
+  kubectl — baked in at build time via `images/arc-runner/Containerfile`).
+  If no published image fits, build one: package installs belong in a
+  Containerfile against a digest-pinned base, never in a running pod.
 - `registry.k8s.io/kubectl` used as a shell-capable image — it is distroless, has no bash, nc, or any shell utilities. Use `cgr.dev/chainguard/kubectl:latest-dev` when you need kubectl + bash together
-- `ghcr.io/projectbluefin/lab-runner:latest` assumed to contain `skopeo` or `oras` — the live image can omit both. Use pinned `quay.io/skopeo/stable` and bootstrap pinned ORAS when registry referrers are required.
+- `ghcr.io/projectbluefin/lab-runner:latest` assumed to contain `skopeo` or `oras` — verified (2026-08) to carry bash, curl, git, jq, python3, and kubectl, but **not** skopeo, oras, or tar. Use digest-pinned `quay.io/skopeo/stable` (or the distroless `ghcr.io/projectbluefin/skopeo` for shell-free steps) and digest-pinned `ghcr.io/oras-project/oras` when registry referrers are required.
 - A WorkflowTemplate file name that doesn't match its `metadata.name` (confuses ArgoCD tracking)
 - A shared containerDisk builder that hard-codes its output repository — pass the
   destination repository through check, build, and push templates whenever
@@ -200,8 +212,8 @@ The workflow authoring guidance is split by topic:
 - Any `image:` in `argo/` or `manifests/` referencing `:5000` for the local OCI registry — `:5000` is the container-internal Zot port; use the NodePort `<lab-ip>:30500` so non-hostNetwork pods can reach it
 - Any `image:` referencing a registry not in the allowlist (`ghcr.io`, `quay.io`, `registry.fedoraproject.org`, `registry.access.redhat.com`, `registry.k8s.io`, `<lab-ip>`, `localhost`) — enforce with the lint gate in `.github/workflows/lint.yaml`
 - `depends: "X.Succeeded"` on a task that follows a conditionally-skippable upstream — if upstream is Skipped, the downstream task is Omitted and the whole DAG may appear to succeed even though the chain broke; use `depends: "(X.Succeeded || X.Skipped)"` when the upstream has its own `when` guard
-- A downstream `when` condition that references `{{tasks.X.outputs.result}}` where task X has its own `when` guard — if X is Skipped its output is undefined and the downstream task silently skips too. Fix: let X always run; handle the bypass inside the script (see §18).
-- A `force=true` rebuild workflow where only 1–2 nodes appear (DAG + a Skipped check) and no build step ever runs — this is the §18 `when`/Skipped output bug, not a semaphore or mutex issue
+- A downstream `when` condition that references `{{tasks.X.outputs.result}}` where task X has its own `when` guard — if X is Skipped its output is undefined and the downstream task silently skips too. Fix: let X always run; handle the bypass inside the script (see [patterns: the when/Skipped output trap](patterns.md#the-whenskipped-output-trap-never-reference-a-skipped-tasks-outputs)).
+- A `force=true` rebuild workflow where only 1–2 nodes appear (DAG + a Skipped check) and no build step ever runs — this is the `when`/Skipped output bug from the previous entry, not a semaphore or mutex issue
 - Post-processing K8sGPT JSON with `for item in data.get("results", [])` or `len(data["results"])` without normalizing first — namespace-scoped empty scans can emit `"results": null`, which crashes the script and then triggers a second Argo missing-output-path error. Normalize with `results = data.get("results") or []` before iterating or counting.
 - Passing `containerdisk-tag`, `ssh-key-secret`, `vm-memory`, or caller-side `namespace` parameters into `bluefin-qa-pipeline`/`dakota-qa-pipeline` after the container-only migration — those callers must send only `image`, `image-tag`, `suites`, `variant`, `branch`, and `testsuite-branch`.
 - Any Argo CronWorkflow script template in `argo` namespace without explicit `resources.requests` and `resources.limits` — the `argo-quota` admission check rejects pod creation.
@@ -219,8 +231,10 @@ The workflow authoring guidance is split by topic:
 - **Clock-only Cron serialization**: Spacing a CronWorkflow away from other schedules is not a concurrency guard. When a scheduled workflow shares a scarce VM namespace or runner, reference a ConfigMap-backed template semaphore and document the key; keep the schedule as a trigger only.
 - **Secret leakage via shell tracing**: Never use `set -x`/`set -eux` in a script that invokes authenticated APIs or expands secret-bearing variables. Argo retains command output in workflow logs. Disable tracing for the whole script or bracket only non-secret diagnostics with explicit `set +x`/`set -x` boundaries, then inspect logs for credentials before publishing evidence.
 - **Assuming registry tools exist in `lab-runner`**: the image does not include
-  ORAS or skopeo. Use a pinned tool image (or an explicit, checked bootstrap),
-  and validate flags against that pinned release. In particular, ORAS v1.2.3
+  ORAS or skopeo. Use a pinned tool image that already carries the client —
+  never bootstrap a tool by downloading it at pod start (banned runtime
+  dependency per `gitops-argocd/image-policy.md`) — and validate flags against
+  that pinned release. In particular, ORAS v1.2.3
   `discover` supports `--format json` but not `--depth`.
 - **Assuming archive utilities exist in `lab-runner`**: the image includes
   Python, `curl`, and `jq`, but not `tar`. Download archives to a workspace,

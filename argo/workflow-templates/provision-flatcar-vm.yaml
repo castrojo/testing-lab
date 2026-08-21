@@ -200,7 +200,7 @@ spec:
       - name: namespace
       - name: ssh-pubkey
     script:
-      image: quay.io/fedora/fedora:latest
+      image: ghcr.io/projectbluefin/lab-runner:latest
       command: [sh]
       resources:
         requests:
@@ -216,7 +216,6 @@ spec:
             name: bluefin-test-ssh-key
             key: id_ed25519.pub
       source: |-
-        dnf install -y -q bash curl jq kubectl git >/dev/null 2>&1
         exec bash <<'SCRIPT_EOF'
         set -euo pipefail
         exec 3>&1

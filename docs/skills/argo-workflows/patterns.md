@@ -2,11 +2,31 @@
 name: argo-patterns
 description: >
   Recurring Argo Workflows patterns for QA, publishing, and scheduling.
+metadata:
+  context7-sources:
+    - /argoproj/argo-workflows
+    - /oras-project/oras
+    - /websites/github_en_rest
+    - /kubevirt/user-guide
 ---
 
 # Argo Workflows Common Patterns
 
-### 14. Decoupling slow build steps from test pipelines (image-sync pattern)
+Topic-grouped reference of hard-won lab patterns. Load after
+[SKILL.md](SKILL.md) when authoring or debugging workflows;
+[authoring.md](authoring.md) covers template structure rules. Registry and
+base-image rules (including the ban on installing packages at container
+runtime) live in
+[`gitops-argocd/image-policy.md`](../gitops-argocd/image-policy.md).
+
+Groups: image sync and pollers · concurrency and scheduling · publishing
+results back to GitHub · conditionals and DAG logic · CronWorkflows · pods,
+storage, and operations · desktop QA probes · BuildStream pipelines.
+
+
+## Image sync and pollers
+
+### Decoupling slow build steps from test pipelines (image-sync pattern)
 
 Any pipeline step that conditionally runs a slow build (compilation, disk conversion)
 belongs in a **separate CronWorkflow**, not inline in the test pipeline. The test pipeline
@@ -40,8 +60,10 @@ asserts the artifact exists and fails fast — it never triggers a rebuild.
   Anonymous GHCR token API returns a 60-char non-JWT token that produces 404 on manifest
   requests — do NOT use the anonymous token endpoint. Use PAT via `--creds "_token:PAT"`.
 - `quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615` does **not** include `python3` or `jq`. Keep digest comparison
-  shell-only (`tr`/`sed`) or install tooling explicitly; otherwise stored digest reads collapse to
-  empty and every poll cycle submits duplicate `build-cd-sync-*` workflows.
+  shell-only (`tr`/`sed`); if a step genuinely needs more tooling, switch that step to an
+  org-published image that already carries it — never install packages at runtime (see
+  [`gitops-argocd/image-policy.md`](../gitops-argocd/image-policy.md)). Otherwise stored
+  digest reads collapse to empty and every poll cycle submits duplicate `build-cd-sync-*` workflows.
 - Use in-cluster k8s API (SA token at `/var/run/secrets/kubernetes.io/serviceaccount/`)
   with `curl` for all ConfigMap and Workflow CRUD — no kubectl image needed.
 - **HTTP status detection trap**: `curl -sf -w "%{http_code}" ... || echo "000"` appends
@@ -72,7 +94,163 @@ asserts the artifact exists and fails fast — it never triggers a rebuild.
 - Zot annotations require `oras` tooling to set post-push; ConfigMap needs only `curl`
 - The ConfigMap stores the *source* digest, not the containerdisk digest — conceptually different
 
-### 15. VM concurrency — k8s native scheduling (no semaphores)
+### Digest-comparison pollers can't detect out-of-band artifact loss
+
+`digest-watch` (and similarly-shaped pollers) only rebuild an artifact when the **upstream
+source digest changes** vs a ConfigMap-stored value. They have no way to notice that the
+artifact itself disappeared for an unrelated reason (disk wipe, PVC reset, registry GC)
+while the upstream digest stayed the same — the poller will keep reporting "no change,
+skipping" indefinitely even though the artifact is gone and every downstream consumer
+(e.g. `assert-cd` in a QA pipeline) is failing.
+
+**This happened concretely:** a ghost XFS migration wiped the local Zot registry.
+`bluefin-containerdisk` was completely absent, but `ghcr.io/projectbluefin/bluefin:testing`'s
+digest hadn't changed, so `digest-watch` never rebuilt it. `bluefin-qa-pipeline` would have
+failed indefinitely without manual intervention.
+
+**Recovery:** manually submit the build Workflow directly with `force=true`, bypassing the
+digest comparison:
+```bash
+kubectl create -f - <<'EOF'
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: manual-build-cd-<tag>-
+  namespace: argo
+spec:
+  workflowTemplateRef:
+    name: build-containerdisk
+  arguments:
+    parameters:
+      - {name: image, value: "ghcr.io/projectbluefin/<repo>"}
+      - {name: image-tag, value: "<upstream-tag>"}
+      - {name: containerdisk-tag, value: "<zot-tag>"}
+      - {name: force, value: "true"}
+EOF
+```
+
+**Implemented:** digest-comparison pollers that gate a downstream `assert-cd`-style check
+now probe the destination registry for artifact existence and force-rebuild the containerDisk
+when the artifact is missing or when the upstream source digest changed. This covers disk
+wipes, registry migration, and manual Zot cleanup without waiting for a separate recovery
+step.
+
+### Authenticated digest-preserving registry publication
+
+For a scheduled Zot-to-GHCR publisher, keep the reusable logic in a
+WorkflowTemplate and point the CronWorkflow at it. Mount an operator-managed
+`kubernetes.io/dockerconfigjson` Secret as an auth file; do not expose registry
+credentials through parameters, command arguments, stdout, or shell tracing.
+
+Resolve the source tag to a digest, copy `source@digest`, and inspect the
+destination tag with the same auth file. A lane succeeds only when the
+destination digest exactly matches the source digest. Put a semaphore on the
+entrypoint DAG so separate publication workflows serialize while independent
+image lanes within one workflow can still run in parallel.
+
+Use terminal-status dependencies for the result task:
+
+```yaml
+depends: >-
+  (lane-a.Succeeded || lane-a.Failed || lane-a.Errored) &&
+  (lane-b.Succeeded || lane-b.Failed || lane-b.Errored)
+```
+
+Pass each `{{tasks.<lane>.status}}` to the result task and fail it unless every
+lane succeeded. Bound each lane with `retryStrategy.limit` and backoff.
+
+After the image copy, use `oras discover` against the source digest. If
+referrers exist, recursively copy them with the destination registry auth file.
+Log explicit `none present` or `discovery unavailable` states as non-fatal;
+failure to copy referrers that were discovered is a lane failure. Verify the
+destination digest after this optional evidence step.
+
+Do not rely on `lab-runner:latest` for registry clients — verified (2026-08) to
+contain bash, curl, git, jq, python3, and kubectl, but **not** skopeo, oras, or
+tar. Use images that already carry the client at a pinned version:
+digest-pinned `quay.io/skopeo/stable` for shell+skopeo steps (or the distroless
+org `ghcr.io/projectbluefin/skopeo` for shell-free `container:` steps) and
+digest-pinned `ghcr.io/oras-project/oras` for referrer work, as the live
+`zot-candidate-lifecycle` template does. Never bootstrap a tool by downloading
+it at pod start — a runtime download is an ungoverned, offline-fragile
+dependency (see [`gitops-argocd/image-policy.md`](../gitops-argocd/image-policy.md)).
+If a referrer client is genuinely unavailable to a lane, log the missing
+capability explicitly and continue with digest verification.
+
+```bash
+# Source: Context7 /oras-project/oras
+oras discover --plain-http --format json "${SOURCE}@${DIGEST}"
+oras cp --recursive --from-plain-http \
+  --to-registry-config /auth/config.json --no-tty \
+  "${SOURCE}@${DIGEST}" "${DESTINATION}:testing"
+```
+
+For durable run history, attach a root `onExit` template and pass
+`{{workflow.status}}`, `{{workflow.name}}`, and
+`{{workflow.creationTimestamp.RFC3339}}` through environment variables. Build a
+compact record with `jq`, then invoke the validated publisher CLI. Do not append
+`|| true`: persistence is part of the workflow contract, so an exit-handler
+failure must remain visible and make an otherwise successful run fail. Never
+put the GitHub token in a clone URL or command argument; expose it only as
+`GITHUB_TOKEN` from a Secret and let the CLI's `GIT_ASKPASS` path consume it.
+
+> Source: Context7 `/argoproj/argo-workflows` exit-handler and global-variable
+> documentation. Exit handlers always run and receive the terminal workflow
+> status; `workflow.creationTimestamp.RFC3339` is available in the exit handler.
+
+### Dakota BuildStream publish lane output tags
+
+`dakota-build-pipeline` exports the built `oci/bluefin.bst` artifact to the local Zot
+registry. NVIDIA variants are disabled in the distributed clean-build workflow. The published
+tag must match the projectbluefin/dakota image contract:
+
+- Base variant → `<lab-ip>:30500/dakota:testing`
+
+Do not publish these as `:latest` from the cluster lane; `:testing` is the testing-branch
+stream and `:stable` is promoted separately from `main`. Keeping the cluster lane on `:testing`
+prevents accidental overwrites of the stable/production stream and makes the artifact identity
+obvious to downstream lab jobs.
+
+If the template is retagged, update the dashboard fallback writable-repos list in
+`src/pages/index.astro` and `src/pages/userspace.astro` to match the new repository names.
+
+### Dakota verification: containerized QA when the VM path is blocked
+
+Dakota images are built from a composefs-oci backend that declares `bootloader = "systemd"` but
+does not ship a UKI. The lab's standard VM QA path (`build-containerdisk` → `bootc install to-disk`
+→ KubeVirt VM) therefore fails with `bootupd is required for ostree-based installs` because bootc
+1.16.2 bails for systemd-boot ostree installs when no UKI is present. Until Dakota ships a UKI
+(or bootc gains a composefs-oci install path), VM-boot verification is blocked.
+
+WorkflowTemplate: `dakota-container-qa-pipeline`
+
+- Runs image-level smoke checks directly inside a pod built from the target OCI image.
+- Verifies Dakota identity (`/etc/os-release`), presence of key binaries (`podman`, `flatpak`,
+  `gnome-shell`, `bootc`), bootc install config, and valid `bootc status` JSON.
+- Requires no `bootc install`, no containerDisk, and no `provision-containerdisk-vm`.
+- GUI behave suites (`smoke`/`developer` via `qecore-headless`) cannot run inside a pod because
+  `qecore-headless` requires a full systemd/GDM session.
+
+Default invocation for a fresh `dakota:testing` build:
+
+```bash
+argo submit --from workflowtemplate/dakota-container-qa-pipeline \
+  -p image=<lab-ip>:30500/dakota \
+  -p image-tag=testing \
+  -p variant=dakota \
+  -n argo --watch
+```
+
+NVIDIA image builds are disabled for this clean distributed-build path.
+
+`dakota-qa-pipeline` has since migrated to the container-only path — it invokes
+`run-container-tests` directly and takes no KubeVirt or containerDisk inputs,
+and `image-poll-dakota` (not suspended) drives it on every new `dakota:testing`
+digest.
+
+## Concurrency and scheduling
+
+### VM concurrency: k8s native scheduling, no semaphores
 
 VM concurrency is managed by the **k8s scheduler via virt-launcher pod memory requests**, not Argo semaphores. When a node has insufficient RAM, the virt-launcher pod stays Pending. When a VM finishes, resources free up and the scheduler picks the next Pending pod. FIFO ordering follows workflow creation timestamp.
 
@@ -95,7 +273,7 @@ activeDeadlineSeconds: 3600   # 1h for containerdisk, 7200 for knuckle
 
 **VMs float to any KubeVirt-capable node** — no `nodeSelector: kubernetes.io/hostname: ghost` in VM specs. The registry-mirror-config DaemonSet writes the Zot HTTP registry config to all nodes.
 
-### 15b. Semaphore topology: hold the key at one level, cap every fan-out
+### Semaphore topology: hold the key at one level, cap every fan-out
 
 Two rules govern every ConfigMap-backed semaphore in `manifests/workflow-semaphores.yaml`.
 `scripts/check_semaphore_topology.py` enforces both in `just lint`.
@@ -143,7 +321,7 @@ least two distinct workflows can always progress and no single pipeline can
 monopolise the runner. Raising the semaphore limit is never a fix on its own —
 it only moves the threshold.
 
-### 15a. Locking one DAG build task
+### Locking one DAG build task
 
 `synchronization` is a template-level field; it is not valid on an individual
 `dag.tasks[]` entry. When one task must share a cross-workflow semaphore with
@@ -177,7 +355,105 @@ cross-WorkflowTemplate `templateRef`. For diagnostic collection, include all
 terminal upstream states when appropriate:
 `(tests.Succeeded || tests.Failed || tests.Errored)`.
 
-### 16. GitHub Contents API or Standalone Git Push-back — Prefer Standalone Python for Complex Files
+### Mutex contention from stuck failed builds
+
+The `ghost-heavy-compute` mutex (on the `install-to-disk` template) allows only one
+concurrent build at a time. Failed workflows that were stopped via `shutdown: Stop` **release
+the mutex**, but workflows that exit with a non-zero script error may hold the mutex until
+the workflow GC TTL clears them.
+
+**Check what holds the mutex:**
+```bash
+kubectl logs -n argo -l app=workflow-controller --since=2m 2>/dev/null \
+  | grep -i "ghost-heavy\|mutex\|Could not acquire"
+```
+
+**Stop a workflow holding the mutex:**
+```bash
+kubectl patch workflow <name> -n argo -p '{"spec":{"shutdown":"Stop"}}' --type=merge
+```
+
+**Dakota lanes and the mutex:** keep the lanes separate.
+- `dakota-commit-poller` → `bst-commit-poller` → `dakota-build-pipeline`
+  (BuildStream publish lane) is suspended by default (#609); drive it on demand
+  with `just force-dakota-poll`.
+- `image-poll-dakota` → `dakota-qa-pipeline` is the active container-only QA lane.
+If mutex contention appears, stop stale failed workflows holding `ghost-heavy-compute`; do not
+blanket-stop all Dakota build-publish runs or suspend the active QA poller.
+
+### Bound BuildStream admission before the semaphore queue
+
+The `bst-build` semaphore limits execution to one pipeline, but a semaphore by
+itself permits an unbounded list of waiting workflows. Automated callers must
+also count active workflows labeled `bluefin.io/bst-workload=true` and defer
+when two are already admitted: one may execute while one waits.
+
+The generic PR poller runs at minute `0/5`; Dakota and Cosmic source pollers run
+at minute `2/5` and `4/5`. This staggering makes the count-and-submit guard
+deterministic for automatic traffic. Source pollers must persist a new commit
+SHA only after the referenced build succeeds, so deferred or failed work is
+retried.
+
+MergeRaptor requires `checks: write`. GitHub's Checks endpoints require GitHub
+App authentication; classic PATs and OAuth apps cannot update checks.
+
+> Source: `/websites/github_en_rest` — Check runs and repository dispatch.
+
+### Reap superseded and closed-PR workflows in the poller
+
+Deduping on `bluefin.io/pr-number` + `bluefin.io/pr-sha` means a new push
+creates a *new* workflow, but nothing ever cancels the old one. Combined with
+workflows that keep running after their PR merges, the queue accumulates runs
+whose results are already worthless while each holds a `ghost-container-qa`
+slot for ~20 minutes. Measured drain during one incident: PR #675 with 4
+concurrent workflows for 4 SHAs, #691 with 4, #697 with 3, #724 with 4, plus 24
+workflows for already-merged PRs.
+
+`pr-poller` therefore does three things beyond dispatch:
+
+1. **Supersede** — for every open PR, stop any in-flight workflow whose
+   `pr-sha` differs from the current head. This runs *before* the dispatch cap
+   and *before* the dedup guard, because superseding is about the PR's current
+   head, not about whether this poll happens to dispatch.
+2. **Reap** — after the open-PR passes, stop any in-flight workflow whose PR is
+   no longer in the open set.
+3. **Align admission with capacity** — `MAX_DISPATCH` is capped at
+   `ghost-container-qa limit / pipeline parallelism`, i.e. the number of
+   *workflows* the runner can execute concurrently, not the raw slot count.
+   Since the semaphore-topology rules above, each pipeline holds at most `parallelism` slots, so with a limit
+   of 6 and `parallelism: 2` the runner runs 3 workflows at a time and
+   `MAX_DISPATCH=3`. Admitting more per 5-minute poll cannot make anything
+   finish sooner; it only deepens the queue. If either number changes, this one
+   must be rederived.
+
+**Cancel with `spec.shutdown: Stop`, never `kubectl delete`.** `Stop` is what
+`argo stop` sets: running pods are terminated but the `onExit` handler still
+executes, so `report-final` publishes a terminal `ghost-lab` status. A hard
+delete skips `onExit` and strands the commit on `pending` forever.
+
+```bash
+kubectl patch workflow "${wf}" -n argo --type merge -p '{"spec":{"shutdown":"Stop"}}'
+```
+
+**Three safety rules, all load-bearing:**
+
+- Only reap products whose open-PR enumeration completed with **zero** API
+  errors. A transient GitHub failure must never be read as "every PR merged".
+- Only reap products that returned **at least one** open PR. A sudden empty
+  result set is far more likely to be an auth/scope regression than a mass
+  merge.
+- Only consider workflows carrying `bluefin.io/repository`. PR numbers collide
+  across repositories, so an unlabelled workflow can never be safely
+  attributed. Every label selector keyed on `pr-number` must also key on
+  `bluefin.io/repository`.
+
+Idempotency comes for free: workflows already carrying `spec.shutdown`, or
+labelled `workflows.argoproj.io/completed=true`, are filtered out, so the pass
+is a no-op on every subsequent 5-minute run.
+
+## Publishing results back to GitHub
+
+### Contents API vs standalone git push-back
 
 When a workflow pod needs to push a simple file to a GitHub repo, use `curl` + `jq` inside the bash script (Contents API).
 
@@ -262,14 +538,31 @@ image reference. Some bootc OCI images have an empty image `Cmd`; relying on
 `--systemd=always` alone then makes crun fail with `cannot find `` in $PATH` before
 systemd starts.
 
-`run-container-tests` runs inside a privileged `quay.io/podman/stable:latest` container, which does not include `git` or `skopeo`. When publishing BDD evidence back to the lab repo:
+`run-container-tests` runs inside the privileged org-owned `ghcr.io/projectbluefin/arc-runner:latest`
+image, which carries podman, skopeo, git, jq, and the pre-fetched Python wheelhouse baked in at
+**build** time (`images/arc-runner/Containerfile`). **Never install tooling at container
+runtime** (`dnf install`, `apt-get install`, `pip install`, `curl | sh`) — that is a banned
+antipattern, per [`gitops-argocd/image-policy.md`](../gitops-argocd/image-policy.md). When a
+step needs a tool its image does not carry, switch the step to an org-published image that
+already has it:
 
-1. Install tooling if it is missing: `command -v skopeo >/dev/null || dnf install -y skopeo` and `command -v git >/dev/null || dnf install -y git-core`.
-2. Resolve the digest of `{{inputs.parameters.image}}:{{inputs.parameters.image-tag}}` with `skopeo inspect --no-tags --format '{{.Digest}}' "docker://${IMAGE}"`. Treat a missing digest as a non-fatal warning.
-3. Compute the image slug as `IMG_SLUG="${VARIANT}-${IMAGE_TAG}"` so the result file name matches the contract used by `run-gnome-tests` (e.g. `bluefin-stable-smoke.json`).
-4. Treat the git clone and `publish_test_results.py` as required evidence
+- `ghcr.io/projectbluefin/arc-runner:latest` — privileged QA runner steps needing podman /
+  buildah / skopeo / git / oras / kubectl / jq together (build-time installs on a
+  digest-pinned base; the sanctioned exception in `image-policy.md`).
+- `ghcr.io/projectbluefin/lab-runner:latest` — shell-enabled CI utility steps: bash, curl,
+  git, jq, python3, kubectl. Verified 2026-08 by running the image: it does **not** contain
+  skopeo, oras, or tar.
+- `ghcr.io/projectbluefin/skopeo:latest` — distroless skopeo (1.23.0 at `/usr/bin/skopeo`,
+  no shell): invoke with explicit `command:`/`args:` on a `container` template, or keep using
+  the digest-pinned `quay.io/skopeo/stable` when the step needs a shell next to skopeo.
+
+When publishing BDD evidence back to the lab repo:
+
+1. Resolve the digest of `{{inputs.parameters.image}}:{{inputs.parameters.image-tag}}` with `skopeo inspect --no-tags --format '{{.Digest}}' "docker://${IMAGE}"`. Treat a missing digest as a non-fatal warning.
+2. Compute the image slug as `IMG_SLUG="${VARIANT}-${IMAGE_TAG}"` so the result file name matches the contract used by `run-gnome-tests` (e.g. `bluefin-stable-smoke.json`).
+3. Treat the git clone and `publish_test_results.py` as required evidence
    publication. Their failures must fail the test workflow after cleanup.
-5. Pass the resolved digest as the optional sixth positional argument to `publish_test_results.py` so the collector can match QA evidence to the currently published image digest.
+4. Pass the resolved digest as the optional sixth positional argument to `publish_test_results.py` so the collector can match QA evidence to the currently published image digest.
 
 
 **Why no inline Python or heredocs (root cause):** YAML `source: |` literal blocks use indentation to determine block extent. Any line at column 0 (including unindented `python3 -c "...\nimport json\n..."` continuation lines, or heredoc bodies like `<<'EOF'\nimport json\n`) terminates the block — YAML treats those lines as new top-level keys. The `yaml: could not find expected ':'` error is the symptom. Fix: use `jq` one-liners, keep everything on the same indented line, or `--rawfile` to read from a pre-staged file.
@@ -312,82 +605,51 @@ systemd starts.
 ```
 The real implementation in `bluefin-qa-pipeline.yaml` also fetches per-suite result files into `/tmp/suite-scores/` and merges them via `jq --argjson` one-liners before building `NEW_RUN`.
 
-### 17. CronWorkflow — `schedules` not `schedule`
+### Report factory PR workflows through one GitHub Check Run
 
-CronWorkflow uses `schedules` (plural array), not `schedule` (singular string). The singular field does not exist in the CRD schema — ArgoCD's ServerSideApply validation will reject it.
+Factory PR validation for the repos in the poller's `AUTO_REPOS` list
+(`projectbluefin/common`, `bluefin`, `bluefin-lts`, `dakota`, `knuckle`,
+`testsuite`), plus any PR carrying the `test-on-lab` label, each use one native
+Check Run named `testing-lab / <repository>`, owned by the existing MergeRaptor
+GitHub App. Do not post PR comments or a parallel commit status for the same
+result. (This automated Check Run is a different channel from the manual
+reviewer comments an operator posts during PR-queue review; do not conflate the
+two.)
 
-```yaml
-# ✗ WRONG — rejected by ArgoCD schema validation
-spec:
-  schedule: "0 * * * *"
+The auth boundary is deliberate:
 
-# ✅ CORRECT
-spec:
-  schedules:
-    - "0 * * * *"
-```
+1. The lab uses its existing GitHub credential only to send a
+   `repository_dispatch` event (`event_type: "lab-check"`) to the target
+   repository.
+2. The target repository's `lab-check.yml` mints a short-lived MergeRaptor
+   installation token from the existing GitHub Actions org secrets.
+3. MergeRaptor creates or updates the Check Run for the exact PR head SHA.
 
-Verified against Context7 `/argoproj/argo-workflows` CronWorkflow spec docs.
+Enrollment is a **two-sided contract**: dispatching from the lab (sender) only
+produces visible feedback when the target repo also ships
+`.github/workflows/lab-check.yml` on its default branch (receiver). A repo added
+to `AUTO_REPOS` without that receiver workflow is *half-enrolled* — the dispatch
+returns HTTP 204 and the Argo QA runs, but no Check Run, comment, or error ever
+appears on the PR. Adding a repo to lab PR feedback therefore means editing both
+sides. As of this writing `common`, `knuckle`, and `testsuite` are dispatched to
+but lack the receiver workflow, so their results are silently dropped.
 
-CronWorkflows also cannot be invoked via `workflowTemplateRef` — if you need a CronWorkflow to be submittable manually, extract its logic into a WorkflowTemplate and have the CronWorkflow reference it with `workflowTemplateRef`.
+Never copy the MergeRaptor private key into Kubernetes. Keep the dispatch
+payload nested and bounded. Include workflow parameters, phase counts,
+pod-to-node placement, node timings, and failure messages. Do not copy raw pod
+logs into GitHub because retained workflow logs may contain authenticated API
+output; link the private Argo workflow instead.
 
-### 17a. Authenticated digest-preserving registry publication
+The PR poller must create the Argo workflow before dispatching the queued check.
+If the queued dispatch fails, delete that new workflow so the next five-minute
+poll retries the entire operation, then return success from that PR handler so
+one GitHub API failure does not abort processing the remaining PRs in the poll
+cycle. The generated workflow sends an `in_progress` update at admission and a
+`completed` update from `onExit`.
 
-For a scheduled Zot-to-GHCR publisher, keep the reusable logic in a
-WorkflowTemplate and point the CronWorkflow at it. Mount an operator-managed
-`kubernetes.io/dockerconfigjson` Secret as an auth file; do not expose registry
-credentials through parameters, command arguments, stdout, or shell tracing.
+## Conditionals and DAG logic
 
-Resolve the source tag to a digest, copy `source@digest`, and inspect the
-destination tag with the same auth file. A lane succeeds only when the
-destination digest exactly matches the source digest. Put a semaphore on the
-entrypoint DAG so separate publication workflows serialize while independent
-image lanes within one workflow can still run in parallel.
-
-Use terminal-status dependencies for the result task:
-
-```yaml
-depends: >-
-  (lane-a.Succeeded || lane-a.Failed || lane-a.Errored) &&
-  (lane-b.Succeeded || lane-b.Failed || lane-b.Errored)
-```
-
-Pass each `{{tasks.<lane>.status}}` to the result task and fail it unless every
-lane succeeded. Bound each lane with `retryStrategy.limit` and backoff.
-
-After the image copy, use `oras discover` against the source digest. If
-referrers exist, recursively copy them with the destination registry auth file.
-Log explicit `none present` or `discovery unavailable` states as non-fatal;
-failure to copy referrers that were discovered is a lane failure. Verify the
-destination digest after this optional evidence step.
-
-Do not rely on `lab-runner:latest` for registry clients. Use the pinned Skopeo
-image and bootstrap a pinned ORAS release with its included `curl` and `tar`;
-if that unauthenticated bootstrap is unavailable, log the missing referrer
-capability explicitly and continue with digest verification.
-
-```bash
-# Source: Context7 /oras-project/oras
-oras discover --plain-http --format json --depth 1 "${SOURCE}@${DIGEST}"
-oras cp --recursive --from-plain-http \
-  --to-registry-config /auth/config.json --no-tty \
-  "${SOURCE}@${DIGEST}" "${DESTINATION}:testing"
-```
-
-For durable run history, attach a root `onExit` template and pass
-`{{workflow.status}}`, `{{workflow.name}}`, and
-`{{workflow.creationTimestamp.RFC3339}}` through environment variables. Build a
-compact record with `jq`, then invoke the validated publisher CLI. Do not append
-`|| true`: persistence is part of the workflow contract, so an exit-handler
-failure must remain visible and make an otherwise successful run fail. Never
-put the GitHub token in a clone URL or command argument; expose it only as
-`GITHUB_TOKEN` from a Secret and let the CLI's `GIT_ASKPASS` path consume it.
-
-> Source: Context7 `/argoproj/argo-workflows` exit-handler and global-variable
-> documentation. Exit handlers always run and receive the terminal workflow
-> status; `workflow.creationTimestamp.RFC3339` is available in the exit handler.
-
-### 18. `when` condition trap — never reference a Skipped task's outputs
+### The when/Skipped output trap: never reference a Skipped task's outputs
 
 **Verified against Context7 `/argoproj/argo-workflows` enhanced-depends-logic docs:**
 > "If a downstream task references outputs from a task that was Skipped or Omitted,
@@ -442,7 +704,7 @@ remove the `when` guard and move the bypass into the script body.
 - Controller logs show `"was unable to obtain the node"` for the downstream task (normal reconciliation noise)
 - `force=true` workflows submitted after a digest change never actually build
 
-### 19. `when` condition values with hyphens must be quoted or avoided
+### when values with hyphens must be quoted or avoided
 
 Argo's `when` expression parser (expr-lang based) treats an unquoted hyphenated
 string as a subtraction expression. A condition like:
@@ -468,195 +730,183 @@ Always lint after changing `when` expressions, then submit a test workflow to
 verify the DAG branches are scheduled as expected before relying on the path in
 production.
 
-### 20. Mutex contention from stuck failed builds
+## CronWorkflows
 
-The `ghost-heavy-compute` mutex (on the `install-to-disk` template) allows only one
-concurrent build at a time. Failed workflows that were stopped via `shutdown: Stop` **release
-the mutex**, but workflows that exit with a non-zero script error may hold the mutex until
-the workflow GC TTL clears them.
+### CronWorkflow uses schedules, not schedule
 
-**Check what holds the mutex:**
-```bash
-kubectl logs -n argo -l app=workflow-controller --since=2m 2>/dev/null \
-  | grep -i "ghost-heavy\|mutex\|Could not acquire"
+CronWorkflow uses `schedules` (plural array), not `schedule` (singular string). The singular field does not exist in the CRD schema — ArgoCD's ServerSideApply validation will reject it.
+
+```yaml
+# ✗ WRONG — rejected by ArgoCD schema validation
+spec:
+  schedule: "0 * * * *"
+
+# ✅ CORRECT
+spec:
+  schedules:
+    - "0 * * * *"
 ```
 
-**Stop a workflow holding the mutex:**
-```bash
-kubectl patch workflow <name> -n argo -p '{"spec":{"shutdown":"Stop"}}' --type=merge
-```
+Verified against Context7 `/argoproj/argo-workflows` CronWorkflow spec docs.
 
-**Dakota lanes and the mutex:** keep the lanes separate.
-- `dakota-commit-poller` → `bst-commit-poller` → `dakota-build-pipeline`
-  (BuildStream publish lane) is suspended by default (#609); drive it on demand
-  with `just force-dakota-poll`.
-- `image-poll-dakota` → `dakota-qa-pipeline` is the active container-only QA lane.
-If mutex contention appears, stop stale failed workflows holding `ghost-heavy-compute`; do not
-blanket-stop all Dakota build-publish runs or suspend the active QA poller.
+CronWorkflows also cannot be invoked via `workflowTemplateRef` — if you need a CronWorkflow to be submittable manually, extract its logic into a WorkflowTemplate and have the CronWorkflow reference it with `workflowTemplateRef`.
 
-### 20a. Dakota BuildStream publish lane output tags
+### CronWorkflow suspend can survive a git removal: verify live state
 
-`dakota-build-pipeline` exports the built `oci/bluefin.bst` artifact to the local Zot
-registry. NVIDIA variants are disabled in the distributed clean-build workflow. The published
-tag must match the projectbluefin/dakota image contract:
+Removing `spec.suspend: true` from a CronWorkflow's git manifest and syncing does **not**
+reliably clear the live field, even when ArgoCD reports the resource `Synced` and the sync
+`operationState` says `Succeeded`. This was observed directly: after removing `suspend: true`
+from 10 CronWorkflow manifests, committing, pushing, and force-syncing (`annotate
+argocd.argoproj.io/refresh=hard`), ArgoCD reported all 10 as `Synced` — but `kubectl get
+cronworkflow <name> -o jsonpath='{.spec.suspend}'` still returned `true` on every one of them.
 
-- Base variant → `<lab-ip>:30500/dakota:testing`
-
-Do not publish these as `:latest` from the cluster lane; `:testing` is the testing-branch
-stream and `:stable` is promoted separately from `main`. Keeping the cluster lane on `:testing`
-prevents accidental overwrites of the stable/production stream and makes the artifact identity
-obvious to downstream lab jobs.
-
-If the template is retagged, update the dashboard fallback writable-repos list in
-`src/pages/index.astro` and `src/pages/userspace.astro` to match the new repository names.
-
-### 20aa. Report factory PR workflows through one GitHub Check Run
-
-Factory PR validation for the repos in the poller's `AUTO_REPOS` list
-(`projectbluefin/common`, `bluefin`, `bluefin-lts`, `dakota`, `knuckle`,
-`testsuite`), plus any PR carrying the `test-on-lab` label, each use one native
-Check Run named `testing-lab / <repository>`, owned by the existing MergeRaptor
-GitHub App. Do not post PR comments or a parallel commit status for the same
-result. (This automated Check Run is a different channel from the manual
-reviewer comments an operator posts during PR-queue review; do not conflate the
-two.)
-
-The auth boundary is deliberate:
-
-1. The lab uses its existing GitHub credential only to send a
-   `repository_dispatch` event (`event_type: "lab-check"`) to the target
-   repository.
-2. The target repository's `lab-check.yml` mints a short-lived MergeRaptor
-   installation token from the existing GitHub Actions org secrets.
-3. MergeRaptor creates or updates the Check Run for the exact PR head SHA.
-
-Enrollment is a **two-sided contract**: dispatching from the lab (sender) only
-produces visible feedback when the target repo also ships
-`.github/workflows/lab-check.yml` on its default branch (receiver). A repo added
-to `AUTO_REPOS` without that receiver workflow is *half-enrolled* — the dispatch
-returns HTTP 204 and the Argo QA runs, but no Check Run, comment, or error ever
-appears on the PR. Adding a repo to lab PR feedback therefore means editing both
-sides. As of this writing `common`, `knuckle`, and `testsuite` are dispatched to
-but lack the receiver workflow, so their results are silently dropped.
-
-Never copy the MergeRaptor private key into Kubernetes. Keep the dispatch
-payload nested and bounded. Include workflow parameters, phase counts,
-pod-to-node placement, node timings, and failure messages. Do not copy raw pod
-logs into GitHub because retained workflow logs may contain authenticated API
-output; link the private Argo workflow instead.
-
-The PR poller must create the Argo workflow before dispatching the queued check.
-If the queued dispatch fails, delete that new workflow so the next five-minute
-poll retries the entire operation, then return success from that PR handler so
-one GitHub API failure does not abort processing the remaining PRs in the poll
-cycle. The generated workflow sends an `in_progress` update at admission and a
-`completed` update from `onExit`.
-
-### 20ab. Bound BuildStream admission before the semaphore queue
-
-The `bst-build` semaphore limits execution to one pipeline, but a semaphore by
-itself permits an unbounded list of waiting workflows. Automated callers must
-also count active workflows labeled `bluefin.io/bst-workload=true` and defer
-when two are already admitted: one may execute while one waits.
-
-The generic PR poller runs at minute `0/5`; Dakota and Cosmic source pollers run
-at minute `2/5` and `4/5`. This staggering makes the count-and-submit guard
-deterministic for automatic traffic. Source pollers must persist a new commit
-SHA only after the referenced build succeeds, so deferred or failed work is
-retried.
-
-MergeRaptor requires `checks: write`. GitHub's Checks endpoints require GitHub
-App authentication; classic PATs and OAuth apps cannot update checks.
-
-> Source: `/websites/github_en_rest` — Check runs and repository dispatch.
-
-### 20ac. Reap superseded and closed-PR workflows in the poller
-
-Deduping on `bluefin.io/pr-number` + `bluefin.io/pr-sha` means a new push
-creates a *new* workflow, but nothing ever cancels the old one. Combined with
-workflows that keep running after their PR merges, the queue accumulates runs
-whose results are already worthless while each holds a `ghost-container-qa`
-slot for ~20 minutes. Measured drain during one incident: PR #675 with 4
-concurrent workflows for 4 SHAs, #691 with 4, #697 with 3, #724 with 4, plus 24
-workflows for already-merged PRs.
-
-`pr-poller` therefore does three things beyond dispatch:
-
-1. **Supersede** — for every open PR, stop any in-flight workflow whose
-   `pr-sha` differs from the current head. This runs *before* the dispatch cap
-   and *before* the dedup guard, because superseding is about the PR's current
-   head, not about whether this poll happens to dispatch.
-2. **Reap** — after the open-PR passes, stop any in-flight workflow whose PR is
-   no longer in the open set.
-3. **Align admission with capacity** — `MAX_DISPATCH` is capped at
-   `ghost-container-qa limit / pipeline parallelism`, i.e. the number of
-   *workflows* the runner can execute concurrently, not the raw slot count.
-   Since §15b each pipeline holds at most `parallelism` slots, so with a limit
-   of 6 and `parallelism: 2` the runner runs 3 workflows at a time and
-   `MAX_DISPATCH=3`. Admitting more per 5-minute poll cannot make anything
-   finish sooner; it only deepens the queue. If either number changes, this one
-   must be rederived.
-
-**Cancel with `spec.shutdown: Stop`, never `kubectl delete`.** `Stop` is what
-`argo stop` sets: running pods are terminated but the `onExit` handler still
-executes, so `report-final` publishes a terminal `ghost-lab` status. A hard
-delete skips `onExit` and strands the commit on `pending` forever.
+**Always verify the live field directly after removing it from git — never trust the
+ArgoCD sync/resource status alone for boolean fields that may have been set by a prior
+apply.** If live state doesn't match git after a confirmed sync, patch it directly:
 
 ```bash
-kubectl patch workflow "${wf}" -n argo --type merge -p '{"spec":{"shutdown":"Stop"}}'
+kubectl patch cronworkflow -n argo <name> --type=merge -p '{"spec":{"suspend":false}}'
 ```
 
-**Three safety rules, all load-bearing:**
+Root cause not conclusively identified (suspected Server-Side Apply field-ownership —
+a boolean field set by an earlier field manager isn't cleared just because a later
+manifest omits it). Treat any boolean/scalar field removal from a CronWorkflow the same
+way: confirm live state with `kubectl get -o jsonpath`, don't stop at "ArgoCD says Synced".
 
-- Only reap products whose open-PR enumeration completed with **zero** API
-  errors. A transient GitHub failure must never be read as "every PR merged".
-- Only reap products that returned **at least one** open PR. A sudden empty
-  result set is far more likely to be an auth/scope regression than a mass
-  merge.
-- Only consider workflows carrying `bluefin.io/repository`. PR numbers collide
-  across repositories, so an unlabelled workflow can never be safely
-  attributed. Every label selector keyed on `pr-number` must also key on
-  `bluefin.io/repository`.
+## Pods, storage, and operations
 
-Idempotency comes for free: workflows already carrying `spec.shutdown`, or
-labelled `workflows.argoproj.io/completed=true`, are filtered out, so the pass
-is a no-op on every subsequent 5-minute run.
+### Per-workflow ephemeral storage: volumeClaimTemplates
 
-### 20b. Dakota verification: use containerized QA when VM path is blocked
+For pipelines that need shared scratch space across steps (e.g. installer binaries, target disks),
+use Argo's `volumeClaimTemplates` at the workflow spec level. Argo auto-creates the PVC at workflow
+start and auto-deletes it on completion — no manual cleanup step needed.
 
-Dakota images are built from a composefs-oci backend that declares `bootloader = "systemd"` but
-does not ship a UKI. The lab's standard VM QA path (`build-containerdisk` → `bootc install to-disk`
-→ KubeVirt VM) therefore fails with `bootupd is required for ostree-based installs` because bootc
-1.16.2 bails for systemd-boot ostree installs when no UKI is present. Until Dakota ships a UKI
-(or bootc gains a composefs-oci install path), VM-boot verification is blocked.
+```yaml
+spec:
+  volumeClaimTemplates:
+    - metadata:
+        name: workspace
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path   # explicit non-root node mapping in GitOps
+        resources:
+          requests:
+            storage: 30Gi
 
-WorkflowTemplate: `dakota-container-qa-pipeline`
+  templates:
+    - name: my-step
+      script:
+        volumeMounts:
+          - name: workspace
+            mountPath: /mnt/workspace
+```
 
-- Runs image-level smoke checks directly inside a pod built from the target OCI image.
-- Verifies Dakota identity (`/etc/os-release`), presence of key binaries (`podman`, `flatpak`,
-  `gnome-shell`, `bootc`), bootc install config, and valid `bootc status` JSON.
-- Requires no `bootc install`, no containerDisk, and no `provision-containerdisk-vm`.
-- GUI behave suites (`smoke`/`developer` via `qecore-headless`) cannot run inside a pod because
-  `qecore-headless` requires a full systemd/GDM session.
+**RWO PVC + KubeVirt VM co-location:** When a VM uses a `persistentVolumeClaim` volume backed
+by a RWO PVC, KubeVirt automatically schedules the VM on the same node as the PVC — no explicit
+`nodeSelector` needed. Source: /kubevirt/user-guide — "When using local devices or ReadWriteOnce
+(RWO) PVCs, affinity rules on VMs sharing storage ensure they are scheduled on the same node."
 
-Default invocation for a fresh `dakota:testing` build:
+The local-path provisioner configuration must contain an explicit non-root data
+mount for every eligible node. It has no default path: a PVC on an unconfigured
+node must fail provisioning rather than write to the root filesystem.
 
+**Namespace constraint:** `volumeClaimTemplates` creates the PVC in the workflow's own namespace
+(`argo`). If a VM in a different namespace (`knuckle-test`) needs a disk, create a dedicated PVC
+in that namespace via a `resource:` step, and delete it in `onExit`.
+
+```yaml
+# registry-lint-ignore not needed — no image ref
+- name: create-rootdisk-pvc
+  resource:
+    action: apply
+    manifest: |
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: "{{workflow.name}}-rootdisk"
+        namespace: knuckle-test
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 30Gi
+```
+
+**containerDisk OCI format** (source: /kubevirt/user-guide):
+```dockerfile
+FROM scratch
+ADD --chown=107:107 disk.raw /disk/
+```
+UID 107 = qemu. Required — omitting `--chown` causes VM boot failure (permission denied on disk).
+
+### Configure registry mirrors and signature policy before container builds
+
+When running `podman build`, `bootc install`, or other image/pull operations inside a privileged Argo workflow container, you must configure any custom registries mirror files (such as `/etc/containers/registries.conf.d/bluefin-local-zot.conf` to hook up the local Zot pull-through cache) and security policy files (such as `/etc/containers/policy.json`) BEFORE executing those container operations. 
+
+In particular, if the base image being pulled or built has a strict production signature policy built into its `/etc/containers/policy.json` (as is the case with Bluefin/Aurora production images), `bootc install` and other podman/skopeo pull tasks will reject pulling unsigned images from local registries or GHCR with exit code 125 ("Source image rejected: A signature was required, but no signature exists"). Overwriting the pod container's local `/etc/containers/policy.json` with an insecure policy (e.g. `"type": "insecureAcceptAnything"`) prevents this exit-125 failure.
+
+This is extremely critical to understand if a workflow ever uses `hostPID: true`. If a pod using `hostPID: true` exits with failure (or is terminated/timed out), the `argoexec` process teardown signals all processes in its view — which in a host PID namespace means **every host process**, killing host daemons like `k3s`, `sshd`, and `systemd-journald` and crashing the node. Therefore, `hostPID: true` and `hostIPC: true` must NOT be used in build containers. Bypassing signature checks using `policy.json` prevents exit-125 crashes, but removing `hostPID` entirely is the primary safety guarantee.
+
+**Correct order of execution:**
+1. Configure containers-storage graphroot.
+2. Write registry mirror configuration files under `/etc/containers/registries.conf.d/`.
+3. Overwrite `/etc/containers/policy.json` with `insecureAcceptAnything` to bypass signature checks.
+4. Run container build or install operations (e.g., `podman build --tls-verify=false -t ...` or `bootc install to-disk ...`).
+5. Run container push operations (e.g., `podman push ...`).
+
+### /tmp permission denied for non-root containers
+
+If an Argo workflow container template is configured to run as a non-root user (such as `runAsUser: 1000` in `run-container-tests.yaml`), and needs to write results, temporary configurations, or scripts under `/tmp`, it can easily fail with `Permission denied` (exit code 1). This happens because `/tmp` inside the bootc rootfs image is typically owned by root with restricted permissions.
+
+The clean, standard Kubernetes/Argo solution is to mount an `emptyDir: {}` volume on `/tmp` inside the pod container. This provides a fresh, fully-writable `/tmp` filesystem that is owned by the executing non-root user (1000) and completely isolates test execution from any image-baked `/tmp` permission constraints.
+
+**Implementation pattern:**
+```yaml
+    container:
+      image: "{{inputs.parameters.image}}:{{inputs.parameters.image-tag}}"
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+      volumeMounts:
+        - mountPath: /tmp
+          name: tmp
+    volumes:
+      - name: tmp
+        emptyDir: {}
+```
+
+### Log access: Argo is sufficient, no separate stack needed
+
+Argo Server retains all workflow pod logs for the workflow TTL period (7 days success,
+30 days failure via `workflow-controller-configmap`). No separate log aggregation stack
+(Loki, Promtail, etc.) is needed for a homelab CI cluster.
+
+**Retrieve logs:**
 ```bash
-argo submit --from workflowtemplate/dakota-container-qa-pipeline \
-  -p image=<lab-ip>:30500/dakota \
-  -p image-tag=testing \
-  -p variant=dakota \
-  -n argo --watch
+# most recent workflow
+just logs                              # alias: argo logs -n argo @latest
+
+# specific workflow
+argo logs -n argo <workflow-name>
+
+# specific pod/container
+kubectl logs -n argo <pod> -c main
+
+# via MCP
+argo-mcp-logs_workflow <workflow-name>
 ```
 
-NVIDIA image builds are disabled for this clean distributed-build path.
+**Why a separate log stack is redundant:**
+- Pod logs are already captured and served by the Argo Server
+- Artifacts (`results.json`, `atspi_tree.txt`) echo to stderr — accessible via `argo logs`
+- Cross-workflow queries → `argo list -n argo` then `argo logs` per workflow
+- Adding Loki + Promtail duplicates storage, adds 2–3 pods, and a 10Gi PVC for no
+  additional capability that `argo logs` doesn't already provide
 
-Keep the VM-based `dakota-qa-pipeline` suspended until a successful `build-containerdisk` run
-proves the VM-boot path works.
+## Desktop QA probes
 
-### 22. Per-workflow ephemeral storage — volumeClaimTemplates
-
-### 21. Native-systemd desktop QA
+### Native-systemd desktop QA
 
 `run-systemd-container-tests` is the container-native desktop QA probe. An
 Argo `resource` template creates a privileged target Pod with systemd as PID 1
@@ -743,201 +993,12 @@ initramfs, or physical hardware remain outside its scope.
 GNOME D-Bus/Wayland session, so use this probe only for targeted desktop
 bootstrap validation until that instability is resolved.
 
-For pipelines that need shared scratch space across steps (e.g. installer binaries, target disks),
-use Argo's `volumeClaimTemplates` at the workflow spec level. Argo auto-creates the PVC at workflow
-start and auto-deletes it on completion — no manual cleanup step needed.
+## BuildStream pipelines
 
-```yaml
-spec:
-  volumeClaimTemplates:
-    - metadata:
-        name: workspace
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        storageClassName: local-path   # explicit non-root node mapping in GitOps
-        resources:
-          requests:
-            storage: 30Gi
-
-  templates:
-    - name: my-step
-      script:
-        volumeMounts:
-          - name: workspace
-            mountPath: /mnt/workspace
-```
-
-**RWO PVC + KubeVirt VM co-location:** When a VM uses a `persistentVolumeClaim` volume backed
-by a RWO PVC, KubeVirt automatically schedules the VM on the same node as the PVC — no explicit
-`nodeSelector` needed. Source: /kubevirt/user-guide — "When using local devices or ReadWriteOnce
-(RWO) PVCs, affinity rules on VMs sharing storage ensure they are scheduled on the same node."
-
-The local-path provisioner configuration must contain an explicit non-root data
-mount for every eligible node. It has no default path: a PVC on an unconfigured
-node must fail provisioning rather than write to the root filesystem.
-
-**Namespace constraint:** `volumeClaimTemplates` creates the PVC in the workflow's own namespace
-(`argo`). If a VM in a different namespace (`knuckle-test`) needs a disk, create a dedicated PVC
-in that namespace via a `resource:` step, and delete it in `onExit`.
-
-```yaml
-# registry-lint-ignore not needed — no image ref
-- name: create-rootdisk-pvc
-  resource:
-    action: apply
-    manifest: |
-      apiVersion: v1
-      kind: PersistentVolumeClaim
-      metadata:
-        name: "{{workflow.name}}-rootdisk"
-        namespace: knuckle-test
-      spec:
-        accessModes: [ReadWriteOnce]
-        storageClassName: local-path
-        resources:
-          requests:
-            storage: 30Gi
-```
-
-**containerDisk OCI format** (source: /kubevirt/user-guide):
-```dockerfile
-FROM scratch
-ADD --chown=107:107 disk.raw /disk/
-```
-UID 107 = qemu. Required — omitting `--chown` causes VM boot failure (permission denied on disk).
-
-### 23. Log access — Argo is sufficient, no separate stack needed
-
-Argo Server retains all workflow pod logs for the workflow TTL period (7 days success,
-30 days failure via `workflow-controller-configmap`). No separate log aggregation stack
-(Loki, Promtail, etc.) is needed for a homelab CI cluster.
-
-**Retrieve logs:**
-```bash
-# most recent workflow
-just logs                              # alias: argo logs -n argo @latest
-
-# specific workflow
-argo logs -n argo <workflow-name>
-
-# specific pod/container
-kubectl logs -n argo <pod> -c main
-
-# via MCP
-argo-mcp-logs_workflow <workflow-name>
-```
-
-**Why a separate log stack is redundant:**
-- Pod logs are already captured and served by the Argo Server
-- Artifacts (`results.json`, `atspi_tree.txt`) echo to stderr — accessible via `argo logs`
-- Cross-workflow queries → `argo list -n argo` then `argo logs` per workflow
-- Adding Loki + Promtail duplicates storage, adds 2–3 pods, and a 10Gi PVC for no
-  additional capability that `argo logs` doesn't already provide
-
-### 23. CronWorkflow `suspend` field can survive a git removal — verify live, don't trust ArgoCD "Synced"
-
-Removing `spec.suspend: true` from a CronWorkflow's git manifest and syncing does **not**
-reliably clear the live field, even when ArgoCD reports the resource `Synced` and the sync
-`operationState` says `Succeeded`. This was observed directly: after removing `suspend: true`
-from 10 CronWorkflow manifests, committing, pushing, and force-syncing (`annotate
-argocd.argoproj.io/refresh=hard`), ArgoCD reported all 10 as `Synced` — but `kubectl get
-cronworkflow <name> -o jsonpath='{.spec.suspend}'` still returned `true` on every one of them.
-
-**Always verify the live field directly after removing it from git — never trust the
-ArgoCD sync/resource status alone for boolean fields that may have been set by a prior
-apply.** If live state doesn't match git after a confirmed sync, patch it directly:
-
-```bash
-kubectl patch cronworkflow -n argo <name> --type=merge -p '{"spec":{"suspend":false}}'
-```
-
-Root cause not conclusively identified (suspected Server-Side Apply field-ownership —
-a boolean field set by an earlier field manager isn't cleared just because a later
-manifest omits it). Treat any boolean/scalar field removal from a CronWorkflow the same
-way: confirm live state with `kubectl get -o jsonpath`, don't stop at "ArgoCD says Synced".
-
-### 24. Digest-comparison pollers can't detect out-of-band artifact loss
-
-`digest-watch` (and similarly-shaped pollers) only rebuild an artifact when the **upstream
-source digest changes** vs a ConfigMap-stored value. They have no way to notice that the
-artifact itself disappeared for an unrelated reason (disk wipe, PVC reset, registry GC)
-while the upstream digest stayed the same — the poller will keep reporting "no change,
-skipping" indefinitely even though the artifact is gone and every downstream consumer
-(e.g. `assert-cd` in a QA pipeline) is failing.
-
-**This happened concretely:** a ghost XFS migration wiped the local Zot registry.
-`bluefin-containerdisk` was completely absent, but `ghcr.io/projectbluefin/bluefin:testing`'s
-digest hadn't changed, so `digest-watch` never rebuilt it. `bluefin-qa-pipeline` would have
-failed indefinitely without manual intervention.
-
-**Recovery:** manually submit the build Workflow directly with `force=true`, bypassing the
-digest comparison:
-```bash
-kubectl create -f - <<'EOF'
-apiVersion: argoproj.io/v1alpha1
-kind: Workflow
-metadata:
-  generateName: manual-build-cd-<tag>-
-  namespace: argo
-spec:
-  workflowTemplateRef:
-    name: build-containerdisk
-  arguments:
-    parameters:
-      - {name: image, value: "ghcr.io/projectbluefin/<repo>"}
-      - {name: image-tag, value: "<upstream-tag>"}
-      - {name: containerdisk-tag, value: "<zot-tag>"}
-      - {name: force, value: "true"}
-EOF
-```
-
-**Implemented:** digest-comparison pollers that gate a downstream `assert-cd`-style check
-now probe the destination registry for artifact existence and force-rebuild the containerDisk
-when the artifact is missing or when the upstream source digest changed. This covers disk
-wipes, registry migration, and manual Zot cleanup without waiting for a separate recovery
-step.
-
-### 25. Configure registries mirror and security policies before running container builds
-
-When running `podman build`, `bootc install`, or other image/pull operations inside a privileged Argo workflow container, you must configure any custom registries mirror files (such as `/etc/containers/registries.conf.d/bluefin-local-zot.conf` to hook up the local Zot pull-through cache) and security policy files (such as `/etc/containers/policy.json`) BEFORE executing those container operations. 
-
-In particular, if the base image being pulled or built has a strict production signature policy built into its `/etc/containers/policy.json` (as is the case with Bluefin/Aurora production images), `bootc install` and other podman/skopeo pull tasks will reject pulling unsigned images from local registries or GHCR with exit code 125 ("Source image rejected: A signature was required, but no signature exists"). Overwriting the pod container's local `/etc/containers/policy.json` with an insecure policy (e.g. `"type": "insecureAcceptAnything"`) prevents this exit-125 failure.
-
-This is extremely critical to understand if a workflow ever uses `hostPID: true`. If a pod using `hostPID: true` exits with failure (or is terminated/timed out), the `argoexec` process teardown signals all processes in its view — which in a host PID namespace means **every host process**, killing host daemons like `k3s`, `sshd`, and `systemd-journald` and crashing the node. Therefore, `hostPID: true` and `hostIPC: true` must NOT be used in build containers. Bypassing signature checks using `policy.json` prevents exit-125 crashes, but removing `hostPID` entirely is the primary safety guarantee.
-
-**Correct order of execution:**
-1. Configure containers-storage graphroot.
-2. Write registry mirror configuration files under `/etc/containers/registries.conf.d/`.
-3. Overwrite `/etc/containers/policy.json` with `insecureAcceptAnything` to bypass signature checks.
-4. Run container build or install operations (e.g., `podman build --tls-verify=false -t ...` or `bootc install to-disk ...`).
-5. Run container push operations (e.g., `podman push ...`).
-
-### 26. Avoid permission denied errors on /tmp for non-root containers
-
-If an Argo workflow container template is configured to run as a non-root user (such as `runAsUser: 1000` in `run-container-tests.yaml`), and needs to write results, temporary configurations, or scripts under `/tmp`, it can easily fail with `Permission denied` (exit code 1). This happens because `/tmp` inside the bootc rootfs image is typically owned by root with restricted permissions.
-
-The clean, standard Kubernetes/Argo solution is to mount an `emptyDir: {}` volume on `/tmp` inside the pod container. This provides a fresh, fully-writable `/tmp` filesystem that is owned by the executing non-root user (1000) and completely isolates test execution from any image-baked `/tmp` permission constraints.
-
-**Implementation pattern:**
-```yaml
-    container:
-      image: "{{inputs.parameters.image}}:{{inputs.parameters.image-tag}}"
-      securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
-      volumeMounts:
-        - mountPath: /tmp
-          name: tmp
-    volumes:
-      - name: tmp
-        emptyDir: {}
-
-### 27. BuildStream Pipeline Resource Right-Sizing and Scheduler-Driven Affinities
+### BuildStream resource right-sizing and scheduler-driven affinities
 
 When designing or updating BuildStream compilation pipelines (e.g. `dakota-build-pipeline` and `cosmic-build-pipeline`), right-size all step-level resource requests and limits to maximize cluster capacity and prevent scheduling bottlenecks:
 
 - **RE Coordinator/Driver Pods**: The remote execution build driver (e.g., `bst-build-re`) only orchestrates execution, downloads metadata, and transfers sparse artifact layers; its native CPU/memory usage is minimal (~47m CPU, ~926Mi memory). Keep its resource requests right-sized at `2 CPU` and `4Gi` memory (with limits at `4 CPU` and `8Gi` memory) to prevent massive node capacity stranding.
 - **Local/Serial Builder Pods**: Local compile templates (e.g. `bst-build-local`) can spike up to 15.9 CPU cores but rarely exceed ~9.6GiB of memory and ~0.36GiB of container-overlay filesystem storage (since the BuildStream artifact cache is mapped directly to a hostPath or PVC). Right-size requests to `16 CPU` and `16Gi` memory with a `10Gi` ephemeral storage request (limits: `32 CPU`, `32Gi` memory, `50Gi` ephemeral storage) to avoid stranding resources while leaving ample compiling headroom.
 - **Preferred Node Affinities**: Avoid hard node pinnings (like `nodeSelector: kubernetes.io/hostname: exo-0`) on build templates. Instead, utilize a `preferredDuringSchedulingIgnoredDuringExecution` preferred node affinity targeting the primary build node (e.g., `exo-0` with weight 100) to keep cache locality warm under normal conditions, while enabling the Kubernetes scheduler to gracefully schedule build pods onto other available nodes (such as `exo-1`) when the primary is overloaded or undergoing maintenance. This fully aligns with scheduler-driven placement policies.
-
-```
