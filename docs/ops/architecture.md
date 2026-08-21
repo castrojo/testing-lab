@@ -106,6 +106,22 @@ standard Ethernet only — none currently have a physical USB4/Thunderbolt link 
   completely invisible and immune to flannel/k3s route reconciliation. If any other node joins
   the cluster over the LAN, its traffic continues over Ethernet, preventing any route isolation.
 
+- **TSO must stay disabled on `thunderbolt0`.** flannel runs in `host-gw` mode,
+  so cross-node pod traffic is plain IP **forwarding** — and TCP segmentation
+  offload on this driver mishandles forwarded frames. Measured 2026-08-21: pod
+  to pod ran at **244 KB/s** with TSO on versus **380 MB/s** with it off, caused
+  by a 15% TCP retransmit rate. Host-locally-generated traffic over the same
+  link is unaffected at 1.10 GB/s, so raw link tests look perfectly healthy and
+  hide the fault completely. `gso` and `gro` were measured individually and are
+  not implicated; they stay on.
+
+  `ethtool` settings are **not** persisted by NetworkManager and reset on reboot
+  or `thunderbolt0` re-init, so the `usb4-link-monitor` DaemonSet reconciles
+  `ethtool -K thunderbolt0 tso off` on the same 15-second loop as the DNS rules.
+
+  Verify with `ethtool -k thunderbolt0 | grep tcp-segmentation-offload` on both
+  nodes — it must read `off`. Tracked in issue #662.
+
 
 ---
 

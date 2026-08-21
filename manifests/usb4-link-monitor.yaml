@@ -11,6 +11,10 @@
 #
 # hostNetwork gives the pod the host network namespace, so /sys/class/net
 # shows the host's thunderbolt0 and the TCP probe routes over the tb link.
+#
+# The loop also reconciles two host-level settings that nothing else persists:
+# - thunderbolt0 TSO stays OFF (it destroys forwarded pod-to-pod throughput)
+# - DNS (port 53) stays pinned to the main table via ip rule pref 5208
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -108,6 +112,21 @@ spec:
               IF=/sys/class/net/thunderbolt0
               LAST=""
               while true; do
+                # TSO on thunderbolt0 destroys FORWARDED (pod-to-pod) throughput.
+                # Measured 244 KB/s with TSO on vs 379 MB/s with it off -- a ~1550x
+                # collapse caused by a ~15% TCP retransmit rate. Host-local traffic
+                # over the same link is unaffected, which is why raw link tests look
+                # healthy and hide the bug. flannel runs host-gw here, so all pod
+                # traffic is forwarded and every cross-node pod flow hits this path.
+                # GSO and GRO are innocent (measured individually) and stay ON.
+                # Reconciled every loop: ethtool state is not persisted by
+                # NetworkManager and resets on reboot or thunderbolt0 re-init.
+                if nsenter -t 1 -m -n -- /usr/sbin/ethtool -k thunderbolt0 2>/dev/null \
+                     | grep -q "^tcp-segmentation-offload: on"; then
+                  echo "thunderbolt0: disabling TSO (breaks forwarded pod traffic)"
+                  nsenter -t 1 -m -n -- /usr/sbin/ethtool -K thunderbolt0 tso off || true
+                fi
+
                 # Ensure DNS traffic (UDP/TCP port 53) is ALWAYS routed via Ethernet (main table)
                 # This guarantees DNS queries are immune to any USB4 interface state or table 40.
                 for proto in udp tcp; do
