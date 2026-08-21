@@ -101,13 +101,28 @@ RUN mkdir -p /usr/lib/upscale/lib && \
 
 # Model weights are baked and checksum-verified, so a render is reproducible and
 # cannot silently pick up different weights later.
-# 2xLiveActionV1_SPAN — native x2: 1920x804 -> 3840x1608 exactly, no resampling.
-# LICENSE: CC-BY-NC-SA-4.0 (non-commercial). Record this in any published report.
-ARG SPAN_SHA=bfa72f3c6347076aed140d0836cee30c27ea434c047beeaf9466469483836ecc
+#
+# 2xNomosUni_span_multijpg — SPAN, native x2: 1920x804 -> 3840x1608 exactly, no
+# resampling. Trained with multi-scale JPEG degradation, which is what a
+# low-bitrate 1080p source actually suffers from.
+#
+# LICENSE: CC-BY-4.0 — commercial use permitted with attribution. This matters:
+# the obvious alternative, 2xLiveActionV1_SPAN, is CC-BY-NC-SA-4.0, and a
+# non-commercial model taints every frame it renders. Measured at 0.414 s/frame
+# against that model's 0.424, so the permissive licence costs nothing.
+# Attribution is shipped in the image at /usr/lib/upscale/models/ATTRIBUTION.
+ARG MODEL_SHA=4c088922fcb40584a95a1b98009e3042a61ada46f237a9e72e8a2ed127832004
 RUN mkdir -p /usr/lib/upscale/models && \
-    curl -sSfL -o /usr/lib/upscale/models/2xLiveActionV1_SPAN.onnx \
-      "https://github.com/jcj83429/upscaling/raw/f73a3a02874360ec6ced18f8bdd8e43b5d7bba57/2xLiveActionV1_SPAN/2xLiveActionV1_SPAN_490000.onnx" && \
-    echo "${SPAN_SHA}  /usr/lib/upscale/models/2xLiveActionV1_SPAN.onnx" | sha256sum -c -
+    curl -sSfL -o /usr/lib/upscale/models/2xNomosUni_span_multijpg.onnx \
+      "https://github.com/Phhofm/models/releases/download/2xNomosUni_span_multijpg/2xNomosUni_span_multijpg_fp32_opset17.onnx" && \
+    echo "${MODEL_SHA}  /usr/lib/upscale/models/2xNomosUni_span_multijpg.onnx" | sha256sum -c - && \
+    printf '%s\n' \
+      '2xNomosUni_span_multijpg' \
+      '  Author:  Philip Hofmann (Phhofm)' \
+      '  License: CC-BY-4.0 <https://creativecommons.org/licenses/by/4.0/>' \
+      '  Source:  https://github.com/Phhofm/models/releases/tag/2xNomosUni_span_multijpg' \
+      '  Arch:    SPAN, native x2' \
+      > /usr/lib/upscale/models/ATTRIBUTION
 
 COPY upscale.vpy /usr/lib/upscale/upscale.vpy
 

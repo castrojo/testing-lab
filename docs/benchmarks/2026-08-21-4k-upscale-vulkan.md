@@ -28,12 +28,18 @@ Vulkan/ncnn throughout. No ROCm, HIP, CUDA or PyTorch, per
 | `vapoursynth-deblock` | 9.0 |
 | `vapoursynth-mvtools` | 29 |
 | vszip | commit `beb7a0ab` (Zig 0.16.0) |
-| Model | `2xLiveActionV1_SPAN`, native x2 |
+| Model | `2xNomosUni_span_multijpg`, native x2 |
 | Image | `images/video-upscale/Containerfile`, both stages from org `bluefin` |
 
-**Model license: `2xLiveActionV1_SPAN` is CC-BY-NC-SA-4.0 — non-commercial.**
-Acceptable for an internal lab benchmark; it may not be used for anything
-commercial, and the output inherits the restriction.
+**Model license: `2xNomosUni_span_multijpg` is CC-BY-4.0 — commercial use is
+permitted with attribution** (Philip Hofmann / Phhofm). Attribution ships inside
+the image at `/usr/lib/upscale/models/ATTRIBUTION`.
+
+The benchmark run itself used `2xLiveActionV1_SPAN`, which is
+**CC-BY-NC-SA-4.0** — non-commercial, and the restriction is inherited by every
+frame it renders. That was acceptable for an internal benchmark and is not
+acceptable for anything published, so the model was replaced. See
+[Replacing the non-commercial model](#replacing-the-non-commercial-model).
 
 The image contains **no package manager invocation at all**, per
 [image-policy.md](../skills/gitops-argocd/image-policy.md). ffmpeg comes from the
@@ -48,7 +54,7 @@ this problem is abandonware:
 |---|---|---|
 | `realesrgan-ncnn-vulkan` | 2022-04-24 | stale |
 | BasicVSR++ / MMagic | 2023-12-18 | stale, **and** MMCV deform-conv is CUDA-only |
-| DPIR · SCUNet · SwinIR · Real-CUGAN · Waifu2x | 2020–2024 | stale |
+| DPIR · SCUNet · SwinIR · Real-CUGAN · Waifu2x | 2020–2024 | stale — and the transformer ones are additionally **unconvertible by ncnn**, see below |
 | FlashVSR v1.1 | current | NVIDIA block-sparse attention |
 
 Consequence: nearly all of the 812 MB vs-mlrt model zoo fails a currency check.
@@ -141,6 +147,62 @@ weights were never vendored. They are unfinished, not evaluated.
 
 A `vszip.Deband` variant was attempted and failed on an incorrect call
 signature; it was dropped rather than guessed at.
+
+### Replacing the non-commercial model
+
+The benchmark shipped on `2xLiveActionV1_SPAN`, which is **CC-BY-NC-SA-4.0**.
+A non-commercial model taints every frame it produces, so it cannot be used for
+published work. The replacement search had three hard filters, and the second
+one is the surprise.
+
+**1. The licence must permit commercial use.** Verify it at the primary source.
+A web search claimed Real-ESRGAN was CC-BY-NC; reading the actual `LICENSE` file
+showed BSD-3-Clause. Never take a licence from a summary.
+
+**2. The architecture must be a CNN — transformers do not run on this stack.**
+`SwinIR-M x2 GAN` looked ideal on paper: Apache-2.0, native x2, and trained on
+BSRGAN degradations, i.e. exactly for compressed sources. It does not work.
+`vsncnn` rejects it during ONNX conversion:
+
+```
+Unsupported slice step !
+Cast not supported yet!
+Unknown data type 0
+```
+
+ncnn's ONNX converter covers a **subset** of operators, and Swin-style attention
+falls outside it. This rules out the whole transformer family available in the
+vs-mlrt zoo — SwinIR, SCUNet, DAT, HAT, RGT, DRCT, ATD, OmniSR, and waifu2x's
+`swin_unet_*`. It is a property of the backend, not of any one model, so it
+applies to every future model choice on this cluster.
+
+That constraint is load-bearing in the other direction too: SwinIR-M is ~12.7 M
+parameters against SPAN's ~0.4 M, so even had it converted, it would not have
+been affordable for a feature-length render.
+
+**3. It must be an ONNX artefact with a checksum, from the author's own
+release.** OpenModelDB indexes 671 models; filtering to permissive-licence,
+CNN-architecture, native-x2 candidates left 22. Most publish only `.pth` on
+Google Drive, which is neither pinnable nor good provenance.
+
+The bake-off, on the same clips as the branch comparison:
+
+| Model | Licence | Arch | s/frame | Verdict |
+|---|---|---|---:|---|
+| `2xLiveActionV1_SPAN` | CC-BY-NC-SA-4.0 | SPAN | 0.424 | incumbent — unusable licence |
+| **`2xNomosUni_span_multijpg`** | **CC-BY-4.0** | SPAN | **0.414** | **selected** |
+| `2xNomosUni_compact_otf_medium` | CC-BY-4.0 | Compact | 0.458 | rejected — over-sharpens |
+
+Decided on paired 1:1 crops, viewed directly, per the SSIM finding above. The
+Compact model rings badly: hard black outlines around every subject edge and
+posterised "cut-out" detail. The selected SPAN model is visually
+indistinguishable from the incumbent on natural texture and preserves
+out-of-focus regions without inventing detail in them — the failure mode the
+plan called the top quality risk.
+
+**The permissive licence cost nothing.** Same architecture, same parameter count,
+marginally *faster*, same visual result. The non-commercial model was removed
+from the image rather than kept as a selectable option.
 
 ## The two-node architecture was abandoned — and the cause was later fixed
 
