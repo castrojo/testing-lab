@@ -368,6 +368,14 @@ box every published Strix Halo guide assumes. Scale all community advice down.
 - **Use Vulkan, not ROCm.** On `gfx1151` the Vulkan/RADV backend is the reliable
   llama.cpp path; ROCm is not required for inference. `ghcr.io/ggml-org/llama.cpp`
   publishes **no ROCm tags at all** — only `vulkan`, `cuda`, `musa`, `intel`.
+- **Vision models on Vulkan must be CNNs.** The vs-mlrt `vsncnn` backend converts
+  ONNX through ncnn, whose converter covers only a **subset** of operators.
+  Swin-style attention is outside it: `SwinIR-M x2` fails with `Unsupported slice
+  step`, `Cast not supported yet`, `Unknown data type 0`. That rules out the whole
+  transformer family — SwinIR, SCUNet, DAT, HAT, RGT, DRCT, ATD, OmniSR, waifu2x
+  `swin_unet_*`. Filter candidates to SPAN / Compact (SRVGGNet) / ESRGAN (RRDB)
+  **before** downloading weights; the SwinIR archive alone is 1.1 GB. This is a
+  backend property, not a per-model bug.
 - **The 48 GiB GTT ceiling is not a budget.** GTT is system RAM shared with
   BuildBarn, KubeVirt and KubeStellar. amdgpu GTT pins pages the OOM-killer
   cannot reclaim, so overcommitting deadlocks the node rather than evicting a pod.
