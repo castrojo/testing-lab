@@ -12,7 +12,7 @@ spec:
   source:
     repoURL: ghcr.io/kubestellar/kubestellar
     chart: core-chart
-    targetRevision: 0.29.0
+    targetRevision: 0.30.0
     helm:
       valuesObject:
         # its1 type host reuses ghost's API server (OCM hub in-cluster).
@@ -31,8 +31,14 @@ spec:
         kubeflex-operator:
           installPostgreSQL: false
         # External reachability deferred per ADR-0004: in-cluster Service
-        # DNS suffices until external WECs exist. KubeFlex-generated nginx
-        # Ingress objects are inert (no controller claims them).
+        # DNS suffices until external WECs exist. KubeFlex v0.9.3 still
+        # generates an nginx Ingress for each hosted control plane even though
+        # this app has no ingress controller. ingress-nginx reached EOL in
+        # March 2026; do not install or enable it to satisfy this artifact.
+        #
+        # 0.30.0 carries KubeFlex v0.9.3. Verify the controller's status-update
+        # behavior after rollout; if conflicts persist, escalate the upstream
+        # KubeFlex controller rather than installing an unrelated ingress.
   destination:
     server: https://kubernetes.default.svc
     namespace: kubestellar
