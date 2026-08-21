@@ -397,15 +397,21 @@ Two cluster-specific traps that cost real time:
   cannot bind without a pod, ArgoCD blocks its sync waiting for PVC health, and
   so the Deployment is never created at all. Scale at runtime instead of
   committing `replicas: 0`.
-- **The pod network cannot carry bulk data across nodes.** Measured 2026-08-21:
-  pod->pod `10.42.x` throughput is **235 KB/s** while the same file over the raw
-  USB4 host addresses (`10.99.0.x`) does **1.10 GB/s** and Ethernet does
-  294 MB/s. That is a ~4,600x degradation in the CNI path, and it is not
-  routing — rule 5209 correctly sends pod-CIDR traffic via `thunderbolt0` even
-  for a pod source IP, and MTU is a uniform 1500. Do not design a workflow that
-  ships large intermediates between pods on different nodes; render/compute
-  single-node, or use `hostNetwork: true`, which reaches the full link speed.
-  Tracked in issue #662.
+- **TSO on `thunderbolt0` destroys cross-node pod traffic — turn it off.**
+  Measured 2026-08-21: pod->pod `10.42.x` throughput was **244 KB/s** with TSO
+  on and **379 MB/s** with it off, a ~1,550x collapse from a **15% TCP
+  retransmit rate** (`RetransSegs 30525 / OutSegs 201734`). The link carried
+  90.4 MB to deliver a 33.5 MB payload. **Only forwarded traffic is affected** —
+  host-locally-generated traffic over the same link always did 1.10 GB/s, which
+  is why raw link tests look healthy and hide the bug entirely. flannel runs
+  `host-gw` here, so every cross-node pod flow is forwarded and hits this path.
+  `gso` and `gro` were measured individually and are innocent; leave them on.
+  Reconciled every 15 s by the `usb4-link-monitor` DaemonSet, because `ethtool`
+  state is not persisted by NetworkManager and resets on reboot. Issue #662.
+- **Read TCP stats in the *sending pod*, not on the host.** `/proc/net/snmp` is
+  per-netns, so a host-side read shows a healthy stack while the pod is
+  retransmitting 15% of its segments. Pair it with per-interface byte counters
+  read on the **receiving** side to spot amplification.
 - **`ip route get <peer-pod-ip>` must run in the host netns** (a
   `hostNetwork: true` pod). Inside a pod it always answers
   `via <cni0 gateway> dev eth0`, because interface selection happens on the

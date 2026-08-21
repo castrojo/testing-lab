@@ -13,7 +13,7 @@ two-node USB4 architecture was worth building.
 | Full 507 s video | **1 h 19 m** render, 2 h 01 m including master encode |
 | Break-even needed to fit 48 h | 27.3 s/frame → **59x margin** |
 | Best restoration branch | **none** — the bare model won |
-| Two-node distribution | **abandoned** — pod network measured 235 KB/s |
+| Two-node distribution | **abandoned** — pod network measured 235 KB/s (root cause since fixed: TSO) |
 
 ## Stack
 
@@ -142,7 +142,7 @@ weights were never vendored. They are unfinished, not evaluated.
 A `vszip.Deband` variant was attempted and failed on an incorrect call
 signature; it was dropped rather than guessed at.
 
-## The two-node architecture was abandoned
+## The two-node architecture was abandoned — and the cause was later fixed
 
 The plan called for splitting the render across both GPUs with an HTTP chunk
 store on the pod network, specifically so bulk traffic would ride USB4.
@@ -155,11 +155,11 @@ Measurement killed it.
 | Ethernet, host netns | `192.168.1.170` | 294 MB/s |
 | **Cross-node pod -> pod** | `10.42.0.249` -> `10.42.1.54` | **235 KB/s** |
 
-The USB4 link is healthy and is 3.7x faster than Ethernet. The **pod** path is
+The USB4 link is healthy and is 3.7x faster than Ethernet. The **pod** path was
 ~4,600x slower than the link beneath it. The loopback control rules out the test
-server; pod→host-netns was also slow, so the fault is on pod-netns egress.
+server.
 
-Routing is not the cause — rule 5209 correctly steers pod-CIDR traffic onto
+Routing was not the cause — rule 5209 correctly steers pod-CIDR traffic onto
 `thunderbolt0` even with a pod source address, and MTU is a uniform 1500:
 
 ```
@@ -169,11 +169,49 @@ Routing is not the cause — rule 5209 correctly steers pod-CIDR traffic onto
 
 Moving 65–85 GB of chunks at 235 KB/s would take ~4 days against ~1.6 h to
 render everything on one node, so the benchmark ran **single-node on `ghost`**.
-Filed as **issue #662**.
+That was the right call with the information available at the time.
+
+### Root cause, found afterwards: TSO
+
+Filed as **issue #662** and diagnosed the same day. Per-interface byte counters
+showed the link carrying **90.4 MB to deliver a 33.5 MB payload** — 2.7x
+amplification. `/proc/net/snmp` *inside the sending pod* showed
+`RetransSegs 30525 / OutSegs 201734` — a **15% retransmit rate**. Traffic was on
+the right interface; most of it was being sent twice.
+
+The culprit is **TCP segmentation offload on `thunderbolt0`**, isolated by
+toggling each offload individually:
+
+| `thunderbolt0` offload state | Pod -> pod throughput |
+|---|---:|
+| `tso on`, gso off, gro on | 244 KB/s |
+| `tso on`, `gso on`, gro off | 313 KB/s |
+| tso off, `gso on`, gro off | 361 MB/s |
+| tso off, gso off, `gro on` | 372 MB/s |
+| tso off, `gso on`, `gro on` | **380 MB/s** |
+| all off | 375 MB/s |
+
+**TSO alone accounts for the entire collapse; GSO and GRO are innocent.** The
+decisive detail is that host-locally-generated traffic over the same link was
+*never* affected (1.097 GB/s throughout) — only **forwarded** frames. k3s runs
+flannel in `host-gw` mode, so pod-to-pod is plain IP forwarding, which is
+exactly the path the offload mishandles. This is why every raw link test looked
+healthy and hid the bug.
+
+The fix is one knob, `ethtool -K thunderbolt0 tso off`, reconciled every 15 s by
+the `usb4-link-monitor` DaemonSet because `ethtool` state is not persisted by
+NetworkManager and resets on reboot or link re-init.
+
+**Consequence for future work:** the two-node distributed architecture in the
+plan is now viable. At 380 MB/s, 65–85 GB of chunks moves in ~3–4 minutes
+instead of ~4 days. A rerun should expect close to 2x throughput.
 
 > **Trap:** `ip route get <peer-pod-ip>` only tells the truth in the host netns.
 > Run inside a pod it always answers `via <cni0 gateway> dev eth0`, which looks
 > like a failure and proves nothing either way.
+
+> **Trap:** `/proc/net/snmp` is per-netns. Read it on the host and the stack
+> looks perfectly healthy while the pod is retransmitting 15% of its segments.
 
 ## Full run
 
