@@ -43,6 +43,18 @@ npm ci && npm run build
 
 - `main` uses the GitHub merge queue. When a change passes local validation (`just lint`, `npm test`, `pytest`), agents MUST immediately create and queue PRs to `main` via `gh pr merge <number> --auto --squash`. Do not pause or delay merging verified GitOps changes.
 - Do not `kubectl apply` WorkflowTemplates — ArgoCD owns them.
+- **Always prefer industry-standard CNCF/OCI tooling over distribution tooling.**
+  This is the project's greatest competitive advantage. Compose capability from
+  [`fsdk-containers`](https://github.com/projectbluefin/fsdk-containers); if the
+  image you need is missing, propose adding one.
+- **Do not use RPM or `dnf`** — not at runtime, not in a Containerfile, not in a
+  builder stage. Never install packages inside a running pod. Fetch upstream
+  release artifacts by checksum instead. See
+  [`docs/skills/gitops-argocd/image-policy.md`](docs/skills/gitops-argocd/image-policy.md).
+- **Never use a distro-packaged `ffmpeg`.** Fedora's `ffmpeg-free` is
+  patent-stripped (measured on fc44: no `libx265`, no `libsvtav1`), so an
+  encode path fails hours into a render. `ghcr.io/projectbluefin/bluefin` ships
+  a full org-built ffmpeg.
 - Do not introduce Grafana or another general-purpose cluster-admin/dashboard
   framework alongside KubeStellar Console.
 - Treat the local `ghost` k3s topology as canonical; do not design lab

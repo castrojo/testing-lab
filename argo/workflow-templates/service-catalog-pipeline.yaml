@@ -97,7 +97,7 @@ spec:
           - name: image-tag
           - name: branch
       script:
-        image: quay.io/fedora/fedora:latest
+        image: ghcr.io/projectbluefin/lab-runner:latest
         command: [bash, -c]
         resources:
           requests:
@@ -117,8 +117,6 @@ spec:
             if kubectl get pods -n "${NS}" >/dev/null 2>&1; then break; fi
             sleep 1
           done
-
-          dnf install -y --quiet git kubernetes-client 2>&1 | tail -4
 
           REPO_DIR=$(mktemp -d)
           git clone --depth 1 --branch "${BRANCH}" \

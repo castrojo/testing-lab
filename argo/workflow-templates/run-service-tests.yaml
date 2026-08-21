@@ -22,7 +22,7 @@ spec:
       activeDeadlineSeconds: 1800
       initContainers:
         - name: git-sync
-          image: quay.io/fedora/fedora:latest
+          image: ghcr.io/projectbluefin/lab-runner:latest
           env:
             - name: BRANCH
               value: "{{inputs.parameters.branch}}"
@@ -30,7 +30,6 @@ spec:
           args:
             - |
               set -euo pipefail
-              dnf install -y --quiet git 2>&1 | tail -2
               for attempt in 1 2 3; do
                 rm -rf /workspace/testing-lab
                 if git clone --depth 1 --branch "${BRANCH}" \

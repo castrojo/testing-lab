@@ -1,0 +1,111 @@
+# Video upscale image — Vulkan/ncnn 4K pipeline for the ghost lab
+#
+# Base is the ORGANIZATION'S OWN Bluefin image (image-policy preference 1), not a
+# generic distro box. That choice is load-bearing, not cosmetic:
+#
+#   * It already ships a full, freeworld ffmpeg (libx265, libsvtav1, ffv1,
+#     prores_ks) built in a signed org pipeline. Fedora's `ffmpeg-free` is
+#     patent-stripped — measured on fc44, it has NO libx265 and NO libsvtav1, so
+#     an HEVC/AV1 encode path would fail hours into a long render.
+#   * It already ships Mesa RADV (radeon_icd.x86_64.json, libvulkan_radeon.so),
+#     which is the entire inference backend. See ADR-0007: Vulkan, not ROCm.
+#
+# This is the CNCF/OCI principle in practice: compose from purpose-built, signed,
+# org-published images. Do NOT add RPM Fusion. Do NOT install packages at runtime.
+# See docs/skills/gitops-argocd/image-policy.md.
+
+# ---------------------------------------------------------------------------
+# Stage 1 — build vszip (Zig).
+#
+# Built FROM OUR OWN Bluefin image, which already ships git, curl, tar and xz —
+# so nothing is installed here. Zig arrives as its official upstream release
+# tarball, verified by checksum: upstream-native and reproducible, not
+# distribution tooling.
+#
+# vszip is the ONLY dependency not on PyPI; it provides MosquitoNR, which targets
+# this source's actual damage (mosquito noise), and Deband.
+# ---------------------------------------------------------------------------
+FROM ghcr.io/projectbluefin/bluefin@sha256:d3aed20b3402959f647328d2bd7bb323aa6e0d219b69bd4b9eaf0398747fb447 AS vszip-builder
+
+# vszip 22.1.0 declares minimum_zig_version = "0.16.0".
+ARG ZIG_VERSION=0.16.0
+ARG ZIG_SHA=70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+RUN curl -sSfL -o /tmp/zig.tar.xz \
+      "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" && \
+    echo "${ZIG_SHA}  /tmp/zig.tar.xz" | sha256sum -c - && \
+    mkdir -p /usr/lib/zig && \
+    tar -xJf /tmp/zig.tar.xz -C /usr/lib/zig --strip-components=1 && \
+    rm /tmp/zig.tar.xz
+
+# Pinned to a commit, not a tag: a git SHA is itself a content hash, so a
+# retagged upstream release cannot silently change what we build.
+ARG VSZIP_COMMIT=beb7a0ab0e4166580b76560ae3f7c7f5e376ac90
+# Bluefin is an ostree/bootc image: /opt -> /var/opt and /usr/local -> /var/usrlocal,
+# and /var is empty in the image, so both are unusable at build time. Everything
+# lives under /usr/lib, which is real. Zig's default cache under /root/.cache
+# also fails with "NotDir", so it is redirected too.
+ENV ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache \
+    ZIG_LOCAL_CACHE_DIR=/tmp/zig-local-cache
+RUN git clone https://github.com/dnjulek/vapoursynth-zip.git /src && \
+    cd /src && \
+    git checkout "${VSZIP_COMMIT}" && \
+    /usr/lib/zig/zig build -Doptimize=ReleaseFast && \
+    mkdir -p /out && \
+    find /src/zig-out -name '*.so' -exec cp {} /out/ \;
+
+# ---------------------------------------------------------------------------
+# Stage 2 — runtime
+# ---------------------------------------------------------------------------
+FROM ghcr.io/projectbluefin/bluefin@sha256:d3aed20b3402959f647328d2bd7bb323aa6e0d219b69bd4b9eaf0398747fb447
+
+LABEL org.opencontainers.image.title="video-upscale" \
+      org.opencontainers.image.description="VapourSynth + vs-mlrt (ncnn/Vulkan) 4K upscaling pipeline" \
+      org.opencontainers.image.source="https://github.com/projectbluefin/lab"
+
+ENV VENV=/usr/lib/upscale
+ENV PATH="${VENV}/bin:${PATH}" \
+    PYTHONPATH=/usr/lib/upscale/lib \
+    VS_PLUGINDIR=/usr/lib/upscale/vs-plugins
+
+# A venv keeps the OS image's own Python environment authoritative and untouched.
+RUN python3 -m venv "${VENV}" && \
+    "${VENV}/bin/pip" install --no-cache-dir --upgrade pip
+
+# Every version pinned. All resolved against upstream on 2026-08-21; see the
+# currency audit in the benchmark plan. Nothing here is older than ~18 months.
+RUN "${VENV}/bin/pip" install --no-cache-dir \
+      "VapourSynth==79" \
+      "vapoursynth-mlrt-ncnn==16.0" \
+      "vapoursynth-bestsource==21.0" \
+      "vapoursynth-deblock==9.0" \
+      "vapoursynth-mvtools==29"
+
+COPY --from=vszip-builder /out/ ${VS_PLUGINDIR}/
+
+# vsmlrt.py must match the installed wheel's major line (16.x).
+ARG VSMLRT_REF=v16.2.test1
+RUN mkdir -p /usr/lib/upscale/lib && \
+    curl -sSfL -o /usr/lib/upscale/lib/vsmlrt.py \
+      "https://raw.githubusercontent.com/AmusementClub/vs-mlrt/${VSMLRT_REF}/scripts/vsmlrt.py"
+
+# Model weights are baked and checksum-verified, so a render is reproducible and
+# cannot silently pick up different weights later.
+# 2xLiveActionV1_SPAN — native x2: 1920x804 -> 3840x1608 exactly, no resampling.
+# LICENSE: CC-BY-NC-SA-4.0 (non-commercial). Record this in any published report.
+ARG SPAN_SHA=bfa72f3c6347076aed140d0836cee30c27ea434c047beeaf9466469483836ecc
+RUN mkdir -p /usr/lib/upscale/models && \
+    curl -sSfL -o /usr/lib/upscale/models/2xLiveActionV1_SPAN.onnx \
+      "https://github.com/jcj83429/upscaling/raw/f73a3a02874360ec6ced18f8bdd8e43b5d7bba57/2xLiveActionV1_SPAN/2xLiveActionV1_SPAN_490000.onnx" && \
+    echo "${SPAN_SHA}  /usr/lib/upscale/models/2xLiveActionV1_SPAN.onnx" | sha256sum -c -
+
+COPY upscale.vpy /usr/lib/upscale/upscale.vpy
+
+# Fail the BUILD, not a 40-hour render, if the toolchain is not what we expect.
+RUN ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx265    || (echo "FATAL: no libx265"    && exit 1) && \
+    ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libsvtav1  || (echo "FATAL: no libsvtav1"  && exit 1) && \
+    ffmpeg -hide_banner -encoders 2>/dev/null | grep -q ffv1       || (echo "FATAL: no ffv1"       && exit 1) && \
+    ffmpeg -hide_banner -encoders 2>/dev/null | grep -q prores_ks  || (echo "FATAL: no prores_ks"  && exit 1) && \
+    test -f /usr/share/vulkan/icd.d/radeon_icd.x86_64.json         || (echo "FATAL: no RADV ICD"   && exit 1) && \
+    "${VENV}/bin/python" -c "import vapoursynth as vs; assert vs.core.ncnn is not None"
+
+WORKDIR /work

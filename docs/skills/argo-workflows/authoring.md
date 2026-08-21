@@ -240,7 +240,7 @@ echo "$SUMMARIES" | jq '
 
 This avoids `jq` parse errors when the aggregated values arrive as strings and keeps the template compatible if Argo later normalizes them to objects.
 
-**`ghcr.io/projectbluefin/lab-runner:latest`** is the preferred, organization-owned FSDK container for pollers, GC, and CronWorkflows that need `kubectl`, `curl`, `jq`, and a full shell. Do not assume it contains registry clients: the live `latest` image has lacked both `skopeo` and `oras`. Use the pinned `quay.io/skopeo/stable` image for image transfer and bootstrap a pinned ORAS binary when referrer handling is required.
+**`ghcr.io/projectbluefin/lab-runner:latest`** is the preferred, organization-owned FSDK container for pollers, GC, and CronWorkflows that need `kubectl`, `curl`, `jq`, and a full shell. Do not assume it contains registry clients: verified 2026-08, the live `latest` image carries bash, curl, git, jq, python3, and kubectl, but **not** `skopeo`, `oras`, or `tar`. Use the digest-pinned `quay.io/skopeo/stable` image for shell+skopeo steps (or the distroless org `ghcr.io/projectbluefin/skopeo` for shell-free `container:` steps) and the digest-pinned `ghcr.io/oras-project/oras` image when referrer handling is required.
 
 For steps that still use other images, **`cgr.dev/chainguard/kubectl:latest-dev`** can be used as a fallback if it needs both `kubectl` and `bash`. `registry.k8s.io/kubectl` is distroless (no shell — `nc`, `bash /dev/tcp` all fail).
 
@@ -248,9 +248,9 @@ If a step needs shell features (`mkdir`, redirection, `jq`/`awk` parsing, heredo
 
 - use the organization-owned `ghcr.io/projectbluefin/lab-runner:latest` image,
 - run the binary directly with `container.command`/`args` and avoid shell syntax entirely, or
-- switch to a shell-capable base image (`cgr.dev/chainguard/wolfi-base@sha256:02dab76bd852a70556b5b2002195c8a5fdab77d323c433bf6642aab080489795`, `cgr.dev/chainguard/kubectl:latest-dev`) and install/fetch the CLI inside the step.
+- switch to a shell-capable base image (`cgr.dev/chainguard/wolfi-base@sha256:02dab76bd852a70556b5b2002195c8a5fdab77d323c433bf6642aab080489795`, `cgr.dev/chainguard/kubectl:latest-dev`) and use only the tools that image already carries — installing or fetching a CLI inside the step is a banned runtime install (see [`gitops-argocd/image-policy.md`](../gitops-argocd/image-policy.md)).
 
-To handle any lag in upstream FSDK container image rebuilds, use an inline on-demand bootstrap/fallback wrapper (for example, `command -v oras || curl ...`) inside the shell scripts rather than trusting a mutable image tag's historical tool list.
+If an upstream FSDK container rebuild lags and a mutable tag's tool list regresses, do **not** paper over it with an inline bootstrap/fallback wrapper (`command -v oras || curl ...`) — a runtime download is an ungoverned, offline-fragile dependency banned by `image-policy.md`. Pin the image by digest at a known-good build, or move the step to an image that already carries the tool, and fix the image contents at build time.
 
 A runtime `/bin/sh: not found` or missing-coreutils failure from a CLI image usually means the image is distroless, not that the WorkflowTemplate syntax is wrong.
 

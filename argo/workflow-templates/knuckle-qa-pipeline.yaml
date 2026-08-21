@@ -249,12 +249,11 @@ spec:
       emptyDir: {}
     initContainers:
     - name: git-clone
-      image: quay.io/fedora/fedora:latest
+      image: ghcr.io/projectbluefin/lab-runner:latest
       command: [bash, -c]
       args:
       - |
         set -euo pipefail
-        dnf install -y --quiet git 2>&1 | tail -2
         git clone --depth 1 --branch "{{inputs.parameters.branch}}" \
           https://github.com/projectbluefin/knuckle /src
       volumeMounts:

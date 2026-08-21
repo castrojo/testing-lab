@@ -111,16 +111,18 @@ requires both CAP_MAC_ADMIN (satisfied by `--privileged`) AND an SELinux AVC che
 the SELinux type to `unconfined_service_t` for privileged containers.
 
 **Actual fix — LD_PRELOAD wrapper:**
-Compile a tiny `fsetxattr` interceptor in the outer container (before running podman). Mount it
-into the inner container via a dedicated bind mount. The wrapper converts `EINVAL` → `0` for
-`security.*` xattrs, silently dropping unknown labels. The installed VM boots with `selinux=0`
-so missing xattrs are irrelevant.
+The `fsetxattr` interceptor converts `EINVAL` → `0` for `security.*` xattrs, silently
+dropping unknown labels. The installed VM boots with `selinux=0` so missing xattrs are
+irrelevant. Mount it into the inner container via a dedicated bind mount.
 
-```bash
-# In the outer script (quay.io/podman/stable which has dnf):
-dnf install -y gcc glibc-devel 2>&1 | tail -2
-mkdir -p /tmp/bluefin-cd-preload
-printf '%s\n' \
+> **Build this into the runner image — do not compile it at runtime.** Installing a
+> toolchain inside a running pod is banned (see
+> [`image-policy.md`](../gitops-argocd/image-policy.md)); it is unreproducible and
+> invisible to the registry allowlist. The `.so` below is a build-time artifact.
+
+```dockerfile
+# In the runner image's Containerfile — compiled once, shipped as an artifact.
+RUN printf '%s\n' \
   '#define _GNU_SOURCE' '#include <dlfcn.h>' '#include <string.h>' \
   '#include <errno.h>' '#include <stddef.h>' \
   'typedef int (*fn_t)(int,const char*,const void*,size_t,int);' \
@@ -129,8 +131,15 @@ printf '%s\n' \
   '  if(!real)real=(fn_t)dlsym(RTLD_NEXT,"fsetxattr");' \
   '  int r=real(fd,n,v,s,f);' \
   '  if(r==-1&&errno==EINVAL&&n&&strncmp(n,"security.",9)==0){errno=0;return 0;}' \
-  '  return r;}' > /tmp/fsetxattr_wrap.c
-gcc -shared -fPIC -o /tmp/bluefin-cd-preload/fsetxattr_wrapper.so /tmp/fsetxattr_wrap.c -ldl
+  '  return r;}' > /tmp/fsetxattr_wrap.c && \
+    gcc -shared -fPIC -o /usr/local/lib/fsetxattr_wrapper.so /tmp/fsetxattr_wrap.c -ldl && \
+    rm /tmp/fsetxattr_wrap.c
+```
+
+```bash
+# In the outer script: the wrapper already exists in the image.
+mkdir -p /tmp/bluefin-cd-preload
+cp /usr/local/lib/fsetxattr_wrapper.so /tmp/bluefin-cd-preload/
 chcon -t lib_t /tmp/bluefin-cd-preload/fsetxattr_wrapper.so 2>/dev/null || true
 
 # In the podman run command:
