@@ -3,13 +3,13 @@ core = vs.core
 import vsmlrt
 
 # Plugins built in the vszip builder stage are not on the default search path.
-for _p in os.scandir(os.environ.get("VS_PLUGINDIR", "/opt/upscale/vs-plugins")):
+for _p in os.scandir(os.environ.get("VS_PLUGINDIR", "/usr/lib/upscale/vs-plugins")):
     if _p.name.endswith(".so"):
         core.std.LoadPlugin(path=_p.path)
 
 SRC    = os.environ["SRC"]
 BRANCH = int(os.environ.get("BRANCH", "1"))
-MODEL  = os.environ.get("MODEL", "/opt/upscale/models/2xLiveActionV1_SPAN.onnx")
+MODEL  = os.environ.get("MODEL", "/usr/lib/upscale/models/2xLiveActionV1_SPAN.onnx")
 TILE   = int(os.environ.get("TILE", "256"))
 OVER   = int(os.environ.get("OVERLAP", "16"))
 FP16   = os.environ.get("FP16", "1") == "1"

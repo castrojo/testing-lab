@@ -80,6 +80,17 @@ RUN "${VENV}/bin/pip" install --no-cache-dir \
       "vapoursynth-deblock==9.0" \
       "vapoursynth-mvtools==29"
 
+# /root is another dangling ostree symlink (-> /var/roothome), so anything that
+# writes to HOME fails at build time. Point HOME at a real path inside the image
+# so build and runtime agree.
+ENV HOME=/usr/lib/upscale/home
+
+# The wheel cannot locate the Python library on its own, so VSScript (and thus
+# vspipe) fails at runtime with "Python executable and library path couldn't be
+# determined". This records them. Importing vapoursynth from Python works
+# WITHOUT this, which is why an API-only check does not catch it.
+RUN mkdir -p "${HOME}" && "${VENV}/bin/vapoursynth" config
+
 COPY --from=vszip-builder /out/ ${VS_PLUGINDIR}/
 
 # vsmlrt.py must match the installed wheel's major line (16.x).
@@ -107,5 +118,32 @@ RUN ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx265    || (echo "FAT
     ffmpeg -hide_banner -encoders 2>/dev/null | grep -q prores_ks  || (echo "FATAL: no prores_ks"  && exit 1) && \
     test -f /usr/share/vulkan/icd.d/radeon_icd.x86_64.json         || (echo "FATAL: no RADV ICD"   && exit 1) && \
     "${VENV}/bin/python" -c "import vapoursynth as vs; assert vs.core.ncnn is not None"
+
+# Exercise the REAL execution path: vspipe -> y4m -> ffmpeg. The Python import
+# check above passes even when VSScript is misconfigured, so it alone is not
+# enough; only running vspipe proves a render can actually start.
+RUN printf '%s\n' \
+      'import vapoursynth as vs' \
+      'core = vs.core' \
+      'core.std.BlankClip(width=64, height=64, length=2, format=vs.YUV420P10).set_output()' \
+      > /tmp/smoke.vpy && \
+    "${VENV}/bin/vspipe" -c y4m /tmp/smoke.vpy - \
+      | ffmpeg -hide_banner -loglevel error -f yuv4mpegpipe -i - -c:v ffv1 -f matroska -y /dev/null && \
+    echo "vspipe -> ffmpeg pipeline OK" && \
+    rm /tmp/smoke.vpy
+
+# Evaluate the SHIPPED upscale.vpy for every branch. vspipe --info builds the
+# whole filter graph without rendering a frame, so it needs no GPU -- but model
+# and plugin paths are resolved during graph construction, so a wrong path fails
+# here. This gate exists because a stale /opt model path shipped in v2 and was
+# only caught on a GPU node mid-benchmark.
+RUN ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc=size=320x134:rate=25:duration=1 \
+      -c:v libx264 -pix_fmt yuv420p -y /tmp/gate.mp4 && \
+    for b in 1 2 3 4; do \
+      SRC=/tmp/gate.mp4 BRANCH="$b" "${VENV}/bin/vspipe" --info /usr/lib/upscale/upscale.vpy - \
+        || (echo "FATAL: upscale.vpy branch $b failed graph construction" && exit 1); \
+    done && \
+    echo "upscale.vpy branches 1-4 construct OK" && \
+    rm /tmp/gate.mp4
 
 WORKDIR /work
