@@ -35,10 +35,19 @@ general-purpose base box. Concretely:
 - **Air-gap capable.** Every dependency is a pinned artifact that can be
   mirrored into zot ahead of time.
 
-**Do not use RPM or `dnf`. Not at runtime, not in a Containerfile, not "just
-this once" in a builder stage.** There is no acceptable-use section here on
-purpose. Removing this legacy tooling is the point of the project, so this
-document does not teach you when to reach for it.
+**Do not use RPM or `dnf` for image composition or package installation. Not
+at runtime, not in a Containerfile, not "just this once" in a builder stage.**
+Removing this legacy tooling is the point of the project.
+
+The one narrow exception is source-provenance validation: a GitOps-managed
+WorkflowTemplate may run `packit srpm` from a digest-pinned upstream Packit
+image against source archives that another repository has already checksum
+verified. The workflow must re-verify every staged source after Packit runs,
+may use `rpm -qp` only to inspect the generated SRPM, and must not run `dnf`,
+Mock, binary `rpmbuild`, package installation, image composition, or
+publication into the lab's package/image repositories. This exception validates
+packaging metadata; it does not make the lab an RPM build or distribution
+system.
 
 **When the org does not already publish what you need, the answer is to add an
 image to [`fsdk-containers`](https://github.com/projectbluefin/fsdk-containers)
@@ -78,4 +87,3 @@ upstream-native and reproducible; it is not distribution tooling.
 | `cgr.dev` | `:30501/cgr` |
 
 All images in `argo/` and `manifests/` must use a registry from the allowlist in `.github/workflows/lint.yaml`.
-

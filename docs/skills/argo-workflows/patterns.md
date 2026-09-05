@@ -775,6 +775,30 @@ way: confirm live state with `kubectl get -o jsonpath`, don't stop at "ArgoCD sa
 
 ## Pods, storage, and operations
 
+### Source-only Packit validation
+
+`utah-packages-srpm-pilot` is the sole exception to the lab's RPM prohibition.
+It validates packaging metadata only: each package pod fetches checksum-locked
+sources through `utah-packages/tools/source_pipeline.py`, runs
+`packit srpm --preserve-spec` from the digest-pinned upstream Packit image,
+re-verifies the staged sources, and inspects the SRPM with `rpm -qp`.
+
+Keep this lane package-isolated and bounded:
+
+- fan out one pod per package with explicit `parallelism`;
+- use the `utah-srpm` template semaphore so overlapping workflows share one
+  concurrency budget;
+- emit package status and NEVRA through output parameters because this cluster
+  has no Argo artifact repository;
+- do not run `dnf`, Mock, binary `rpmbuild`, package installation, or publish
+  the SRPMs;
+- do not add a USB4 admission gate. The workload has no cross-node data plane;
+  ordinary pod traffic already uses the configured routes when applicable.
+
+The custom Packit `create-archive` action and the post-Packit checksum pass are
+both required. Without them Packit can replace a verified Source0 with a Git
+archive of the recipe directory while still returning success.
+
 ### Per-workflow ephemeral storage: volumeClaimTemplates
 
 For pipelines that need shared scratch space across steps (e.g. installer binaries, target disks),

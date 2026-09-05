@@ -1,0 +1,271 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: utah-packages-srpm-pilot
+  namespace: argo
+  annotations:
+    description: |
+      Validate every Packit-enabled utah-packages recipe as an SRPM from
+      checksum-locked sources. This source-only lane does not install packages,
+      build binary RPMs, publish artifacts, or require the USB4 data path.
+  labels:
+    app.kubernetes.io/component: srpm-validation
+    app.kubernetes.io/part-of: utah-packages
+spec:
+  serviceAccountName: argo
+  entrypoint: validate
+  activeDeadlineSeconds: 900
+  parallelism: 12
+  podGC:
+    strategy: OnWorkflowSuccess
+  ttlStrategy:
+    secondsAfterSuccess: 604800
+    secondsAfterFailure: 2592000
+  arguments:
+    parameters:
+      - name: repository
+        value: https://github.com/projectbluefin/utah-packages.git
+      - name: ref
+        value: main
+  metrics:
+    prometheus:
+      - name: lab_build_workflow_completed_total
+        help: Completed lab build workflows by pipeline and status.
+        labels:
+          - key: pipeline
+            value: utah-srpm
+          - key: status
+            value: "{{workflow.status}}"
+        counter:
+          value: "1"
+      - name: lab_build_workflow_duration_seconds
+        help: Lab build workflow duration in seconds by pipeline and status.
+        labels:
+          - key: pipeline
+            value: utah-srpm
+          - key: status
+            value: "{{workflow.status}}"
+        histogram:
+          buckets: [30, 60, 120, 300, 600, 900]
+          value: "{{workflow.duration}}"
+  templates:
+    - name: validate
+      parallelism: 12
+      steps:
+        - - name: discover
+            template: discover-packages
+            arguments:
+              parameters:
+                - name: repository
+                  value: "{{workflow.parameters.repository}}"
+                - name: ref
+                  value: "{{workflow.parameters.ref}}"
+        - - name: build
+            template: build-srpm
+            arguments:
+              parameters:
+                - name: repository
+                  value: "{{workflow.parameters.repository}}"
+                - name: ref
+                  value: "{{workflow.parameters.ref}}"
+                - name: package
+                  value: "{{item}}"
+            withParam: "{{steps.discover.outputs.result}}"
+        - - name: summarize
+            template: summarize
+            arguments:
+              parameters:
+                - name: packages
+                  value: "{{steps.discover.outputs.result}}"
+                - name: results
+                  value: "{{steps.build.outputs.parameters.result}}"
+
+    - name: discover-packages
+      inputs:
+        parameters:
+          - name: repository
+          - name: ref
+      volumes:
+        - name: work
+          emptyDir:
+            sizeLimit: 1Gi
+      script:
+        image: quay.io/packit/packit@sha256:149e6e06d3e5fb2f10d19760c8a0031c7d8825e7bb91a5f4a7ab9b927c947494
+        imagePullPolicy: IfNotPresent
+        command: [bash]
+        volumeMounts:
+          - name: work
+            mountPath: /work
+        env:
+          - name: REPOSITORY
+            value: "{{inputs.parameters.repository}}"
+          - name: REF
+            value: "{{inputs.parameters.ref}}"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+        source: |
+          set -euo pipefail
+          if ! git clone --depth=1 --branch "${REF}" \
+              "${REPOSITORY}" /work/repo >&2; then
+            git clone --filter=blob:none "${REPOSITORY}" /work/repo >&2
+            git -C /work/repo checkout "${REF}" >&2
+          fi
+          cd /work/repo
+          python3 tools/packit_workflow.py packages
+
+    - name: build-srpm
+      synchronization:
+        semaphores:
+          - configMapKeyRef:
+              name: workflow-semaphores
+              key: utah-srpm
+      inputs:
+        parameters:
+          - name: repository
+          - name: ref
+          - name: package
+      metadata:
+        labels:
+          app.kubernetes.io/component: utah-srpm-builder
+          app.kubernetes.io/part-of: utah-packages
+      podSpecPatch: |
+        topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: utah-srpm-builder
+      volumes:
+        - name: work
+          emptyDir:
+            sizeLimit: 4Gi
+      outputs:
+        parameters:
+          - name: result
+            valueFrom:
+              path: /tmp/result.json
+      script:
+        image: quay.io/packit/packit@sha256:149e6e06d3e5fb2f10d19760c8a0031c7d8825e7bb91a5f4a7ab9b927c947494
+        imagePullPolicy: IfNotPresent
+        command: [bash]
+        volumeMounts:
+          - name: work
+            mountPath: /work
+        env:
+          - name: REPOSITORY
+            value: "{{inputs.parameters.repository}}"
+          - name: REF
+            value: "{{inputs.parameters.ref}}"
+          - name: PACKAGE
+            value: "{{inputs.parameters.package}}"
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+            ephemeral-storage: 4Gi
+        source: |
+          set -uo pipefail
+          status=failure
+          nevra=
+
+          if git clone --depth=1 --branch "${REF}" --filter=blob:none \
+              --sparse "${REPOSITORY}" /work/repo >&2; then
+            git -C /work/repo sparse-checkout set --no-cone \
+              /.packit.yaml /config/ /tools/ "/packages/${PACKAGE}/" >&2
+          else
+            rm -rf /work/repo
+          fi
+          if [[ ! -d /work/repo ]] &&
+            git clone --filter=blob:none --no-checkout \
+              "${REPOSITORY}" /work/repo >&2; then
+            git -C /work/repo sparse-checkout set --no-cone \
+              /.packit.yaml /config/ /tools/ "/packages/${PACKAGE}/" >&2
+            git -C /work/repo checkout "${REF}" >&2
+          fi
+
+          if test -d /work/repo; then
+            cd /work/repo
+            git config --global --add safe.directory "*"
+            mkdir -p /work/srpm /work/sources /work/reports
+            if python3 tools/source_pipeline.py "${PACKAGE}" \
+                --output /work/sources \
+                --report-dir /work/reports \
+                --stage-into packages &&
+              packit srpm --preserve-spec \
+                --output "/work/srpm/${PACKAGE}.src.rpm" \
+                -p "${PACKAGE}" &&
+              python3 tools/source_pipeline.py "${PACKAGE}" \
+                --verify-staged packages; then
+              nevra=$(rpm -qp --qf '%{NAME}-%{VERSION}-%{RELEASE}' \
+                "/work/srpm/${PACKAGE}.src.rpm") &&
+                test -n "${nevra}" &&
+                status=success
+            fi
+          fi
+
+          printf '{"nevra":"%s","package":"%s","status":"%s"}\n' \
+            "${nevra}" "${PACKAGE}" "${status}" > /tmp/result.json
+          if [[ "${status}" != success ]]; then
+            echo "SRPM validation failed for ${PACKAGE}" >&2
+          fi
+
+    - name: summarize
+      inputs:
+        parameters:
+          - name: packages
+          - name: results
+      outputs:
+        parameters:
+          - name: summary
+            valueFrom:
+              path: /tmp/summary.json
+      script:
+        image: ghcr.io/projectbluefin/lab-runner:latest
+        imagePullPolicy: Always
+        command: [bash]
+        env:
+          - name: PACKAGES
+            value: "{{inputs.parameters.packages}}"
+          - name: RESULTS
+            value: "{{inputs.parameters.results}}"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        source: |
+          set -euo pipefail
+          jq -cn \
+            --argjson packages "${PACKAGES}" \
+            --argjson raw "${RESULTS}" '
+              ($raw |
+                if length > 0 and (.[0] | type) == "string"
+                then map(fromjson)
+                else .
+                end) as $results |
+              {
+                expected: ($packages | length),
+                completed: ($results | length),
+                failures: [$results[] | select(.status != "success")],
+                packages: $results
+              }
+            ' | tee /tmp/summary.json
+
+          jq -e '
+            .completed == .expected and
+            (.failures | length) == 0
+          ' /tmp/summary.json >/dev/null

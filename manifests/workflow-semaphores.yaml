@@ -35,6 +35,9 @@
 #                        while both image lanes run independently inside one slot.
 #   aurora-vm-qa        — Serializes Aurora/KDE VM soak runs with other
 #                        workflows using the shared Aurora test namespace.
+#   utah-srpm           — Caps source-only Packit SRPM validation across all
+#                        callers. Twelve slots keep upstream source traffic
+#                        bounded while using both 32-core lab nodes.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -49,3 +52,4 @@ data:
   ghost-container-qa: "6"
   dakota-publish: "1"
   aurora-vm-qa: "1"
+  utah-srpm: "12"
