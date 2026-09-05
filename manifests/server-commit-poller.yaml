@@ -1,0 +1,38 @@
+# Bluefin Server is gated on install-and-reboot, not on a successful build, so
+# this poller chains bluefin-server-build-pipeline into bluefin-server-boot-test
+# and only records the SHA when the installed disk boots.
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: server-commit-poller
+  namespace: argo
+  labels:
+    app.kubernetes.io/component: commit-poller
+    app.kubernetes.io/part-of: bluefin-test-suite
+spec:
+  # Offset from the dakota and cosmic pollers so the three share bounded BST
+  # admission rather than contending for the same slot.
+  schedules:
+    - "2-59/15 * * * *"
+  timezone: "UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  workflowMetadata:
+    labels:
+      bluefin.io/bst-workload: "true"
+      bluefin.io/bst-source: bluefin-server
+  workflowSpec:
+    serviceAccountName: argo
+    entrypoint: poll-bluefin-server
+    arguments:
+      parameters:
+        - name: repo
+          value: projectbluefin/server
+        - name: branch
+          value: main
+        - name: state-key
+          value: sha-bluefin-server-main
+        - name: force
+          value: "false"
+    workflowTemplateRef:
+      name: bst-commit-poller

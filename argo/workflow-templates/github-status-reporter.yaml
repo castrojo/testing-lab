@@ -93,8 +93,12 @@ spec:
         source: |
           set -euo pipefail
 
-          [[ "${REPOSITORY}" == "projectbluefin/testsuite" ]] ||
-            { echo "Refusing status for ${REPOSITORY}" >&2; exit 1; }
+          # Explicit allowlist: the lab token must never write statuses to an
+          # arbitrary repository derived from workflow parameters.
+          case "${REPOSITORY}" in
+            projectbluefin/testsuite|projectbluefin/server) ;;
+            *) echo "Refusing status for ${REPOSITORY}" >&2; exit 1 ;;
+          esac
           [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]] ||
             { echo "Invalid commit SHA: ${SHA}" >&2; exit 1; }
 

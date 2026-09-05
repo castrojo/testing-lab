@@ -356,7 +356,8 @@ spec:
           echo "=== Cloning cosmic-build-meta @ ${REF} ==="
           rm -rf /src
           git clone --depth=1 --branch "${REF}" "${REPO}" /src
-          cd /src          PROJECT_NAME=$(awk -F': *' '/^name:/{print $2; exit}' project.conf | tr -d '\r')
+          cd /src
+          PROJECT_NAME=$(awk -F': *' '/^name:/{print $2; exit}' project.conf | tr -d '\r')
 
           cat >> /tmp/buildstream-cluster.conf <<EOF
           projects:

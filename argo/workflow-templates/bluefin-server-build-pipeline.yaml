@@ -354,7 +354,8 @@ spec:
           echo "=== Cloning bluefin-server @ ${REF} ==="
           rm -rf /src
           git clone --depth=1 --branch "${REF}" "https://x-access-token:${GITHUB_TOKEN}@${REPO#https://}" /src
-          cd /src          PROJECT_NAME=$(awk -F': *' '/^name:/{print $2; exit}' project.conf | tr -d '\r')
+          cd /src
+          PROJECT_NAME=$(awk -F': *' '/^name:/{print $2; exit}' project.conf | tr -d '\r')
 
           cp /etc/buildstream/buildstream.conf /tmp/buildstream-cluster.conf
           BST_CONF=/tmp/buildstream-cluster.conf
