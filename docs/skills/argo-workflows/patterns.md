@@ -780,8 +780,11 @@ way: confirm live state with `kubectl get -o jsonpath`, don't stop at "ArgoCD sa
 `utah-packages-srpm-pilot` is the sole exception to the lab's RPM prohibition.
 It validates packaging metadata only: each package pod fetches checksum-locked
 sources through `utah-packages/tools/source_pipeline.py`, runs
-`packit srpm --preserve-spec` from the digest-pinned upstream Packit image,
-re-verifies the staged sources, and inspects the SRPM with `rpm -qp`.
+`packit srpm --preserve-spec` from a digest-preserving copy of the upstream
+Packit image in the writable local Zot, re-verifies the staged sources, and
+inspects the SRPM with `rpm -qp`. The Quay pull-through cache does not reliably
+serve Packit's multi-arch manifest by digest, so seed the writable mirror with
+`skopeo copy --all` and use the resulting local digest reference.
 
 Keep this lane package-isolated and bounded:
 

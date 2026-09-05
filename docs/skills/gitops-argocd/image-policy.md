@@ -41,13 +41,13 @@ Removing this legacy tooling is the point of the project.
 
 The one narrow exception is source-provenance validation: a GitOps-managed
 WorkflowTemplate may run `packit srpm` from a digest-pinned upstream Packit
-image against source archives that another repository has already checksum
-verified. The workflow must re-verify every staged source after Packit runs,
-may use `rpm -qp` only to inspect the generated SRPM, and must not run `dnf`,
-Mock, binary `rpmbuild`, package installation, image composition, or
-publication into the lab's package/image repositories. This exception validates
-packaging metadata; it does not make the lab an RPM build or distribution
-system.
+image, mirrored digest-preservingly into the writable local Zot, against source
+archives that another repository has already checksum verified. The workflow
+must re-verify every staged source after Packit runs, may use `rpm -qp` only to
+inspect the generated SRPM, and must not run `dnf`, Mock, binary `rpmbuild`,
+package installation, image composition, or publication into the lab's
+package/image repositories. This exception validates packaging metadata; it
+does not make the lab an RPM build or distribution system.
 
 **When the org does not already publish what you need, the answer is to add an
 image to [`fsdk-containers`](https://github.com/projectbluefin/fsdk-containers)
