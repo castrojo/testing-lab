@@ -118,6 +118,92 @@ spec:
                 - name: expected-sha
                   value: "{{tasks.check-sha.outputs.parameters.stored-sha}}"
 
+    - name: poll-bluefin-server
+      dag:
+        tasks:
+          - name: check-sha
+            template: check-sha
+          - name: run-build
+            depends: "check-sha.Succeeded"
+            when: "{{tasks.check-sha.outputs.parameters.changed}} == true"
+            templateRef:
+              name: bluefin-server-build-pipeline
+              template: build
+            arguments:
+              parameters:
+                - name: ref
+                  value: "{{workflow.parameters.branch}}"
+                - name: repo
+                  value: "https://github.com/{{workflow.parameters.repo}}.git"
+                - name: registry
+                  value: "{{workflow.parameters.registry}}"
+                - name: build-mode
+                  value: "re"
+          # The gate is the install-and-reboot result, not the build. The build
+          # pipeline publishes <registry>/bluefin-server-installer:latest, which
+          # is what the boot test consumes.
+          - name: run-boot-test
+            depends: "run-build.Succeeded"
+            templateRef:
+              name: bluefin-server-boot-test
+              template: pipeline
+            arguments:
+              parameters:
+                - name: installer-image
+                  value: "{{workflow.parameters.registry}}/bluefin-server-installer:latest"
+          - name: report-pass
+            depends: "run-boot-test.Succeeded"
+            templateRef:
+              name: github-status-reporter
+              template: send
+            arguments:
+              parameters:
+                - name: repository
+                  value: "{{workflow.parameters.repo}}"
+                - name: sha
+                  value: "{{tasks.check-sha.outputs.parameters.sha}}"
+                - name: state
+                  value: completed
+                - name: conclusion
+                  value: success
+                - name: workflow-name
+                  value: "{{workflow.name}}"
+                - name: title
+                  value: Lab boot gate
+                - name: summary
+                  value: Installer installed and the target disk booted to a systemd target.
+          - name: report-fail
+            depends: "run-build.Failed || run-boot-test.Failed"
+            templateRef:
+              name: github-status-reporter
+              template: send
+            arguments:
+              parameters:
+                - name: repository
+                  value: "{{workflow.parameters.repo}}"
+                - name: sha
+                  value: "{{tasks.check-sha.outputs.parameters.sha}}"
+                - name: state
+                  value: completed
+                - name: conclusion
+                  value: failure
+                - name: workflow-name
+                  value: "{{workflow.name}}"
+                - name: title
+                  value: Lab boot gate
+                - name: summary
+                  value: The lab build or installer-to-boot test failed.
+          # State only advances on a green gate, so a failed ref is retried.
+          - name: update-sha
+            depends: "run-boot-test.Succeeded"
+            template: update-sha
+            arguments:
+              parameters:
+                - name: sha
+                  value: "{{tasks.check-sha.outputs.parameters.sha}}"
+                - name: expected-sha
+                  value: "{{tasks.check-sha.outputs.parameters.stored-sha}}"
+
     - name: check-sha
       outputs:
         parameters:
