@@ -53,10 +53,22 @@ spec:
 
   templates:
     - name: pipeline
+      inputs:
+        parameters:
+          - name: installer-image
+            default: "{{workflow.parameters.installer-image}}"
+          - name: target-disk-size
+            default: "{{workflow.parameters.target-disk-size}}"
       dag:
         tasks:
           - name: prepare-installer
             template: prepare-installer
+            arguments:
+              parameters:
+                - name: installer-image
+                  value: "{{inputs.parameters.installer-image}}"
+                - name: target-disk-size
+                  value: "{{inputs.parameters.target-disk-size}}"
           - name: run-installer
             depends: prepare-installer.Succeeded
             template: run-installer
@@ -70,6 +82,9 @@ spec:
         parameters:
           - name: installer-image
             value: "{{workflow.parameters.installer-image}}"
+          - name: target-disk-size
+            value: "{{workflow.parameters.target-disk-size}}"
+            default: "20G"
       script:
         image: ghcr.io/projectbluefin/lab-runner:latest
         command: [bash]
@@ -114,8 +129,8 @@ spec:
           rm -rf /mnt/installer/stage
           ls -lh /mnt/installer/disk.img
 
-          echo "Creating blank target disk ({{workflow.parameters.target-disk-size}})"
-          truncate -s "{{workflow.parameters.target-disk-size}}" /mnt/target/disk.img
+          echo "Creating blank target disk ({{inputs.parameters.target-disk-size}})"
+          truncate -s "{{inputs.parameters.target-disk-size}}" /mnt/target/disk.img
           echo "Disks ready"
 
     - name: run-installer
