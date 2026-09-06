@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import re
+
 import yaml
 
 
@@ -489,3 +491,130 @@ def test_dakota_build_pipeline_includes_non_blocking_nvidia_variant():
     )[0]
     assert "continueOn:" in nonblocking
     assert "continueOn:" not in default_task
+
+
+KDE_RUNNER_PATH = ROOT / "argo/workflow-templates/run-kde-tests.yaml"
+
+# Variables any bash process can rely on without an explicit definition.
+AMBIENT_SHELL_VARS = {
+    "BASH", "BASH_VERSION", "EUID", "HOME", "HOSTNAME", "IFS", "LANG",
+    "LC_ALL", "LINENO", "LOGNAME", "MACHTYPE", "OLDPWD", "OPTARG", "OPTIND",
+    "OSTYPE", "PATH", "PPID", "PWD", "RANDOM", "SECONDS", "SHELL", "SHLVL",
+    "TERM", "TMPDIR", "UID", "USER", "_",
+}
+
+
+def _kde_runner_script_and_env():
+    template = yaml.safe_load(KDE_RUNNER_PATH.read_text(encoding="utf-8"))[
+        "spec"
+    ]["templates"][0]
+    container = template["container"]
+    return "\n".join(container["args"]), {item["name"] for item in container["env"]}
+
+
+def _strip_single_quoted_spans(script: str) -> str:
+    """Drop single-quoted spans; their contents are not shell-expanded."""
+    characters = []
+    in_single_quote = False
+    for char in script:
+        if char == "'":
+            in_single_quote = not in_single_quote
+        elif not in_single_quote:
+            characters.append(char)
+    return "".join(characters)
+
+
+def test_kde_runner_defines_every_shell_variable_it_references():
+    """A single unbound variable kills the runner under `set -u`.
+
+    Regression guard for the `${IMG_SLUG}` crash: the publish step expanded a
+    variable that was never defined, so every KDE run (green, red, or
+    sabotaged) died before publishing results.
+    """
+    script, env_names = _kde_runner_script_and_env()
+    # Argo placeholders are interpolated before bash executes the script.
+    script = re.sub(r"\{\{[^}]*\}\}", "ARGO", script)
+    body = _strip_single_quoted_spans(script)
+
+    defined = AMBIENT_SHELL_VARS | env_names
+    for line in body.splitlines():
+        for match in (
+            re.match(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=", line),
+            re.match(r".*\bread\b.*\s([A-Za-z_][A-Za-z0-9_]*)\s*;?\s*$", line),
+            re.match(r"\s*for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\b", line),
+        ):
+            if match:
+                defined.add(match.group(1))
+
+    referenced = set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", body))
+    referenced |= set(re.findall(r"\$([A-Za-z_][A-Za-z0-9_]*)", body))
+    referenced = {
+        name for name in referenced if not re.fullmatch(r"[0-9#?@*!$-]", name)
+    }
+
+    undefined = referenced - defined
+    assert not undefined, (
+        "run-kde-tests references undefined shell variables "
+        f"(fatal under set -u): {sorted(undefined)}"
+    )
+
+
+def test_kde_runner_publishes_result_outputs_for_evidence_reconciler():
+    """The declared outputs must actually be produced by the script.
+
+    `result` has no valueFrom default, so a missing summary file errored the
+    task even after a green run, and `failed-scenarios` always fell back to
+    "[]", which the QA run evidence reconciler treats as "results
+    unavailable".
+    """
+    doc = yaml.safe_load(KDE_RUNNER_PATH.read_text(encoding="utf-8"))
+    template = doc["spec"]["templates"][0]
+    script = "\n".join(template["container"]["args"])
+
+    output_names = {
+        parameter["name"] for parameter in template["outputs"]["parameters"]
+    }
+    assert output_names == {"result", "failed-scenarios"}
+    assert "/tmp/results/result-summary.txt" in script
+    assert "scenarios passed" in script
+    assert "/tmp/results/failed-scenarios.json" in script
+    # Same bounded failed-scenario list contract as the GNOME runner.
+    assert "[A-Za-z0-9 .,:;()/_+-]" in script
+    assert "failed_scenarios[:20]" in script
+
+
+def test_kde_runner_keeps_sabotage_evidence_isolated_per_mode():
+    """Sabotage runs must not clobber each other's evidence.
+
+    Both sabotage modes previously persisted into and published from the same
+    paths, so the kill-plasmashell run overwrote the missing-binary run's
+    results.json, and their intentional failures polluted the KDE soak-gate
+    history.
+    """
+    doc = yaml.safe_load(KDE_RUNNER_PATH.read_text(encoding="utf-8"))
+    script = "\n".join(doc["spec"]["templates"][0]["container"]["args"])
+
+    # Non-sabotage runs keep the historical evidence path and suite key.
+    assert 'RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}/${SUITE}"' in script
+    # Sabotage runs get a mode-specific evidence directory and publish suite.
+    assert (
+        'RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}'
+        '/${SUITE}-sabotage-${SABOTAGE_MODE}"'
+    ) in script
+    assert 'PUBLISH_SUITE="${SUITE}-sabotage-${SABOTAGE_MODE}"' in script
+    assert 'IMG_SLUG="${VARIANT}"' in script
+    assert "- name: CONTAINERDISK_TAG" in KDE_RUNNER_PATH.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_kde_runner_sabotage_verdict_requires_recorded_failures():
+    """A sabotaged run must go red with recorded errors, never a silent skip."""
+    script, _ = _kde_runner_script_and_env()
+
+    assert "SABOTAGE_VERDICT_RC=0" in script
+    assert "recorded zero scenarios" in script
+    assert "recorded 0 failed scenarios" in script
+    assert "no kde_faillog_* bundle was retained" in script
+    # The verdict must be able to fail the task, not just log.
+    assert 'exit "${SABOTAGE_VERDICT_RC}"' in script

@@ -130,6 +130,8 @@ spec:
         value: "{{inputs.parameters.suite}}"
       - name: VARIANT
         value: "{{inputs.parameters.variant}}"
+      - name: CONTAINERDISK_TAG
+        value: "{{inputs.parameters.containerdisk-tag}}"
       - name: BEHAVE_TAGS
         value: "{{inputs.parameters.behave-tags}}"
       - name: IMAGE
@@ -262,6 +264,35 @@ spec:
           ARTIFACT_RC=1
         fi
 
+        # Derive the bounded failed-scenario list consumed by the
+        # `failed-scenarios` output parameter and the QA run evidence
+        # reconciler (same contract as the GNOME runner).
+        if [[ -f /results/results.json ]]; then
+          python3 - /results/results.json > /tmp/results/failed-scenarios.json <<'PY'
+        import json
+        import re
+        import sys
+
+        with open(sys.argv[1], encoding="utf-8") as result_file:
+            data = json.load(result_file)
+        safe_name = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,:;()/_+-]{0,159}$")
+        failed_scenarios = []
+        for feature in data:
+            for scenario in feature.get("elements", []):
+                name = scenario.get("name")
+                if (
+                    scenario.get("status") == "failed"
+                    and isinstance(name, str)
+                    and safe_name.fullmatch(name)
+                    and not any(word in name.lower() for word in
+                                ("token", "password", "secret", "authorization"))
+                    and name not in failed_scenarios
+                ):
+                    failed_scenarios.append(name)
+        json.dump(failed_scenarios[:20], sys.stdout, separators=(",", ":"))
+        PY
+        fi
+
         # Keep both the directory and a portable tarball for each kde_faillog
         # bundle produced by the testsuite failure hook. lab-runner does not
         # provide tar, so use the guaranteed Python standard library tool.
@@ -275,7 +306,14 @@ spec:
           fi
         done < <(find /tmp/results -type d -name 'faillog_*' -print0)
 
-        RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}/${SUITE}"
+        # Sabotage runs persist into their own evidence directory so the two
+        # sabotage modes cannot clobber each other's results.json and faillog
+        # bundles; non-sabotage runs keep the historical path.
+        if [[ "${SABOTAGE_MODE}" == "none" ]]; then
+          RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}/${SUITE}"
+        else
+          RESULT_DIR="/var/mnt/ghost-data/test-results/{{workflow.name}}/${SUITE}-sabotage-${SABOTAGE_MODE}"
+        fi
         mkdir -p "${RESULT_DIR}"
         if ! cp -r /tmp/results/. "${RESULT_DIR}/"; then
           echo "ERROR: failed to persist KDE results to ${RESULT_DIR}" >&2
@@ -303,6 +341,21 @@ spec:
           echo "GHCR screenshot publication disabled; retaining screenshot locally only." >&2
         fi
 
+        # publish_test_results.py keys results by "<img-slug>-<suite>.json".
+        # Derive the slug the same way the GNOME runner does: variant plus
+        # containerdisk tag (aurora + testing -> aurora-testing). Sabotage runs
+        # publish under a sabotage-specific suite label so their intentional
+        # red results do not pollute the KDE soak-gate history and each mode's
+        # published evidence survives the second run.
+        IMG_SLUG="${VARIANT}"
+        if [[ -n "${CONTAINERDISK_TAG}" ]]; then
+          IMG_SLUG="${VARIANT}-${CONTAINERDISK_TAG}"
+        fi
+        PUBLISH_SUITE="${SUITE}"
+        if [[ "${SABOTAGE_MODE}" != "none" ]]; then
+          PUBLISH_SUITE="${SUITE}-sabotage-${SABOTAGE_MODE}"
+        fi
+
         PUBLISH_RC=0
         if ! {
           rm -rf /workspace/lab-code
@@ -310,7 +363,7 @@ spec:
             "https://x-access-token:${GITHUB_TOKEN}@github.com/projectbluefin/lab.git" \
             /workspace/lab-code
           python3 /workspace/lab-code/scripts/publish_test_results.py \
-            /results/results.json "${IMG_SLUG}" "${SUITE}" \
+            /results/results.json "${IMG_SLUG}" "${PUBLISH_SUITE}" \
             "{{workflow.name}}" "${GITHUB_TOKEN}" "" \
             "${FAILURE_CLASS}" "${FAILURE_ISSUE_URL}"
         }; then
@@ -318,9 +371,96 @@ spec:
           PUBLISH_RC=1
         fi
 
+        # Publish a result only when structured Behave output exists and can
+        # be parsed. A missing summary must not make an execution failure look
+        # successful to the evidence reconciler.
+        if [[ -f /results/results.json ]]; then
+          python3 -c "
+        import json, sys
+        data = json.load(open('/results/results.json'))
+        failed = sum(1 for f in data for s in f.get('elements',[]) if s.get('type') == 'scenario' and s.get('status') == 'failed')
+        total = sum(1 for f in data for s in f.get('elements',[]) if s.get('type') == 'scenario')
+        print(f'{total - failed}/{total} scenarios passed')
+          " > /tmp/results/result-summary.txt 2>/dev/null || {
+            rm -f /tmp/results/result-summary.txt
+            echo "ERROR: unable to derive result summary from results.json" >&2
+          }
+        fi
+        # Print full results JSON to stderr — captured by Loki and Argo logs.
+        if [[ -f /results/results.json ]]; then
+          echo "=== BEHAVE RESULTS JSON ===" >&2
+          cat /results/results.json >&2
+          echo "=== END BEHAVE RESULTS ===" >&2
+        fi
+
+        # Gate B: a sabotaged run must go red with a recorded error, never a
+        # silent pass or an all-skip. Verify the behave results actually
+        # recorded failed scenarios before trusting the exit code.
+        SABOTAGE_VERDICT_RC=0
+        if [[ "${SABOTAGE_MODE}" != "none" ]]; then
+          python3 - "${SABOTAGE_MODE}" /results/results.json <<'SABOTAGE_VERDICT' || SABOTAGE_VERDICT_RC=1
+        import json
+        import sys
+
+        mode, results_path = sys.argv[1], sys.argv[2]
+        try:
+            with open(results_path, encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, ValueError) as exc:
+            print(
+                "SABOTAGE VERDICT ERROR: behave results for '%s' are unreadable: %s"
+                % (mode, exc),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        scenarios = [
+            element
+            for feature in data
+            for element in feature.get("elements", [])
+            if element.get("type") == "scenario"
+        ]
+        failed = [s for s in scenarios if s.get("status") == "failed"]
+        skipped = [s for s in scenarios if s.get("status") == "skipped"]
+        if not scenarios:
+            print(
+                "SABOTAGE VERDICT ERROR: sabotage '%s' recorded zero scenarios; "
+                "the suite cannot be trusted to go red" % mode,
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not failed:
+            print(
+                "SABOTAGE VERDICT ERROR: sabotage '%s' recorded 0 failed scenarios "
+                "(%d skipped); sabotage must produce recorded errors, not skips"
+                % (mode, len(skipped)),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        for scenario in failed:
+            print(
+                "SABOTAGE VERDICT: sabotage '%s' failed scenario %r"
+                % (mode, scenario.get("name", "Unnamed Scenario")),
+                file=sys.stderr,
+            )
+        print(
+            "SABOTAGE VERDICT OK: sabotage '%s' recorded %d failed scenario(s)"
+            % (mode, len(failed)),
+            file=sys.stderr,
+        )
+        SABOTAGE_VERDICT
+          if ! find /tmp/results -type d -name 'faillog_*' | grep -q .; then
+            echo "SABOTAGE VERDICT ERROR: no kde_faillog_* bundle was retained for sabotage '${SABOTAGE_MODE}'" >&2
+            SABOTAGE_VERDICT_RC=1
+          fi
+        fi
+
         if [[ "${ARTIFACT_RC}" -ne 0 ]]; then
           echo "ERROR: KDE evidence artifacts were not fully retained" >&2
           exit "${ARTIFACT_RC}"
+        fi
+        if [[ "${SABOTAGE_VERDICT_RC}" -ne 0 ]]; then
+          echo "ERROR: Gate B sabotage verdict failed" >&2
+          exit "${SABOTAGE_VERDICT_RC}"
         fi
         if [[ "${PUBLISH_RC}" -ne 0 ]]; then
           exit "${PUBLISH_RC}"
