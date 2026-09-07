@@ -176,6 +176,23 @@ spec:
                   value: "{{inputs.parameters.registry}}"
                 - name: mode
                   value: "{{tasks.detect-build-mode.outputs.parameters.mode}}"
+          - name: build-sysext
+            template: run-bst-step
+            depends: detect-build-mode
+            arguments:
+              parameters:
+                - name: element
+                  value: "oci/k0s-sysext.bst"
+                - name: tag
+                  value: "k0s-sysext"
+                - name: ref
+                  value: "{{inputs.parameters.ref}}"
+                - name: repo
+                  value: "{{inputs.parameters.repo}}"
+                - name: registry
+                  value: "{{inputs.parameters.registry}}"
+                - name: mode
+                  value: "{{tasks.detect-build-mode.outputs.parameters.mode}}"
 
     - name: detect-build-mode
       inputs:

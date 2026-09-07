@@ -290,6 +290,23 @@ def test_aurora_qa_pipeline_exposes_safe_kde_sabotage_modes():
     assert "aurora-test" in runner
 
 
+def test_bluefin_server_build_pipeline_builds_k0s_sysext():
+    pipeline_path = ROOT / "argo/workflow-templates/bluefin-server-build-pipeline.yaml"
+    assert pipeline_path.exists()
+    pipeline = yaml.safe_load(pipeline_path.read_text(encoding="utf-8"))
+
+    core = next(t for t in pipeline["spec"]["templates"] if t["name"] == "build-core")
+    tasks = {task["name"]: task for task in core["dag"]["tasks"]}
+
+    assert "build-ddi" in tasks
+    assert "build-installer" in tasks
+    assert "build-sysext" in tasks
+
+    sysext_args = {p["name"]: p["value"] for p in tasks["build-sysext"]["arguments"]["parameters"]}
+    assert sysext_args["element"] == "oci/k0s-sysext.bst"
+    assert sysext_args["tag"] == "k0s-sysext"
+
+
 def test_aurora_kde_sabotage_workflow_runs_both_controlled_failures():
     path = ROOT / "argo/aurora-kde-sabotage.yaml"
     workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
