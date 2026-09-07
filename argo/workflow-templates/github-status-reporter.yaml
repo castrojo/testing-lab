@@ -137,7 +137,7 @@ spec:
               description: (if ($description | length) > 140
                             then ($description[0:137] + "...")
                             else $description end),
-              target_url: $target_url}')
+              target_url: (if ($target_url | startswith("http://") or startswith("https://")) then $target_url else null end)}')
           HTTP_CODE=$(curl -sS -o /tmp/github-response -w '%{http_code}' \
             -X POST \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \

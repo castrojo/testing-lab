@@ -127,3 +127,55 @@ def test_reporter_does_not_truncate_the_summary_before_prepending_the_title():
     assert "${CHECK_SUMMARY:0:140}" not in source
     assert '--arg description "${DESCRIPTION}"' in source
     assert "140" in source
+
+
+@needs_tools
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://example.com/build", "https://example.com/build"),
+        ("http://example.com/build", "http://example.com/build"),
+        ("{{workflow.parameters.workflow-url}}", None),
+        ("", None),
+        ("ftp://example.com", None),
+    ],
+)
+def test_target_url_sanitized_to_valid_http(tmp_path, url, expected):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    curl = bin_dir / "curl"
+    curl.write_text(CURL_STUB, encoding="utf-8")
+    curl.chmod(0o755)
+
+    payload_out = tmp_path / "payload.json"
+    script = tmp_path / "send.sh"
+    script.write_text(_send_script_source(), encoding="utf-8")
+
+    env = dict(os.environ)
+    env.update(
+        {
+            "PATH": f"{bin_dir}:{env['PATH']}",
+            "PAYLOAD_OUT": str(payload_out),
+            "GITHUB_TOKEN": "unused-in-test",
+            "REPOSITORY": "projectbluefin/testsuite",
+            "SHA": "0" * 40,
+            "PR_NUMBER": "660",
+            "CHECK_STATE": "completed",
+            "CONCLUSION": "success",
+            "WORKFLOW_NAME": "testsuite-660-docs-ci-zsn6n",
+            "WORKFLOW_URL": url,
+            "CHECK_TITLE": "Title",
+            "CHECK_SUMMARY": "Summary",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(script)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(payload_out.read_bytes())
+    assert payload.get("target_url") == expected
