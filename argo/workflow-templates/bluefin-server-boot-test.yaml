@@ -88,6 +88,9 @@ spec:
       script:
         image: ghcr.io/projectbluefin/lab-runner:latest
         command: [bash]
+        securityContext:
+          privileged: true
+          runAsUser: 0
         resources:
           requests:
             cpu: "1"
@@ -142,6 +145,9 @@ spec:
       script:
         image: ghcr.io/projectbluefin/lab-runner:latest
         command: [bash]
+        securityContext:
+          privileged: true
+          runAsUser: 0
         resources:
           requests:
             cpu: "250m"
@@ -261,16 +267,26 @@ spec:
           fi
 
           # Verify the target disk now has a root partition labelled by repart.
-          LOOP=$(losetup -f --show -P /mnt/target/disk.img)
           ROOT_LABEL=""
-          for _ in $(seq 1 10); do
-            ROOT_LABEL=$(lsblk -pno NAME,LABEL "${LOOP}" | awk '$2=="bluefin-server-root-a"{print $1}' || true)
-            [[ -n "${ROOT_LABEL}" ]] && break
-            sleep 1
-          done
-          losetup -d "${LOOP}" || true
+          if command -v sfdisk >/dev/null 2>&1; then
+            if sfdisk --dump /mnt/target/disk.img 2>/dev/null | grep -q 'name="bluefin-server-root-a"'; then
+              ROOT_LABEL="bluefin-server-root-a"
+            fi
+          fi
+          if [[ -z "${ROOT_LABEL}" ]]; then
+            LOOP=$(losetup -f --show -P /mnt/target/disk.img 2>/dev/null || true)
+            if [[ -n "${LOOP}" ]]; then
+              for _ in $(seq 1 10); do
+                ROOT_LABEL=$(lsblk -pno NAME,LABEL "${LOOP}" 2>/dev/null | awk '$2=="bluefin-server-root-a"{print $1}' || true)
+                [[ -n "${ROOT_LABEL}" ]] && break
+                sleep 1
+              done
+              losetup -d "${LOOP}" 2>/dev/null || true
+            fi
+          fi
           if [[ -z "${ROOT_LABEL}" ]]; then
             echo "ERROR: target disk missing bluefin-server-root-a partition" >&2
+            sfdisk --dump /mnt/target/disk.img 2>/dev/null || true
             exit 1
           fi
           echo "Install verified: root partition labeled bluefin-server-root-a"
