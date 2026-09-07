@@ -423,3 +423,17 @@ lint:
     @echo "Checking semaphore topology..."
     @python3 scripts/check_semaphore_topology.py argo/
     @echo "✓ All manifests valid"
+
+# Run the Python checks over the trees declared in .python-scope — the single
+# source of truth also consumed by .github/workflows/lint.yaml (syntax, blocking)
+# and .github/workflows/ci.yml (ruff, advisory). Keeps local == CI.
+check-python:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mapfile -t TREES < <(grep -vE '^[[:space:]]*(#|$)' .python-scope)
+    echo "Python check scope (.python-scope): ${TREES[*]}"
+    echo "Validating Python syntax..."
+    find "${TREES[@]}" -name '*.py' -print0 | xargs -0 python3 -m py_compile
+    echo "✔ syntax OK"
+    echo "Linting with ruff (advisory)..."
+    python3 -m ruff check "${TREES[@]}" || echo "WARNING: ruff reported findings (advisory, not a gate)"

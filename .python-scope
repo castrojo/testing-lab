@@ -1,0 +1,30 @@
+# Single source of truth for the first-party Python trees in this repo.
+#
+# ENFORCED BY: tests/unit/test_python_check_scope.py, which compiles every .py
+# file in every tree listed below. That test runs inside the existing blocking
+# CI step (`pytest tests/unit/` in .github/workflows/ci.yml), so the scope is a
+# real gate without any workflow needing to restate the tree list.
+#
+# ALSO CONSUMED BY: `just check-python` (local syntax + advisory ruff run over
+# exactly these trees, so local matches CI).
+#
+# Adding a new tree of first-party Python means adding one line here -- nowhere
+# else. test_every_tree_with_first_party_python_is_in_scope fails if a tree with
+# .py files is not declared.
+#
+# STILL TO WIRE: .github/workflows/lint.yaml ("Validate Python syntax") and
+# .github/workflows/ci.yml ("Lint check with ruff") each hardcode `tests/`.
+# Both are now redundant subsets of this file rather than the scope itself;
+# rewiring them to read this file needs a token with `workflows` permission.
+# See projectbluefin/lab#693. Until then
+# test_workflow_syntax_check_does_not_exceed_the_declared_scope keeps them from
+# drifting outside this scope.
+#
+# NOTE: this is the *check* scope, not the *coverage* scope. .coveragerc
+# deliberately measures a narrower set (the shared helper modules the unit gate
+# actually exercises); see the comment at the top of .coveragerc.
+#
+# Format: one path per line, relative to the repo root. Blank lines and lines
+# beginning with '#' are ignored.
+scripts
+tests
