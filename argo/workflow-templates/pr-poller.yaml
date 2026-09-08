@@ -216,23 +216,16 @@ spec:
               -o /dev/null
           }
 
-          # Repos tested on every PR — no label required. Every product with a
-          # per-PR lane below is listed here: the dispatcher already carries the
-          # image, suite, reporter, and BST settings for each, so a missing entry
-          # only meant the run waited on someone hand-applying test-on-lab.
-          # The label pass below still works for repos that are not listed.
-          #
-          # Throughput is bounded by the existing throttles, not by this list:
-          # MAX_DISPATCH caps dispatches per poll, one workflow per head SHA is
-          # deduped, a newer push stops the superseded run, and dakota's BST lane
-          # refuses to start a third concurrent build.
+          # Repos tested on every PR — no label required. Bluefin, Bluefin LTS,
+          # and Dakota are deliberately NOT here: the container QA lane they
+          # would use fails 100% of the time today, so auto-dispatching them
+          # only paints failing ghost-lab statuses on every open pull request.
+          # Restore them once a lane is observed passing end to end. An
+          # operator can still opt an individual PR in with test-on-lab.
           AUTO_REPOS=(
            "projectbluefin/common"
            "projectbluefin/knuckle"
            "projectbluefin/testsuite"
-           "projectbluefin/bluefin"
-           "projectbluefin/bluefin-lts"
-           "projectbluefin/dakota"
           )
           declare -A AUTO_REPO_SET=()
           for AUTO_REPO in "${AUTO_REPOS[@]}"; do
